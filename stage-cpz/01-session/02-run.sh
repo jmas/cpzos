@@ -63,6 +63,8 @@ apt-get autoremove -y --purge || true
 systemctl set-default multi-user.target
 systemctl enable kmsconvt@tty1.service
 systemctl enable kmsconvt@tty2.service
+systemctl add-wants multi-user.target kmsconvt@tty1.service
+systemctl add-wants multi-user.target kmsconvt@tty2.service
 systemctl mask getty@tty1.service || true
 systemctl disable getty@tty2.service || true
 

@@ -233,6 +233,18 @@ else
     fail "kmsconvt@tty2 NOT enabled"
 fi
 
+if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "kmsconvt@tty1"; then
+    pass "kmsconvt@tty1 wanted by multi-user.target"
+else
+    fail "kmsconvt@tty1 NOT wanted by multi-user.target"
+fi
+
+if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "rpi-preseed"; then
+    pass "rpi-preseed enabled"
+else
+    fail "rpi-preseed NOT enabled"
+fi
+
 if debugfs -R "stat etc/systemd/system/getty@tty1.service" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Fast link dest: /dev/null"; then
     pass "getty@tty1 masked"
 else
@@ -242,7 +254,8 @@ fi
 # The old launcher/desktop must not ship in the CPZ image.
 for file in usr/share/APPLaunch/bin/M5CardputerZero-APPLaunch \
     usr/lib/systemd/system/LaunchWizard.service \
-    usr/bin/fb-mirror.py usr/share/applications/fb-mirror.desktop; do
+    usr/bin/fb-mirror.py usr/share/applications/fb-mirror.desktop \
+    usr/lib/python3/dist-packages/cloudinit; do
     if debugfs -R "stat $file" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
         fail "$file should not be present"
     else

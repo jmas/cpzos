@@ -29,6 +29,7 @@ fzf
 htop
 chafa
 rsync
+python3
 
 # First-boot account/network provisioning. rpi-preseed is what Raspberry Pi
 # Imager writes; the other packages provide the helper scripts it calls.
