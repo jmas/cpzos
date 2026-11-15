@@ -75,11 +75,11 @@ def main():
     # Tag format: YYYYMMDD-HHMMSS-commit → strip commit hash for display
     tag_short = "-".join(args.tag.split("-")[:2])  # "20260608-102710"
     if is_prerelease:
-        display_name = f"CardputerZero OS (Trixie arm64) {tag_short} (Beta)"
-        description = "Debian Trixie arm64 desktop for CardputerZero. Pre-release build."
+        display_name = f"CardputerZero CPZ (Trixie arm64) {tag_short} (Beta)"
+        description = "Terminal-first kmscon + tmux image for CardputerZero. Pre-release build."
     else:
-        display_name = "CardputerZero OS (Trixie arm64)"
-        description = "Debian Trixie arm64 desktop for CardputerZero. (建议)"
+        display_name = "CardputerZero CPZ (Trixie arm64)"
+        description = "Terminal-first kmscon + tmux image for CardputerZero."
 
     new_entry = {
         "name": display_name,
@@ -91,7 +91,7 @@ def main():
         "image_download_size": args.download_size,
         "image_download_sha256": args.download_sha256,
         "release_date": args.release_date,
-        "init_format": "cloudinit-rpi",
+        "init_format": "rpi-preseed",
         "devices": ["m5-cardputerzero", "pi3-64bit"],
         "architecture": "armv8",
         "capabilities": ["i2c", "spi", "serial", "usb_otg"],
