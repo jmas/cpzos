@@ -9,6 +9,11 @@ Raspberry Pi OS 64 bit images are based primarily on Debian.
 **Note**: 32 bit images should be built from the `master` branch.
 64 bit images should be built from the `arm64` branch.
 
+> **CardputerZero CPZ kmscon branch.** This branch replaces the desktop and
+> APPLaunch launcher with a kmscon + tmux terminal session. See
+> [docs/CPZ-KMSCON.md](docs/CPZ-KMSCON.md) and
+> [config.cpz.example](config.cpz.example).
+
 ## Dependencies
 
 pi-gen runs on Debian-based operating systems released after 2017, and we

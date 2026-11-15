@@ -2,7 +2,7 @@ name: Build CardputerZero OS Image (arm64)
 
 on:
   push:
-    branches: [arm64]
+    branches: [arm64, cpz-kmscon]
   workflow_dispatch:
     inputs:
       release_channel:
@@ -13,18 +13,14 @@ on:
         options:
           - Beta
           - Stable
-      applaunch_artifact_url:
-        description: '测试模式：launcher Actions artifact 页面 URL（留空=正常 release 构建）'
-        required: false
-        type: string
 
 permissions:
   contents: write
   actions: read
 
 jobs:
-  build-desktop:
-    name: Build desktop image (arm64)
+  build-kmscon:
+    name: Build CPZ kmscon image (arm64)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
 
@@ -61,76 +57,21 @@ jobs:
           KEYBOARD_KEYMAP=us
           KEYBOARD_LAYOUT="English (US)"
           TIMEZONE_DEFAULT=Asia/Shanghai
+          STAGE_LIST="stage0 stage1 stage2 stage-cpz"
+          DISABLE_FIRST_BOOT_USER_RENAME=1
+          ENABLE_CLOUD_INIT=0
+          PASSWORDLESS_SUDO=0
           CONFIG
           sed -i 's/^          //' config
 
-          # Skip stage5 (full = desktop + recommended extras we don't need)
+          # stage5 is not part of the CPZ image.
           touch stage5/SKIP stage5/SKIP_IMAGES
 
-      - name: Validate APPLaunch artifact URL
-        if: github.event_name == 'workflow_dispatch' && inputs.applaunch_artifact_url != ''
-        env:
-          ARTIFACT_URL: ${{ inputs.applaunch_artifact_url }}
-          GH_TOKEN: ${{ secrets.LAUNCHER_ARTIFACT_TOKEN || secrets.APP_RELEASES_TOKEN || github.token }}
-        run: |
-          set -euo pipefail
-
-          if [[ "${{ inputs.release_channel }}" != "Beta" ]]; then
-            echo "::error::测试模式只允许 release_channel=Beta，当前为 '${{ inputs.release_channel }}'"
-            exit 1
-          fi
-
-          URL_RE='^https://github\.com/([^/]+)/([^/]+)/actions/runs/([0-9]+)/artifacts/([0-9]+)/?$'
-          if [[ ! "$ARTIFACT_URL" =~ $URL_RE ]]; then
-            echo "::error::无效的 launcher Actions artifact URL: $ARTIFACT_URL"
-            echo "期望格式: https://github.com/CardputerZero/launcher/actions/runs/<run_id>/artifacts/<artifact_id>"
-            exit 1
-          fi
-
-          owner="${BASH_REMATCH[1]}"
-          repo="${BASH_REMATCH[2]}"
-          run_id="${BASH_REMATCH[3]}"
-          artifact_id="${BASH_REMATCH[4]}"
-
-          if [[ "${owner}/${repo}" != "CardputerZero/launcher" ]]; then
-            echo "::error::测试模式只支持 CardputerZero/launcher 的 artifact，当前为 ${owner}/${repo}"
-            exit 1
-          fi
-
-          API_PATH="repos/${owner}/${repo}/actions/artifacts/${artifact_id}"
-          echo "查询 artifact metadata: ${API_PATH}"
-          if ! ARTIFACT_INFO=$(gh api "$API_PATH" \
-            --jq '[.name, (.size_in_bytes|tostring), (.expired|tostring), ((.workflow_run.id // 0)|tostring)] | @tsv' 2>&1); then
-            echo "::error::无法读取 artifact metadata（${API_PATH}）。请确认 token 对 CardputerZero/launcher 具有 Actions: Read 权限。"
-            echo "$ARTIFACT_INFO"
-            exit 1
-          fi
-          IFS=$'\t' read -r artifact_name size_in_bytes expired meta_run_id <<< "$ARTIFACT_INFO"
-
-          if [[ "$expired" != "false" ]]; then
-            echo "::error::artifact ${artifact_id} 已过期（expired=${expired}），请重新运行 launcher 构建后使用新的 artifact URL"
-            exit 1
-          fi
-          if [[ "$artifact_name" != "applaunch-arm64" ]]; then
-            echo "::error::artifact 名称必须为 applaunch-arm64，当前为 '${artifact_name}'"
-            exit 1
-          fi
-
-          echo "Artifact 校验通过："
-          echo "  name=${artifact_name}"
-          echo "  size_in_bytes=${size_in_bytes}"
-          echo "  run id=${run_id}"
-          echo "  artifact id=${artifact_id}"
-          if [[ "$meta_run_id" != "0" && "$meta_run_id" != "$run_id" ]]; then
-            echo "::warning::artifact metadata 中的 run id (${meta_run_id}) 与 URL 中的 run id (${run_id}) 不一致"
-          fi
+      - name: Verify CPZ stage structure
+        run: ./tools/verify-kmscon-stage.sh
 
       - name: Build image
-        run: sudo GITHUB_TOKEN="${GITHUB_TOKEN}" APPLAUNCH_ARTIFACT_URL="${APPLAUNCH_ARTIFACT_URL}" APPLAUNCH_ARTIFACT_TOKEN="${APPLAUNCH_ARTIFACT_TOKEN}" XZ_DEFAULTS="-T0" ./build.sh
-        env:
-          GITHUB_TOKEN: ${{ secrets.APP_RELEASES_TOKEN || github.token }}
-          APPLAUNCH_ARTIFACT_URL: ${{ inputs.applaunch_artifact_url }}
-          APPLAUNCH_ARTIFACT_TOKEN: ${{ secrets.LAUNCHER_ARTIFACT_TOKEN || secrets.APP_RELEASES_TOKEN || github.token }}
+        run: sudo XZ_DEFAULTS="-T0" ./build.sh
 
       - name: Fix deploy permissions
         run: sudo chown -R $(id -u):$(id -g) deploy/
@@ -142,7 +83,7 @@ jobs:
           find deploy/ -type f | sort
           FILE=$(find deploy/ -type f \( -name "*.img.xz" -o -name "*.zip" \) ! -name "*-lite*" | head -1)
           if [[ -z "$FILE" ]]; then
-            echo "No desktop image found"
+            echo "No CPZ image found"
             find deploy/ -type f
             exit 1
           fi
@@ -183,17 +124,16 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cardputerzero-desktop
+          name: cardputerzero-kmscon
           path: ${{ steps.image.outputs.path }}
 
       - name: Collect component versions
         id: components
         run: |
           set -euo pipefail
-          # Read component versions from the image artifacts, as in the v0.6 CI.
           VERIFY_LOG="deploy/full-image-verification.log"
-          LAUNCHER_TAG=$(awk '
-            /applaunch package installed \(v/ {
+          KMSCON_VER=$(awk '
+            /kmscon package installed \(v/ {
               value = $0
               sub(/^.*\(v/, "", value)
               sub(/\).*$/, "", value)
@@ -201,8 +141,7 @@ jobs:
               exit
             }
           ' "$VERIFY_LOG")
-          [ -n "$LAUNCHER_TAG" ] || { echo "APPLaunch version missing from verification log"; exit 1; }
-          LAUNCHER_RELEASE="unknown"
+          [ -n "$KMSCON_VER" ] || { echo "kmscon version missing from verification log"; exit 1; }
 
           KERNEL_VER=$(awk '$2 == "linux-image-rpi-v8" { print $3; exit }' \
             "${{ steps.image.outputs.info }}")
@@ -223,11 +162,10 @@ jobs:
           }
           DRIVER_COMMIT="${DRIVER_COMMIT:0:7}"
 
-          echo "launcher_version=$LAUNCHER_TAG" >> "$GITHUB_OUTPUT"
-          echo "launcher_release=$LAUNCHER_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "kmscon_version=$KMSCON_VER" >> "$GITHUB_OUTPUT"
           echo "kernel_version=$KERNEL_VER" >> "$GITHUB_OUTPUT"
           echo "driver_commit=$DRIVER_COMMIT" >> "$GITHUB_OUTPUT"
-          echo "Components: launcher=$LAUNCHER_TAG ($LAUNCHER_RELEASE) kernel=$KERNEL_VER driver=$DRIVER_COMMIT"
+          echo "Components: kmscon=$KMSCON_VER kernel=$KERNEL_VER driver=$DRIVER_COMMIT"
 
       - name: Create release
         id: release
@@ -244,7 +182,8 @@ jobs:
             --notes "Built from pi-gen commit ${GITHUB_SHA}
 
           **Components:**
-          - Launcher (APPLaunch): ${{ steps.components.outputs.launcher_version }} (release: ${{ steps.components.outputs.launcher_release }})
+          - UI: CPZ kmscon + tmux
+          - kmscon: ${{ steps.components.outputs.kmscon_version }}
           - Kernel: ${{ steps.components.outputs.kernel_version }}
           - Driver overlay: m5stack/m5stack-linux-dtoverlays @ ${{ steps.components.outputs.driver_commit }}
           - CONFIG_CARDPUTERO_V0_5: y (enabled)" \
@@ -258,8 +197,8 @@ jobs:
           cat > /tmp/build-info.json <<EOF
           {
             "pigen_commit": "${GITHUB_SHA}",
-            "launcher_version": "${{ steps.components.outputs.launcher_version }}",
-            "launcher_release": "${{ steps.components.outputs.launcher_release }}",
+            "ui": "cpz-kmscon-tmux",
+            "kmscon_version": "${{ steps.components.outputs.kmscon_version }}",
             "kernel_version": "${{ steps.components.outputs.kernel_version }}",
             "driver_commit": "${{ steps.components.outputs.driver_commit }}",
             "config_cardputero_v0_5": true
@@ -284,7 +223,8 @@ jobs:
           NOTES="Built from pi-gen commit ${GITHUB_SHA}
 
           **Components:**
-          - Launcher (APPLaunch): ${{ steps.components.outputs.launcher_version }} (release: ${{ steps.components.outputs.launcher_release }})
+          - UI: CPZ kmscon + tmux
+          - kmscon: ${{ steps.components.outputs.kmscon_version }}
           - Kernel: ${{ steps.components.outputs.kernel_version }}
           - Driver overlay: m5stack/m5stack-linux-dtoverlays @ ${{ steps.components.outputs.driver_commit }}
           - CONFIG_CARDPUTERO_V0_5: y (enabled)
@@ -293,69 +233,3 @@ jobs:
           gh release edit "${{ steps.release.outputs.tag }}" --notes "$NOTES"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  check-lite:
-    name: Verify lite build (no upload)
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 120
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y coreutils quilt parted debootstrap zerofree zip \
-            dosfstools libarchive-tools libcap2-bin grep rsync xz-utils file git curl bc \
-            gpg pigz xxd arch-test qemu-user-static kmod binfmt-support e2fsprogs
-
-      - name: Configure lite build
-        run: |
-          cat > config <<'CONFIG'
-          IMG_NAME=cardputerzero-trixie-arm64
-          RELEASE=trixie
-          DEPLOY_COMPRESSION=xz
-          TARGET_HOSTNAME=cardputerzero
-          FIRST_USER_NAME=pi
-          FIRST_USER_PASS=raspberry
-          ENABLE_SSH=1
-          LOCALE_DEFAULT=en_US.UTF-8
-          KEYBOARD_KEYMAP=us
-          KEYBOARD_LAYOUT="English (US)"
-          TIMEZONE_DEFAULT=Asia/Shanghai
-          CONFIG
-          sed -i 's/^          //' config
-          touch stage3/SKIP stage4/SKIP stage5/SKIP
-          touch stage3/SKIP_IMAGES stage4/SKIP_IMAGES stage5/SKIP_IMAGES
-
-      - name: Build lite image
-        run: sudo GITHUB_TOKEN="${GITHUB_TOKEN}" XZ_DEFAULTS="-T0" ./build.sh
-        env:
-          GITHUB_TOKEN: ${{ secrets.APP_RELEASES_TOKEN || github.token }}
-
-      - name: Fix deploy permissions
-        run: sudo chown -R $(id -u):$(id -g) deploy/
-
-      - name: Find lite image
-        id: lite
-        run: |
-          FILE=$(find deploy/ -name "*-lite.img.xz" | head -1)
-          echo "Lite image: $FILE"
-          ls -lh "$FILE"
-          xz -dk "$FILE"
-          IMG_RAW="${FILE%.xz}"
-          echo "path=$FILE" >> "$GITHUB_OUTPUT"
-          echo "raw=$IMG_RAW" >> "$GITHUB_OUTPUT"
-          echo "✓ Lite build succeeded"
-
-      - name: Verify lite image contents
-        run: |
-          sudo apt-get install -y e2fsprogs
-          sudo ./tools/verify-image.sh "${{ steps.lite.outputs.raw }}"
-
-      - name: Upload artifact (90 days, no release)
-        uses: actions/upload-artifact@v4
-        with:
-          name: cardputerzero-lite
-          path: ${{ steps.lite.outputs.path }}

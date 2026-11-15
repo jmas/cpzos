@@ -1,0 +1,6 @@
+# CPZ boot tuning. The CardputerZero hardware stage owns the display/splash
+# configuration; do not duplicate dtoverlay, splash_screen, gpu_mem or the CM0
+# overlay here.
+
+camera_auto_detect=0
+display_auto_detect=0

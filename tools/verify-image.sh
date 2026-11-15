@@ -197,37 +197,58 @@ else
 fi
 
 echo ""
-echo "[4/6] APPLaunch"
+echo "[4/6] CPZ kmscon session"
 
-if debugfs -R "stat usr/share/APPLaunch/bin/M5CardputerZero-APPLaunch" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
-    pass "APPLaunch binary installed"
-else
-    fail "APPLaunch binary MISSING"
-fi
-
-if debugfs -R "cat usr/lib/systemd/user/APPLaunch.service" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "ExecStart"; then
-    pass "APPLaunch user service exists"
-else
-    # Try alternative path
-    if debugfs -R "cat lib/systemd/user/APPLaunch.service" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "ExecStart"; then
-        pass "APPLaunch user service exists"
+for file in usr/bin/kmscon usr/local/bin/cpz-kmscon usr/local/bin/cpz-login \
+    etc/profile.d/cpz-session.sh etc/tmux.conf etc/kmscon/kmscon.conf \
+    etc/systemd/system/kmsconvt@tty1.service.d/10-cpz.conf; do
+    if debugfs -R "stat $file" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
+        pass "$file exists"
     else
-        fail "APPLaunch user service MISSING"
+        fail "$file MISSING"
     fi
+done
+
+if debugfs -R "cat etc/kmscon/kmscon.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "multi-monitor=scaled"; then
+    pass "kmscon: multi-monitor=scaled"
+else
+    fail "kmscon: multi-monitor=scaled MISSING"
 fi
 
-# APPLaunch is installed but intentionally not enabled by default.
-if debugfs -R "ls etc/systemd/user/default.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "APPLaunch"; then
-    fail "APPLaunch user service enabled by default"
+if debugfs -R "cat etc/tmux.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "status-position top"; then
+    pass "tmux: status-position top"
 else
-    pass "APPLaunch user service not enabled by default"
+    fail "tmux: status-position top MISSING"
 fi
 
-if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "APPLaunch"; then
-    fail "APPLaunch system service enabled by default"
+if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "kmsconvt@tty1"; then
+    pass "kmsconvt@tty1 enabled"
 else
-    pass "APPLaunch system service not enabled by default"
+    fail "kmsconvt@tty1 NOT enabled"
 fi
+
+if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "kmsconvt@tty2"; then
+    pass "kmsconvt@tty2 enabled"
+else
+    fail "kmsconvt@tty2 NOT enabled"
+fi
+
+if debugfs -R "stat etc/systemd/system/getty@tty1.service" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Fast link dest: /dev/null"; then
+    pass "getty@tty1 masked"
+else
+    fail "getty@tty1 NOT masked"
+fi
+
+# The old launcher/desktop must not ship in the CPZ image.
+for file in usr/share/APPLaunch/bin/M5CardputerZero-APPLaunch \
+    usr/lib/systemd/system/LaunchWizard.service \
+    usr/bin/fb-mirror.py usr/share/applications/fb-mirror.desktop; do
+    if debugfs -R "stat $file" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
+        fail "$file should not be present"
+    else
+        pass "$file absent"
+    fi
+done
 
 echo ""
 echo "[5/6] Modprobe configuration"
@@ -257,12 +278,18 @@ set +e
 debugfs -R "cat var/lib/dpkg/status" "$TMPDIR/root.ext4" > "$TMPDIR/dpkg_status" 2>/dev/null
 echo "  dpkg_status size: $(wc -c < "$TMPDIR/dpkg_status") bytes"
 
-if grep -q "^Package: applaunch$" "$TMPDIR/dpkg_status"; then
-    APPLAUNCH_STATUS=$(sed -n '/^Package: applaunch$/,/^$/p' "$TMPDIR/dpkg_status")
-    VER=$(printf '%s\n' "$APPLAUNCH_STATUS" | awk '$1 == "Version:" { print $2; exit }')
-    pass "applaunch package installed (v$VER)"
+if grep -q "^Package: kmscon$" "$TMPDIR/dpkg_status"; then
+    KMSCON_STATUS=$(sed -n '/^Package: kmscon$/,/^$/p' "$TMPDIR/dpkg_status")
+    VER=$(printf '%s\n' "$KMSCON_STATUS" | awk '$1 == "Version:" { print $2; exit }')
+    pass "kmscon package installed (v$VER)"
 else
-    fail "applaunch package NOT installed"
+    fail "kmscon package NOT installed"
+fi
+
+if grep -q "^Package: tmux$" "$TMPDIR/dpkg_status"; then
+    pass "tmux installed"
+else
+    fail "tmux NOT installed"
 fi
 
 if grep -q "^Package: fastfetch$" "$TMPDIR/dpkg_status"; then

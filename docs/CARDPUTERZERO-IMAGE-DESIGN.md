@@ -1,5 +1,9 @@
 # CardputerZero Image 定制设计
 
+> **Legacy design note.** The `cpz-kmscon` branch replaces the desktop and
+> APPLaunch launcher described below with a kmscon + tmux terminal session.
+> See [CPZ-KMSCON.md](CPZ-KMSCON.md) for the current boot path.
+
 ## 一、设备当前状态 (对比官方镜像)
 
 ### 自定义 config.txt 差异

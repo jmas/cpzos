@@ -1,0 +1,17 @@
+#!/bin/sh
+# Autologin for the CPZ kmscon session.
+#
+# kmscon runs this as root. Resolve uid 1000 at service start instead of baking
+# in a username: Raspberry Pi Imager/rpi-preseed may rename the first user on
+# first boot. login(1) creates the real PAM/logind session, which gives
+# systemd --user, PipeWire and XDG_RUNTIME_DIR the expected environment.
+set -eu
+
+user=$(getent passwd 1000 | cut -d: -f1 || true)
+case "$user" in
+	[a-z]*) ;;
+	*) exit 1 ;;
+esac
+printf '%s\n' "$user" | grep -Eq '^[a-z][-a-z0-9_]*$' || exit 1
+
+exec /bin/login -f "$user"

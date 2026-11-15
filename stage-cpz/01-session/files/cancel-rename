@@ -1,0 +1,25 @@
+#!/bin/sh
+# CPZ OS replacement for userconf-pi's /usr/bin/cancel-rename.
+#
+# The packaged version configures getty / LightDM autologin for Raspberry Pi
+# OS. CPZ OS boots through greetd on tty1, so only finish the SSH rename
+# bookkeeping and leave the VT alone. cpz-greetd-config rebuilds the greetd
+# autologin user from uid 1000 before greetd starts.
+set -eu
+
+rm -f /etc/ssh/sshd_config.d/rename_user.conf
+rm -f /var/lib/userconf-pi/autologin
+
+# install.sh grants this account the two timedatectl commands Settings needs.
+# userconf renamed the account before calling us, so retarget that rule.
+NEW_USER=${1:-}
+case "$NEW_USER" in
+	[a-z]*) ;;
+	*) NEW_USER= ;;
+esac
+if [ -n "$NEW_USER" ] && [ -f /etc/sudoers.d/cpz-time ]; then
+	sed -i "s/^[^[:space:]]* /$NEW_USER /" /etc/sudoers.d/cpz-time
+fi
+
+systemctl --quiet disable userconfig.service 2>/dev/null || true
+exit 0

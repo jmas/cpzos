@@ -1,0 +1,5 @@
+# The CPZ stage is the final stage. Keep the image name stable; the existing
+# release and OSS tooling expect the cardputerzero-trixie-arm64 prefix.
+if [ "${USE_QEMU}" = "1" ]; then
+	export IMG_SUFFIX="${IMG_SUFFIX:-}-qemu"
+fi

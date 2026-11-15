@@ -1,0 +1,39 @@
+# CPZ terminal session. kmscon itself is installed by 00-kmscon.
+tmux
+
+# Input, network and audio plumbing used by the CPZ status bar and settings.
+network-manager
+iw
+rfkill
+bluez
+bluez-tools
+alsa-utils
+pipewire
+wireplumber
+rtkit
+
+# Fonts: Terminus gives the 6x12 cell grid on the 320x170 panel.
+fonts-dejavu-core
+fontconfig
+fonts-terminus
+fonts-terminus-otb
+
+# Terminal tooling.
+nano
+vim
+lf
+file
+util-linux
+xdg-utils
+fzf
+htop
+chafa
+rsync
+
+# First-boot account/network provisioning. rpi-preseed is what Raspberry Pi
+# Imager writes; the other packages provide the helper scripts it calls.
+raspberrypi-sys-mods
+userconf-pi
+raspi-config
+rpi-preseed
+whois
