@@ -21,7 +21,7 @@ install -m 0644 files/kmsconvt@tty1.service.d/10-cpz.conf \
 	"${ROOTFS_DIR}/etc/systemd/system/kmsconvt@tty1.service.d/10-cpz.conf"
 
 # userconf-pi's cancel-rename enables getty/LightDM for Raspberry Pi OS. The
-# CPZ image has neither on tty1; keep only the SSH/sudoers bookkeeping so a
+# CPZ image has neither on tty1; keep only the SSH/rename bookkeeping so an
 # rpi-preseed rename does not undo the kmscon session.
 install -d -m 0755 "${ROOTFS_DIR}/usr/local/share/cpz"
 install -m 0755 files/cancel-rename \

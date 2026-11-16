@@ -11,12 +11,12 @@ It is intentionally small:
 stage0       debootstrap / apt / firmware
 stage1       minimal bootable system
 stage2       Raspberry Pi OS base + CardputerZero hardware
-stage-cpz    kmscon + tmux login session
+stage3       kmscon + tmux login session
 export-image final image export
 ```
 
-There is no desktop, launcher, NOOBS, cloud-init, Mathematica, or stage3/4/5.
-Those paths were removed from this branch so the build is shorter and the image
+There is no desktop, launcher, NOOBS, cloud-init, Mathematica, or desktop/full
+image stages. Those paths were removed so the build is shorter and the image
 contains only components used by the CPZ terminal session.
 
 The hardware stage still supports the CM0 panel, keyboard, audio, battery,
@@ -69,11 +69,9 @@ Results are written to `deploy/`.
 | `IMG_NAME` | Image name used by the work directory |
 | `IMG_FILENAME` / `ARCHIVE_FILENAME` | Output file names |
 | `RELEASE` | Debian release (`trixie` for this branch) |
-| `STAGE_LIST` | `stage0 stage1 stage2 stage-cpz` |
 | `DEPLOY_COMPRESSION` | `xz`, `zip`, or `none` |
 | `TARGET_HOSTNAME` | Hostname written into the image |
 | `FIRST_USER_NAME` / `FIRST_USER_PASS` | First user account |
-| `DISABLE_FIRST_BOOT_USER_RENAME` | Keep the account fixed instead of asking on first boot |
 | `ENABLE_SSH` | Enable the SSH server |
 | `PASSWORDLESS_SUDO` | Give the first user passwordless sudo |
 | `LOCALE_DEFAULT`, `KEYBOARD_KEYMAP`, `KEYBOARD_LAYOUT`, `TIMEZONE_DEFAULT` | System defaults |
@@ -83,8 +81,8 @@ Additional pi-gen options such as `APT_PROXY`, `WPA_COUNTRY`,
 `PUBKEY_SSH_FIRST_USER`, `PUBKEY_ONLY_SSH`, `USE_QEMU`, `WORK_DIR`,
 `DEPLOY_DIR` and `CLEAN` are still supported by `build.sh`.
 
-`STAGE_LIST` defaults to the four stages above, so a missing config does not
-accidentally build the wrong order.
+`STAGE_LIST` defaults to `stage*`, which builds `stage0`, `stage1`, `stage2`
+and `stage3` in order.
 
 ## Layout
 
@@ -92,7 +90,7 @@ accidentally build the wrong order.
 stage0/                      bootstrap and firmware pinning
 stage1/                      boot files, network, base packages
 stage2/05-cardputerzero/     CM0 hardware, splash, audio, kernel modules
-stage-cpz/                   kmscon and tmux session
+stage3/                      kmscon and tmux session
 export-image/                image finalisation
 scripts/                     pi-gen helpers
 tools/verify-kmscon-stage.sh host-side structural checks (no root)

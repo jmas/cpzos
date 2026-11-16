@@ -17,6 +17,20 @@ append_config_file() {
 	done <"$source"
 }
 
+remove_cmdline_tokens() {
+	local file="$1"
+	shift
+	[ -f "$file" ] || return 0
+	local token drop out=""
+	for token in $(tr '\n' ' ' <"$file"); do
+		for drop in "$@"; do
+			[ "$token" = "$drop" ] && continue 2
+		done
+		out="${out}${out:+ }${token}"
+	done
+	printf '%s\n' "$out" >"$file"
+}
+
 append_cmdline_file() {
 	local file="$1" source="$2"
 	[ -f "$file" ] && [ -f "$source" ] || return 0
@@ -33,6 +47,8 @@ append_cmdline_file() {
 
 append_config_file "${ROOTFS_DIR}/boot/firmware/config.txt" \
 	files/config.txt.append
+remove_cmdline_tokens "${ROOTFS_DIR}/boot/firmware/cmdline.txt" \
+	console=serial0,115200 splash plymouth.ignore-serial-consoles
 append_cmdline_file "${ROOTFS_DIR}/boot/firmware/cmdline.txt" \
 	files/cmdline.append
 
@@ -74,7 +90,7 @@ if [ "${CPZ_DEBUG_BOOT:-0}" = "1" ]; then
 	fi
 
 	install -m 0644 /dev/null "${ROOTFS_DIR}/etc/cpz-debug-boot"
-	echo "stage-cpz: CPZ_DEBUG_BOOT=1 (splash off, verbose console, kmscon masked)"
+	echo "stage3: CPZ_DEBUG_BOOT=1 (splash off, verbose console, kmscon masked)"
 fi
 
 # Never ship a preseed file; Imager writes the user's one at flash time.
@@ -82,23 +98,6 @@ rm -f "${ROOTFS_DIR}/boot/firmware/rpi-preseed.toml"
 
 on_chroot <<'CHROOT'
 set -e
-export DEBIAN_FRONTEND=noninteractive
-
-# cloud-init is not part of this branch and conflicts with rpi-preseed; purge
-# it defensively when reusing an older rootfs.
-if dpkg -s cloud-init >/dev/null 2>&1 || dpkg -s rpi-cloud-init-mods >/dev/null 2>&1; then
-	apt-get purge -y cloud-init rpi-cloud-init-mods || true
-fi
-rm -rf /etc/cloud /var/lib/cloud
-
-# Desktop/launcher leftovers from the old image path. Those stages are removed
-# from this branch, but keep this defensive for image reuse and upgrades.
-for pkg in applaunch packagekit packagekit-tools cups cups-browsed lightdm; do
-	if dpkg -s "$pkg" >/dev/null 2>&1; then
-		apt-get purge -y "$pkg" || true
-	fi
-done
-apt-get autoremove -y --purge || true
 
 # kmscon is the only login surface on tty1. tty2 keeps a visible recovery
 # login through kmscon as well; fbcon is mapped off for the panel.
@@ -121,11 +120,9 @@ else
 	systemctl mask getty@tty1.service || true
 fi
 
-# The old first-boot wizard belongs to Raspberry Pi OS. rpi-preseed handles
-# account/network setup on this image.
+# rpi-preseed owns account/network setup on this image.
 systemctl disable userconfig.service || true
 systemctl mask userconfig.service || true
-rm -f /etc/xdg/autostart/piwiz.desktop
 
 # Boot budget: do not block or wake for network, package or man-page work.
 systemctl mask NetworkManager-wait-online.service || true

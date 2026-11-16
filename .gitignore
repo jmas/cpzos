@@ -4,7 +4,6 @@ config
 postrun.sh
 SKIP
 SKIP_IMAGES
-!stage2/SKIP_IMAGES
 .pc
 *-pc
 .vscode/

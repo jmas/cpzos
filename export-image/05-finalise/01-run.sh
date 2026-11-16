@@ -23,10 +23,6 @@ if [ -f "${ROOTFS_DIR}/etc/initramfs-tools/update-initramfs.conf" ]; then
 	sed -i 's/^MODULES=.*/MODULES=dep/' "${ROOTFS_DIR}/etc/initramfs-tools/initramfs.conf"
 fi
 
-if [ -d "${ROOTFS_DIR}/home/${FIRST_USER_NAME}/.config" ]; then
-	chmod 700 "${ROOTFS_DIR}/home/${FIRST_USER_NAME}/.config"
-fi
-
 rm -f "${ROOTFS_DIR}/usr/bin/qemu-arm-static"
 
 if [ "${USE_QEMU}" != "1" ]; then
@@ -50,21 +46,15 @@ rm -f "${ROOTFS_DIR}/etc/subgid-"
 rm -f "${ROOTFS_DIR}"/var/cache/debconf/*-old
 rm -f "${ROOTFS_DIR}"/var/lib/dpkg/*-old
 
-rm -f "${ROOTFS_DIR}"/usr/share/icons/*/icon-theme.cache
-
 rm -f "${ROOTFS_DIR}/var/lib/dbus/machine-id"
 
-# Match official RPi pi-gen: write "uninitialized" so systemd 257 detects first boot.
-# systemd treats both empty and "uninitialized" as first-boot trigger.
-# Official RPi OS uses this exact approach and firstboot works.
+# Mark the image as first boot so systemd runs first-boot services such as
+# rpi-resize. Do not bake a real machine-id into the image.
 echo "uninitialized" > "${ROOTFS_DIR}/etc/machine-id"
 
 ln -nsf /proc/mounts "${ROOTFS_DIR}/etc/mtab"
 
 find "${ROOTFS_DIR}/var/log/" -type f -exec cp /dev/null {} \;
-
-rm -f "${ROOTFS_DIR}/root/.vnc/private.key"
-rm -f "${ROOTFS_DIR}/etc/vnc/updateid"
 
 update_issue "$(basename "${EXPORT_DIR}")"
 install -m 644 "${ROOTFS_DIR}/etc/rpi-issue" "${ROOTFS_DIR}/boot/firmware/issue.txt"

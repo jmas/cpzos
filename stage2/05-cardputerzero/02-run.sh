@@ -5,8 +5,9 @@
 # This is the upstream CardputerZero stage with the launcher/OOBE blocks removed
 # (fork change for CPZ OS): APPLaunch, LaunchWizard, the piwiz/lightdm first-boot
 # wizard and the keyboard guide are not installed. Everything that makes the
-# CM0 hardware work on the panel - boot splash, cmdline, i2c, rfkill, backlight,
-# journald and PipeWire realtime/volume defaults - is kept exactly as upstream.
+# CM0 hardware work on the panel - boot splash, i2c, rfkill, backlight, journald
+# and PipeWire realtime/volume defaults - is kept here; boot policy lives in
+# stage3.
 
 # Boot splash: firmware start.elf/fixup.dat + BMP splash.
 install -m 644 files/start.elf "${ROOTFS_DIR}/boot/firmware/start.elf"
@@ -71,26 +72,7 @@ on_chroot << 'CHROOT'
 systemctl enable rtkit-daemon.service
 CHROOT
 
-# Append custom cmdline parameters for CardputerZero.
-sed -i 's/$/ quiet fbcon=map:off cfg80211.ieee80211_regdom=AE/' \
-    "${ROOTFS_DIR}/boot/firmware/cmdline.txt"
-
-# Clean up CardputerZero cmdline tokens.
-for cmd in "${ROOTFS_DIR}/boot/firmware/cmdline.txt" "${ROOTFS_DIR}/boot/cmdline.txt"; do
-    [ -f "$cmd" ] || continue
-    awk '
-        {
-            out = ""
-            for (i = 1; i <= NF; i++) {
-                if ($i != "console=serial0,115200" && $i != "splash" && $i != "plymouth.ignore-serial-consoles") {
-                    out = out (out == "" ? "" : " ") $i
-                }
-            }
-            print out
-        }
-    ' "$cmd" > "${cmd}.tmp"
-    mv "${cmd}.tmp" "$cmd"
-done
+# Kernel cmdline and boot policy belong to stage3 (the CPZ session stage).
 
 # Module load config
 cat > "${ROOTFS_DIR}/etc/modules-load.d/cardputerzero.conf" << 'EOF'

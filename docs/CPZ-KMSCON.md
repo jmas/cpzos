@@ -90,6 +90,13 @@ The debug image:
 It should show kernel/systemd logs on the panel/HDMI and a login prompt on
 tty1/tty2. If it shows nothing, the failure is before the CPZ UI.
 
+## First boot
+
+`export-image/05-finalise` writes `uninitialized` to `/etc/machine-id` so
+systemd treats the image as a first boot and runs `rpi-resize.service`. Do not
+bake a real machine-id into the image, or the root partition will not expand on
+first boot.
+
 ## Hardware checks
 
 Run these on a real CM0 before adding the CPZ bar/settings layer:

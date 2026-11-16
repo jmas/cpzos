@@ -15,8 +15,5 @@ KEYBOARD_KEYMAP="us"
 KEYBOARD_LAYOUT="English (US)"
 TIMEZONE_DEFAULT="Asia/Shanghai"
 
-# The CPZ image uses only the hardware stage plus the kmscon session stage.
-STAGE_LIST="stage0 stage1 stage2 stage-cpz"
-DISABLE_FIRST_BOOT_USER_RENAME=1
 PASSWORDLESS_SUDO=0
 CPZ_DEBUG_BOOT=0

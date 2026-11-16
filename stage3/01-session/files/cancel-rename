@@ -1,0 +1,12 @@
+#!/bin/sh
+# CPZ replacement for userconf-pi's /usr/bin/cancel-rename.
+#
+# The packaged helper configures getty/LightDM autologin for Raspberry Pi OS.
+# CPZ uses kmscon on tty1, so only finish the rename bookkeeping and leave the
+# virtual terminal alone.
+set -eu
+
+rm -f /etc/ssh/sshd_config.d/rename_user.conf
+rm -f /var/lib/userconf-pi/autologin
+systemctl --quiet disable userconfig.service 2>/dev/null || true
+exit 0

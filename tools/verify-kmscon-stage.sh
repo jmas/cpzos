@@ -45,19 +45,18 @@ not_in_code() {
 
 echo "== stage layout =="
 for file in \
-	stage-cpz/prerun.sh \
-	stage-cpz/EXPORT_IMAGE \
-	stage-cpz/00-kmscon/00-run.sh \
-	stage-cpz/01-session/00-packages \
-	stage-cpz/01-session/01-run.sh \
-	stage-cpz/01-session/02-run.sh \
-	stage-cpz/01-session/files/kmscon.conf \
-	stage-cpz/01-session/files/cpz-kmscon \
-	stage-cpz/01-session/files/cpz-login \
-	stage-cpz/01-session/files/cpz-session.sh \
-	stage-cpz/01-session/files/tmux.conf \
-	stage-cpz/01-session/files/cancel-rename \
-	stage2/SKIP_IMAGES \
+	stage3/prerun.sh \
+	stage3/EXPORT_IMAGE \
+	stage3/00-kmscon/00-run.sh \
+	stage3/01-session/00-packages \
+	stage3/01-session/01-run.sh \
+	stage3/01-session/02-run.sh \
+	stage3/01-session/files/kmscon.conf \
+	stage3/01-session/files/cpz-kmscon \
+	stage3/01-session/files/cpz-login \
+	stage3/01-session/files/cpz-session.sh \
+	stage3/01-session/files/tmux.conf \
+	stage3/01-session/files/cancel-rename \
 	config.cpz.example \
 	config.debug.example \
 	docs/M5-IMAGER.md \
@@ -67,10 +66,12 @@ done
 
 echo "== regular image layout =="
 for file in \
-	stage3 \
+	stage-cpz \
 	stage4 \
 	stage5 \
 	export-noobs \
+	stage2/EXPORT_IMAGE \
+	stage2/SKIP_IMAGES \
 	stage2/03-accept-mathematica-eula \
 	stage2/04-cloud-init \
 	stage2/05-cardputerzero/03-run.sh \
@@ -79,7 +80,11 @@ for file in \
 	stage2/05-cardputerzero/files/fb-mirror.desktop \
 	stage2/05-cardputerzero/files/template.zip \
 	stage2/05-cardputerzero/files/kernel8-splash.img \
-	docs/CARDPUTERZERO-IMAGE-DESIGN.md; do
+	export-image/01-user-rename \
+	docs/CARDPUTERZERO-IMAGE-DESIGN.md \
+	docs/fix-firstboot-partition-expand.md \
+	tools/compare-images.sh \
+	tools/fix-os-list-init-format.sh; do
 	absent "$file"
 done
 
@@ -88,13 +93,13 @@ for pkg in adbd fastfetch cmatrix pulseaudio-utils python3-cairo python3-gi-cair
 done
 
 for script in \
-	stage-cpz/prerun.sh \
-	stage-cpz/00-kmscon/00-run.sh \
-	stage-cpz/01-session/01-run.sh \
-	stage-cpz/01-session/02-run.sh \
-	stage-cpz/01-session/files/cpz-kmscon \
-	stage-cpz/01-session/files/cpz-login \
-	stage-cpz/01-session/files/cpz-session.sh \
+	stage3/prerun.sh \
+	stage3/00-kmscon/00-run.sh \
+	stage3/01-session/01-run.sh \
+	stage3/01-session/02-run.sh \
+	stage3/01-session/files/cpz-kmscon \
+	stage3/01-session/files/cpz-login \
+	stage3/01-session/files/cpz-session.sh \
 	tools/verify-kmscon-stage.sh \
 	tools/make-m5stack-entry.py; do
 	if [ -x "$ROOT/$script" ]; then ok; else bad "$script is not executable"; fi
@@ -110,17 +115,22 @@ not_in_code stage2/05-cardputerzero/02-run.sh "LaunchWizard"
 not_in_code stage2/05-cardputerzero/02-run.sh "lightdm"
 
 echo "== kmscon session =="
-contains stage-cpz/00-kmscon/00-run.sh "10.0.4-1~bpo13+1"
-contains stage-cpz/01-session/files/kmscon.conf "multi-monitor=scaled"
-contains stage-cpz/01-session/files/kmscon.conf "font-name=Terminus"
-contains stage-cpz/01-session/files/tmux.conf "status-position top"
-contains stage-cpz/01-session/02-run.sh "kmsconvt@tty1.service"
-contains stage-cpz/01-session/02-run.sh "kmsconvt@tty2.service"
-contains stage-cpz/01-session/02-run.sh "rpi-preseed.service"
-contains stage-cpz/01-session/02-run.sh "mask getty@tty1.service"
+contains stage3/00-kmscon/00-run.sh "10.0.4-1~bpo13+1"
+contains stage3/01-session/files/kmscon.conf "multi-monitor=scaled"
+contains stage3/01-session/files/kmscon.conf "font-name=Terminus"
+contains stage3/01-session/files/tmux.conf "status-position top"
+contains stage3/01-session/02-run.sh "kmsconvt@tty1.service"
+contains stage3/01-session/02-run.sh "kmsconvt@tty2.service"
+contains stage3/01-session/02-run.sh "rpi-preseed.service"
+contains stage3/01-session/02-run.sh "mask getty@tty1.service"
 contains stage2/05-cardputerzero/02-run.sh "fb_load.service"
-contains config.cpz.example 'STAGE_LIST="stage0 stage1 stage2 stage-cpz"'
-not_contains stage2/EXPORT_IMAGE 'IMG_SUFFIX="-lite"'
+contains build.sh 'STAGE_LIST=${STAGE_LIST:-${BASE_DIR}/stage*}'
+not_contains config.cpz.example 'STAGE_LIST='
+not_contains stage2/05-cardputerzero/02-run.sh 'cmdline.txt'
+not_contains export-image/04-set-partuuid/00-run.sh 'console=serial0,115200'
+contains stage3/01-session/02-run.sh 'remove_cmdline_tokens'
+contains stage3/01-session/files/cmdline.append 'fbcon=map:off'
+not_contains stage3/01-session/files/cancel-rename 'greetd'
 
 echo
 echo "verify-kmscon-stage: $pass passed, $fail failed"

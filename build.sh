@@ -206,7 +206,6 @@ export TARGET_HOSTNAME=${TARGET_HOSTNAME:-raspberrypi}
 
 export FIRST_USER_NAME=${FIRST_USER_NAME:-pi}
 export FIRST_USER_PASS
-export DISABLE_FIRST_BOOT_USER_RENAME=${DISABLE_FIRST_BOOT_USER_RENAME:-0}
 export PASSWORDLESS_SUDO="${PASSWORDLESS_SUDO:-0}"
 export WPA_COUNTRY
 export ENABLE_SSH="${ENABLE_SSH:-0}"
@@ -287,17 +286,6 @@ if [[ ! "$FIRST_USER_NAME" =~ ^[a-z][-a-z0-9_]*$ ]]; then
 	exit 1
 fi
 
-if [[ "$DISABLE_FIRST_BOOT_USER_RENAME" == "1" ]] && [ -z "${FIRST_USER_PASS}" ]; then
-	echo "To disable user rename on first boot, FIRST_USER_PASS needs to be set"
-	echo "Not setting FIRST_USER_PASS makes your system vulnerable and open to cyberattacks"
-	exit 1
-fi
-
-if [[ "$DISABLE_FIRST_BOOT_USER_RENAME" == "1" ]]; then
-	echo "User rename on the first boot is disabled"
-	echo "Be advised of the security risks linked to shipping a device with default username/password set."
-fi
-
 if [[ -n "${APT_PROXY}" ]] && ! curl --silent "${APT_PROXY}" >/dev/null ; then
 	echo "Could not reach APT_PROXY server: ${APT_PROXY}"
 	exit 1
@@ -315,10 +303,8 @@ fi
 
 log "Begin ${BASE_DIR}"
 
-# There is one regular CPZ image. Keep the order explicit: stage-cpz must
-# always run after the Raspberry Pi OS base stages (a plain stage* glob would
-# sort it before stage0 because '-' sorts before '0').
-STAGE_LIST=${STAGE_LIST:-"${BASE_DIR}/stage0 ${BASE_DIR}/stage1 ${BASE_DIR}/stage2 ${BASE_DIR}/stage-cpz"}
+# stage0 -> stage1 -> stage2 -> stage3 (CPZ terminal session).
+STAGE_LIST=${STAGE_LIST:-${BASE_DIR}/stage*}
 export STAGE_LIST
 
 EXPORT_CONFIG_DIR=$(realpath "${EXPORT_CONFIG_DIR:-"${BASE_DIR}/export-image"}")
