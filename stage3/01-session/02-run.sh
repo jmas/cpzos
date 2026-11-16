@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-# Boot and service policy for the CPZ fbcon session.
+# Boot and service policy for the CPZ kmscon session.
 #
 # Hardware enablement, splash, kernel modules and boot firmware remain owned by
 # stage2/05-cardputerzero. This stage only replaces the login/UI surface.
@@ -111,7 +111,7 @@ if [ -n "${CPZ_HDMI_VIDEO:-}" ]; then
 fi
 
 # Debug boot: show a verbose console on the panel/HDMI plus serial. This is
-# the image to use when the normal fbcon session produces a black screen.
+# the image to use when the normal kmscon session produces a black screen.
 if [ "${CPZ_DEBUG_BOOT:-0}" = "1" ]; then
 	config="${ROOTFS_DIR}/boot/firmware/config.txt"
 	cmdline="${ROOTFS_DIR}/boot/firmware/cmdline.txt"
@@ -156,25 +156,31 @@ rm -f "${ROOTFS_DIR}/boot/firmware/rpi-preseed.toml"
 on_chroot <<'CHROOT'
 set -e
 
-# fbcon is the login surface: tty1 is the CPZ session and is moved between the
-# internal panel and HDMI by cpz-hdmi-console; tty2/tty3 are recovery logins.
+# kmscon owns tty1 and the CPZ session inside it; cpz-kmscon-output picks the
+# output every two seconds. tty2/tty3 are fbcon recovery logins.
 systemctl set-default multi-user.target
 
 if [ -f /etc/cpz-debug-boot ]; then
 	# Debug image: keep tty1/tty2 as visible getty consoles so the
-	# kernel/systemd log and a login prompt are available. Also drop the CPZ
-	# autologin so tty1/tty2 show a real login prompt.
+	# kernel/systemd log and a login prompt are available. kmscon must not
+	# take the VT, otherwise the logs would be hidden.
 	rm -f /etc/systemd/system/getty@tty1.service.d/10-cpz-autologin.conf
 	rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
+	systemctl disable kmsconvt@tty1.service 2>/dev/null || true
+	systemctl mask kmsconvt@tty1.service || true
+	systemctl disable cpz-kmscon-output.timer 2>/dev/null || true
 	systemctl unmask getty@tty1.service getty@tty2.service getty@tty3.service || true
 	systemctl enable getty@tty1.service getty@tty2.service getty@tty3.service || true
 else
-	# fbcon owns both displays: tty1 is mapped to fb1 (internal panel) and
-	# tty2 to fb0 (HDMI). The kernel console/getty path is proven on fb1.
-	systemctl unmask getty@tty1.service getty@tty2.service getty@tty3.service || true
-	systemctl enable getty@tty1.service
-	systemctl enable getty@tty2.service
-	systemctl enable getty@tty3.service
+	# kmscon owns tty1 and the CPZ session inside it. getty@tty1 is masked
+	# so an upgrade or a stray getty.target dependency cannot take the VT
+	# back. tty2/tty3 stay plain fbcon recovery logins.
+	systemctl disable getty@tty1.service 2>/dev/null || true
+	systemctl mask getty@tty1.service || true
+	systemctl unmask kmsconvt@tty1.service || true
+	systemctl enable kmsconvt@tty1.service
+	systemctl unmask getty@tty2.service getty@tty3.service || true
+	systemctl enable getty@tty2.service getty@tty3.service
 fi
 
 # /tmp is a tmpfs sized from RAM by systemd. On the small-RAM CM0 the default

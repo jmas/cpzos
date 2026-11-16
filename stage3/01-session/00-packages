@@ -1,4 +1,5 @@
-# CPZ terminal session (fbcon + tmux).
+# CPZ terminal session (kmscon + tmux). kmscon itself is installed by
+# 00-kmscon.
 tmux
 
 # Input, network and audio plumbing used by the CPZ status bar and settings.
@@ -11,9 +12,12 @@ bluez-tools
 pipewire
 wireplumber
 
-# Fonts: the fbcon session uses Terminus PSF fonts only. The OTB/X11 variant
-# and the DejaVu font stack are not used by the console session.
+# Fonts: kmscon renders Terminus through FreeType, so the OTB build is
+# required. The PSF build stays for the fbcon recovery consoles on tty2/tty3.
+fonts-dejavu-core
+fontconfig
 fonts-terminus
+fonts-terminus-otb
 
 # Terminal tooling.
 nano

@@ -1,6 +1,5 @@
 [Unit]
-Description=Reconcile the CPZ console with the panel and HDMI output
-After=systemd-udev-settle.service
+Description=Keep the CPZ kmscon session on one output (HDMI or panel)
 # The reconciler is idempotent and short-lived. A monitor can emit a burst of
 # DRM hotplug uevents, so do not let systemd's start rate limit turn a
 # legitimate hotplug into a failed unit.
@@ -8,4 +7,4 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/cpz-hdmi-console
+ExecStart=/usr/local/bin/cpz-kmscon-output --auto

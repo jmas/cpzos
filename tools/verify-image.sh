@@ -197,42 +197,37 @@ else
 fi
 
 echo ""
-echo "[4/6] CPZ fbcon session"
+echo "[4/6] CPZ kmscon session"
 
-for file in usr/local/bin/cpz-getty usr/local/bin/cpz-first-login \
+for file in usr/local/bin/cpz-first-login \
     usr/local/bin/cpz-settings usr/local/bin/cpz-status \
-    usr/local/bin/cpz-apply-settings usr/local/bin/cpz-console-theme \
-    usr/local/bin/cpz-hdmi-console \
+    usr/local/bin/cpz-apply-settings \
+    usr/local/bin/cpz-kmscon usr/local/bin/cpz-kmscon-config \
+    usr/local/bin/cpz-kmscon-output usr/local/bin/cpz-login \
     usr/local/bin/cpz-session-save usr/local/bin/cpz-session-restore \
     usr/local/bin/cpz-tab-info usr/local/bin/cpz-tab-close-key \
     usr/local/bin/cpz-session-save-as-user usr/local/bin/cpz-conn-status \
-    usr/local/bin/cpz-brightness usr/local/bin/cpz-screen-timeout \
+    usr/local/bin/cpz-brightness \
     usr/local/bin/cpz-keyboard-layout \
     usr/local/bin/cpz-layout-next usr/local/bin/cpz-display-toggle \
+    usr/bin/kmscon \
+    etc/kmscon/kmscon.conf \
+    etc/systemd/system/kmsconvt@tty1.service.d/10-cpz.conf \
     etc/udev/rules.d/99-cpz-backlight.rules \
     etc/udev/rules.d/99-cpz-keyboard.rules \
-    etc/udev/rules.d/99-cpz-hdmi-console.rules \
+    etc/udev/rules.d/99-cpz-kmscon-output.rules \
     etc/systemd/system/cpz-keyboard-layout.service \
     etc/systemd/system/cpz-keyboard-layout.path \
     etc/systemd/system/cardputerzero-keymap.service \
-    usr/bin/con2fbmap \
-    usr/local/sbin/cpz-font-scale \
-    usr/share/consolefonts/Lat15-Terminus12x6.psf.gz \
-    usr/share/consolefonts/Lat15-Terminus16.psf.gz \
-    usr/share/consolefonts/Lat15-Terminus18x10.psf.gz \
-    usr/share/consolefonts/Lat15-Terminus20x10.psf.gz \
-    usr/share/consolefonts/Lat15-Terminus22x11.psf.gz \
-    usr/share/consolefonts/Lat15-Terminus24x12.psf.gz \
-    usr/share/consolefonts/Lat15-Terminus28x14.psf.gz \
-    usr/share/consolefonts/Lat15-Terminus32x16.psf.gz \
-    etc/systemd/system/cpz-hdmi-console.service \
-    etc/systemd/system/cpz-hdmi-console.timer \
-    etc/systemd/system-sleep/cpz-hdmi \
+    etc/systemd/system/cpz-kmscon-output.service \
+    etc/systemd/system/cpz-kmscon-output.timer \
+    etc/systemd/system-sleep/cpz-kmscon \
     etc/systemd/system/cpz-session-save.service \
     etc/systemd/system/cpz-session-save.timer \
     etc/systemd/system/cpz-conn-status.service \
     etc/systemd/system/cpz-conn-status.timer \
     usr/bin/nmtui usr/bin/bt-agent \
+    usr/share/fonts/opentype/terminus/terminus-normal.otb \
     etc/polkit-1/rules.d/50-cpz-networkmanager.rules \
     etc/systemd/system/cpz-bt-agent.service \
     etc/profile.d/cpz-session.sh etc/tmux.conf \
@@ -244,8 +239,7 @@ for file in usr/local/bin/cpz-getty usr/local/bin/cpz-first-login \
     etc/cpz/themes/cpz-kanagawa.palette \
     etc/cpz/themes/cpz-github-light.palette \
     etc/cpz/themes/cpz-mono.palette \
-    etc/cpz/themes/cpz-light-high-contrast.palette \
-    etc/systemd/system/getty@tty1.service.d/10-cpz-autologin.conf; do
+    etc/cpz/themes/cpz-light-high-contrast.palette; do
     if debugfs -R "stat $file" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
         pass "$file exists"
     else
@@ -300,10 +294,10 @@ else
     fail "cpz-settings: Resources entry MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-console-theme" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "P%X%s"; then
-    pass "cpz-console-theme applies OSC palette"
+if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "palette-background"; then
+    pass "cpz-kmscon-config renders the theme palette"
 else
-    fail "cpz-console-theme invalid or MISSING"
+    fail "cpz-kmscon-config palette rendering MISSING"
 fi
 
 if debugfs -R "cat etc/cpz/themes/cpz-mono.palette" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "15="; then
@@ -351,10 +345,17 @@ else
     fail "rpi-update apt pin MISSING"
 fi
 
-if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "getty@tty1"; then
-    pass "getty@tty1 enabled"
+if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "kmsconvt@tty1"; then
+    pass "kmsconvt@tty1 enabled"
 else
-    fail "getty@tty1 NOT enabled"
+    fail "kmsconvt@tty1 NOT enabled"
+fi
+
+if debugfs -R "stat etc/systemd/system/getty@tty1.service" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "/dev/null"; then
+    pass "getty@tty1 masked"
+else
+    fail "getty@tty1 NOT masked"
 fi
 
 if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "getty@tty2"; then
@@ -397,10 +398,10 @@ else
     fail "first user NOT in bluetooth group"
 fi
 
-if debugfs -R "cat etc/systemd/system/getty@tty1.service.d/10-cpz-autologin.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "/usr/local/bin/cpz-getty"; then
-    pass "getty@tty1 autologin wrapper"
+if debugfs -R "cat etc/systemd/system/kmsconvt@tty1.service.d/10-cpz.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "/usr/local/bin/cpz-kmscon"; then
+    pass "kmscon autologin wrapper"
 else
-    fail "getty@tty1 autologin wrapper MISSING"
+    fail "kmscon autologin wrapper MISSING"
 fi
 
 if debugfs -R "ls etc/systemd/system/paths.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-keyboard-layout.path"; then
@@ -415,10 +416,10 @@ else
     fail "keyboard removal watcher MISSING"
 fi
 
-if debugfs -R "ls etc/systemd/system/timers.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-hdmi-console.timer"; then
-    pass "cpz-hdmi-console timer enabled"
+if debugfs -R "ls etc/systemd/system/timers.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-kmscon-output.timer"; then
+    pass "cpz-kmscon-output timer enabled"
 else
-    fail "cpz-hdmi-console timer NOT enabled"
+    fail "cpz-kmscon-output timer NOT enabled"
 fi
 
 if debugfs -R "ls etc/systemd/system/timers.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-session-save.timer"; then
@@ -475,24 +476,18 @@ else
     fail "settings: panel font size MISSING"
 fi
 
-if debugfs -R "cat etc/cpz/settings.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "font_hdmi=auto"; then
-    pass "settings: HDMI font size present"
-else
-    fail "settings: HDMI font size MISSING"
-fi
-
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null |
+if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "get_setting font_panel"; then
-    pass "cpz-hdmi-console reads the panel font setting"
+    pass "cpz-kmscon-config reads the panel font setting"
 else
-    fail "cpz-hdmi-console panel font setting MISSING"
+    fail "cpz-kmscon-config panel font setting MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "get_setting font_hdmi"; then
-    pass "cpz-hdmi-console reads the HDMI font setting"
+if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "font-size=%s"; then
+    pass "cpz-kmscon-config renders the kmscon font size"
 else
-    fail "cpz-hdmi-console HDMI font setting MISSING"
+    fail "cpz-kmscon-config font size MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "page_items"; then
@@ -609,116 +604,86 @@ else
     fail "cpz-session-restore invalid or MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "con2fbmap"; then
-    pass "cpz-hdmi-console uses con2fbmap"
+if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "hdmi_probe"; then
+    pass "cpz-kmscon-output probes the HDMI connector"
 else
-    fail "cpz-hdmi-console invalid or MISSING"
+    fail "cpz-kmscon-output invalid or MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "select_console_font"; then
-    pass "cpz-hdmi-console selects font from framebuffer size"
+if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "bl_power"; then
+    pass "cpz-kmscon-output switches the panel backlight off"
 else
-    fail "cpz-hdmi-console dynamic font selection MISSING"
+    fail "cpz-kmscon-output panel power-off MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "cpz-font-scale"; then
-    pass "cpz-hdmi-console scales fonts for large HDMI modes"
+if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "hdmi_pinned"; then
+    pass "cpz-kmscon-output honours a pinned HDMI mode without EDID"
 else
-    fail "cpz-hdmi-console scaled-font support MISSING"
+    fail "cpz-kmscon-output pinned-mode override MISSING"
 fi
 
-for font in 12x6 18x10 20x10 22x11 24x12 28x14 32x16; do
-    if debugfs -R "dump usr/share/consolefonts/Lat15-Terminus${font}.psf.gz $TMPDIR/cpz-font.psf.gz" \
-        "$TMPDIR/root.ext4" >/dev/null 2>&1 &&
-        gzip -dc "$TMPDIR/cpz-font.psf.gz" > "$TMPDIR/cpz-font.psf" &&
-        grep -aq $'\xe2\x96\x80\xff' "$TMPDIR/cpz-font.psf"; then
-        pass "Terminus ${font} font has QR half-block glyphs"
-    else
-        fail "Terminus ${font} font QR half-block glyphs MISSING"
-    fi
-done
-
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "panel_display_off"; then
-    pass "cpz-hdmi-console turns the panel off on HDMI"
+if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "hdmi_debounce"; then
+    pass "cpz-kmscon-output debounces the HDMI switch"
 else
-    fail "cpz-hdmi-console panel power-off MISSING"
+    fail "cpz-kmscon-output debounce MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "console_geometry"; then
-    pass "cpz-hdmi-console reconciles console geometry"
+if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "dpms-timeout=%s"; then
+    pass "cpz-kmscon-config renders the screen timeout"
 else
-    fail "cpz-hdmi-console geometry check MISSING"
+    fail "cpz-kmscon-config dpms-timeout MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "hdmi_preferred_mode"; then
-    pass "cpz-hdmi-console detects fallback HDMI modes"
+if debugfs -R "cat etc/kmscon/kmscon.conf" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "multi-monitor=scaled"; then
+    pass "kmscon keeps the panel grid on HDMI"
 else
-    fail "cpz-hdmi-console fallback-mode detection MISSING"
+    fail "kmscon multi-monitor config MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "hdmi_pinned_token"; then
-    pass "cpz-hdmi-console honours a pinned HDMI mode without EDID"
+if debugfs -R "cat usr/local/bin/cpz-kmscon" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q -- "--login -- /usr/local/bin/cpz-login"; then
+    pass "cpz-kmscon starts the autologin wrapper"
 else
-    fail "cpz-hdmi-console pinned-mode override MISSING"
+    fail "cpz-kmscon autologin wiring MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "fb_blank_level"; then
-    pass "cpz-hdmi-console recovers on unblank"
+if debugfs -R "cat etc/systemd/system-sleep/cpz-kmscon" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q -- "--force"; then
+    pass "cpz-kmscon resume hook"
 else
-    fail "cpz-hdmi-console unblank recovery MISSING"
+    fail "cpz-kmscon resume hook MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-screen-timeout" "$TMPDIR/root.ext4" 2>/dev/null | grep -q -- "-powerdown 0"; then
-    pass "screen timeout does not DPMS-powerdown HDMI"
-else
-    fail "screen timeout still uses DPMS powerdown"
-fi
-
-if debugfs -R "cat etc/systemd/system-sleep/cpz-hdmi" "$TMPDIR/root.ext4" 2>/dev/null | grep -q -- "--force"; then
-    pass "cpz-hdmi resume hook"
-else
-    fail "cpz-hdmi resume hook MISSING"
-fi
-
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "resize-window"; then
-    pass "cpz-hdmi-console refreshes tmux size"
-else
-    fail "cpz-hdmi-console tmux resize MISSING"
-fi
-
-if debugfs -R "cat usr/local/bin/cpz-hdmi-console" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q 'decide_target'; then
-    pass "cpz-hdmi-console decides the output via decide_target"
-else
-    fail "cpz-hdmi-console output policy MISSING"
-fi
-
-if debugfs -R "cat etc/udev/rules.d/99-cpz-hdmi-console.rules" "$TMPDIR/root.ext4" 2>/dev/null |
+if debugfs -R "cat etc/udev/rules.d/99-cpz-kmscon-output.rules" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "systemctl --no-block start"; then
-    pass "HDMI hotplug wakes the console reconciler"
+    pass "HDMI hotplug wakes the kmscon reconciler"
 else
     fail "HDMI hotplug udev rule MISSING"
 fi
 
-if debugfs -R "cat etc/systemd/system/cpz-hdmi-console.timer" "$TMPDIR/root.ext4" 2>/dev/null |
+if debugfs -R "cat etc/systemd/system/cpz-kmscon-output.timer" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "AccuracySec"; then
-    pass "cpz-hdmi-console timer keeps sub-second accuracy"
+    pass "cpz-kmscon-output timer keeps sub-second accuracy"
 else
-    fail "cpz-hdmi-console timer accuracy MISSING"
+    fail "cpz-kmscon-output timer accuracy MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-getty" "$TMPDIR/root.ext4" 2>/dev/null | grep -q -- "--autologin"; then
-    pass "cpz-getty: agetty --autologin"
+if debugfs -R "cat usr/local/bin/cpz-login" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "getent passwd 1000"; then
+    pass "cpz-login: resolves uid 1000"
 else
-    fail "cpz-getty: agetty --autologin MISSING"
+    fail "cpz-login: uid 1000 resolution MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-getty" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "getent passwd 1000"; then
-    pass "cpz-getty: resolves uid 1000"
+if debugfs -R "cat usr/local/bin/cpz-session.sh" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "/run/cpz-kmscon/session.tty"; then
+    pass "cpz-session.sh attaches only to the kmscon pty"
 else
-    fail "cpz-getty: uid 1000 resolution MISSING"
+    fail "cpz-session.sh kmscon pty detection MISSING"
 fi
 
 if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "rpi-preseed"; then
@@ -770,9 +735,15 @@ debugfs -R "cat var/lib/dpkg/status" "$TMPDIR/root.ext4" > "$TMPDIR/dpkg_status"
 echo "  dpkg_status size: $(wc -c < "$TMPDIR/dpkg_status") bytes"
 
 if grep -q "^Package: kmscon$" "$TMPDIR/dpkg_status"; then
-    fail "kmscon package should not be installed (fbcon is the session)"
+    pass "kmscon installed"
 else
-    pass "kmscon package not installed"
+    fail "kmscon package MISSING"
+fi
+
+if grep -q "^Package: fonts-terminus-otb$" "$TMPDIR/dpkg_status"; then
+    pass "Terminus OTB font installed"
+else
+    fail "fonts-terminus-otb MISSING"
 fi
 
 if grep -q "^Package: tmux$" "$TMPDIR/dpkg_status"; then

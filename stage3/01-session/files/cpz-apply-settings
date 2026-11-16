@@ -75,14 +75,15 @@ if [ -n "$style" ] && [ -n "$active_style" ]; then
 	done
 fi
 
-# Match tmux's 16-colour palette and the console palette to the theme.
+# Match tmux's 16-colour palette to the theme. The kmscon terminal palette is
+# rendered by cpz-kmscon-config and applied when cpz-kmscon-output restarts
+# the session for the changed configuration.
 embedded=$(sed -n 's/^# palette //p' "$conf" 2>/dev/null || true)
 if [ -n "$embedded" ]; then
 	printf '%s\n' "$embedded" | apply_palette
 elif [ -r "$theme_dir/$theme.palette" ]; then
 	apply_palette <"$theme_dir/$theme.palette"
 fi
-/usr/local/bin/cpz-console-theme 2>/dev/null || true
 
 refresh_clients() {
 	# A bare `tmux refresh-client` has no current client when this helper is
@@ -163,6 +164,6 @@ case "$(get automatic_rename)" in
 	*) tmux set -g automatic-rename on ;;
 esac
 
-# Restore brightness and console blanking from the user settings.
+# Restore brightness from the user settings. Screen blanking is kmscon's
+# dpms-timeout, rendered into the config by cpz-kmscon-config.
 /usr/local/bin/cpz-brightness 2>/dev/null || true
-/usr/local/bin/cpz-screen-timeout 2>/dev/null || true

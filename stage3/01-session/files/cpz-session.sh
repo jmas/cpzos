@@ -1,18 +1,18 @@
 # shellcheck shell=sh
 # CPZ-session bootstrap.
 #
-# tty1 is the CPZ session. cpz-hdmi-console moves that console between the
-# internal panel (fb1) and HDMI (fb0) when a display is connected or removed,
-# and picks a matching console font. tty2/tty3 stay plain recovery shells.
+# tty1 is the CPZ kmscon session. kmscon runs its child on a pty, so the CPZ
+# terminal is identified by the pty name recorded by cpz-login, not by
+# /dev/tty1. tty2/tty3 stay plain fbcon recovery shells and SSH is unaffected.
 
 [ -n "${TMUX:-}" ] && return 0
 [ -f /etc/cpz-debug-boot ] && return 0
+[ -n "${SSH_CONNECTION:-}" ] && return 0
 
 tty_name=$(tty 2>/dev/null || true)
-case "$tty_name" in
-	/dev/tty[1-3]) ;;
-	*) return 0 ;;
-esac
+marker=/run/cpz-kmscon/session.tty
+[ -r "$marker" ] || return 0
+[ "$tty_name" = "$(cat "$marker" 2>/dev/null || true)" ] || return 0
 
 cd "$HOME" 2>/dev/null || return 0
 
@@ -24,12 +24,6 @@ if [ -x /usr/local/bin/cpz-first-login ] &&
 	sleep 2
 	exit 1
 fi
-
-# Only tty1 runs the CPZ session; tty2/tty3 stay recovery shells.
-[ "$tty_name" = "/dev/tty1" ] || return 0
-
-# Apply the saved console palette before tmux starts (fbcon OSC P; no root).
-/usr/local/bin/cpz-console-theme 2>/dev/null || true
 
 # Load /etc/tmux.conf (base-index 1) before creating the first session.
 tmux start-server 2>/dev/null || true

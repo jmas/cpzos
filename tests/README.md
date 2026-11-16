@@ -3,12 +3,11 @@
 Fast checks that need no root, no Docker and no Raspberry Pi hardware.
 
 ```sh
-./tests/run.sh    # unit tests for cpz-settings and cpz-hdmi-console
+./tests/run.sh    # unit tests for cpz-settings
 ./tests/lint.sh   # shellcheck + ruff + mypy
 ```
 
-`tests/run.sh` needs only `python3` and `sh`. `tests/lint.sh` needs the dev
-tools:
+`tests/run.sh` needs only `python3`. `tests/lint.sh` needs the dev tools:
 
 ```sh
 python3 -m venv .venv
@@ -28,10 +27,7 @@ pull request (`.github/workflows/ci.yml`).
   module and checks settings precedence, defaults/clamping, save/load
   round-trip, layout normalization, the date/time editor helpers and the
   internal submenu graph (`--check-pages`).
-- `test-hdmi-console.sh` sources `cpz-hdmi-console` in library mode
-  (`CPZ_HDMI_CONSOLE_LIB=1`) and checks the output policy (panel vs HDMI) and
-  the panel/HDMI font selection for common modes without touching a console.
 
 The tests are intentionally host-only. Hardware behaviour (DRM modesets,
-hotplug timing, backlight) still needs the debug image on a device; see
-`docs/CPZ-FBCON.md`.
+kmscon hotplug, backlight) still needs the debug image on a device; see
+`docs/CPZ-KMSCON.md`.

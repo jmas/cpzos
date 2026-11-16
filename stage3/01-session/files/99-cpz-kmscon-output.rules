@@ -1,0 +1,11 @@
+# Run the kmscon output reconciler as soon as a display connector changes
+# state instead of waiting for the next cpz-kmscon-output.timer sample. DRM
+# emits this uevent on HPD (cable unplug, monitor power) with HOTPLUG=1; the
+# timer remains the fallback.
+#
+# The DRM card device is already active after boot, and systemd only acts on
+# the SYSTEMD_WANTS device property when a device first becomes active, so a
+# change event cannot use that property for repeated hotplugs. Queue the unit
+# directly instead: systemctl --no-block returns as soon as the job is queued,
+# so it does not hold up udev event processing.
+ACTION=="change", SUBSYSTEM=="drm", ENV{HOTPLUG}=="1", RUN+="/bin/systemctl --no-block start cpz-kmscon-output.service"

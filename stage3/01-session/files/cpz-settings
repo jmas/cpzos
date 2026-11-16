@@ -548,8 +548,9 @@ def apply_live(data: dict, key: str) -> None:
     elif key == "display":
         pass
     elif key in ("font_panel", "font_hdmi"):
-        # cpz-hdmi-console.timer reconciles the console font every two
-        # seconds; no privileged call is needed from the Settings pane.
+        # cpz-kmscon-config renders the font size and cpz-kmscon-output
+        # restarts the session within two seconds; no privileged call is
+        # needed from the Settings pane.
         pass
     elif key == "mode_keys":
         tmux("set", "-g", "mode-keys", data["mode_keys"])
@@ -574,7 +575,7 @@ def apply_live(data: dict, key: str) -> None:
 
 
 def apply_theme(theme: str) -> None:
-    """Apply a theme to every tmux window and to the console palette."""
+    """Apply a theme to every tmux window and pane."""
     helper = "/usr/local/bin/cpz-apply-settings"
     if os.path.exists(helper):
         try:
@@ -596,25 +597,27 @@ def apply_theme(theme: str) -> None:
     path = os.path.join(THEME_DIR, theme + ".conf")
     if os.path.exists(path):
         tmux("source-file", path)
-    apply_console_theme()
     refresh_clients()
 
 
-def apply_console_theme() -> None:
-    """Apply the full 16-colour console palette (fbcon OSC P)."""
+def output_is_hdmi() -> bool:
+    """True when cpz-kmscon-output currently drives HDMI with the panel off."""
     try:
-        subprocess.run(
-            ("/usr/local/bin/cpz-console-theme",),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        with open("/run/cpz-kmscon/output.state", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("target="):
+                    return line.strip() == "target=hdmi"
     except OSError:
         pass
+    return False
 
 
 def set_backlight_percent(percent: int) -> bool:
     percent = max(1, min(100, percent))
+    # The panel is dark while HDMI is active; the value is stored in the
+    # settings and restored by cpz-kmscon-output on the next switch.
+    if output_is_hdmi():
+        return True
     for path in glob.glob("/sys/class/backlight/*"):
         try:
             with open(os.path.join(path, "max_brightness"), "r", encoding="utf-8") as fh:
@@ -631,23 +634,13 @@ def set_backlight_percent(percent: int) -> bool:
 
 
 def apply_screen_timeout(minutes: int) -> None:
-    try:
-        fd = os.open("/dev/tty1", os.O_WRONLY)
-    except OSError:
-        return
-    try:
-        subprocess.run(
-            # Blank only. DPMS powerdown makes monitors renegotiate HDMI on
-            # wake, which changes the console scale.
-            ("setterm", "-blank", str(minutes), "-powerdown", "0"),
-            stdout=fd,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    except OSError:
-        pass
-    finally:
-        os.close(fd)
+    """Record the timeout for kmscon.
+
+    kmscon owns the VT and takes a single dpms-timeout at startup, so there is
+    no live console ioctl to change. cpz-kmscon-config renders the new value
+    into /run/cpz-kmscon/kmscon.conf and cpz-kmscon-output restarts the session
+    on its next tick.
+    """
 
 
 def wpctl_status(kind: str):
@@ -1670,12 +1663,30 @@ def hdmi_edid_size() -> int:
     return size
 
 
+def hdmi_pinned() -> bool:
+    """True when cmdline.txt pins a real HDMI mode (video=HDMI-A-N:WxH@R)."""
+    try:
+        with open("/proc/cmdline", encoding="utf-8") as fh:
+            tokens = fh.read().split()
+    except OSError:
+        return False
+    for token in tokens:
+        if not token.startswith("video=HDMI-A-"):
+            continue
+        _, _, mode = token.partition(":")
+        if "x" in mode:
+            return True
+    return False
+
+
 def hdmi_ready() -> bool:
-    return hdmi_status_text() == "connected" and hdmi_edid_size() >= 128
+    return hdmi_status_text() == "connected" and (
+        hdmi_edid_size() >= 128 or hdmi_pinned()
+    )
 
 
 def active_output_text(data: dict) -> str:
-    # Mirrors the policy in cpz-hdmi-console.
+    # Mirrors the policy in cpz-kmscon-output.
     connected = hdmi_status_text() == "connected"
     mode = data.get("display", "auto")
     if mode == "panel":
@@ -1690,8 +1701,8 @@ def active_output_text(data: dict) -> str:
 
 
 def autologin_status() -> str:
-    path = "/etc/systemd/system/getty@tty1.service.d/10-cpz-autologin.conf"
-    return "enabled" if os.path.exists(path) else "disabled"
+    path = "/etc/systemd/system/multi-user.target.wants/kmsconvt@tty1.service"
+    return "enabled (kmscon)" if os.path.exists(path) else "disabled"
 
 
 def disk_info(path: str) -> str:
@@ -2244,13 +2255,6 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "key": "font_panel",
                 "values": FONT_PANEL_CHOICES,
                 "labels": FONT_PANEL_LABELS,
-            },
-            {
-                "label": "HDMI Text Size",
-                "kind": "cycle",
-                "key": "font_hdmi",
-                "values": FONT_HDMI_CHOICES,
-                "labels": FONT_HDMI_LABELS,
             },
             {"label": "Status Bar", "kind": "submenu", "page": "statusbar"},
         ]

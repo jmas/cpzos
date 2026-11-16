@@ -1,8 +1,13 @@
 #!/bin/bash -e
 
-# Install the CPZ terminal session (fbcon + tmux).
+# Install the CPZ terminal session (kmscon + tmux).
+
+install -d -m 0755 "${ROOTFS_DIR}/etc/kmscon"
+install -m 0644 files/kmscon.conf "${ROOTFS_DIR}/etc/kmscon/kmscon.conf"
 
 install -d -m 0755 "${ROOTFS_DIR}/usr/local/bin"
+install -m 0755 files/cpz-kmscon files/cpz-kmscon-config files/cpz-login \
+	files/cpz-kmscon-output "${ROOTFS_DIR}/usr/local/bin/"
 
 install -d -m 0755 "${ROOTFS_DIR}/etc/profile.d"
 install -m 0644 files/cpz-session.sh \
@@ -19,17 +24,17 @@ install -m 0755 \
 	files/cpz-tab-close-key files/cpz-tab-info \
 	files/cpz-settings-open \
 	files/cpz-settings files/cpz-settings-shell files/cpz-status \
-	files/cpz-apply-settings files/cpz-help files/cpz-console-theme \
+	files/cpz-apply-settings files/cpz-help \
 	files/cpz-first-login \
 	files/cpz-session-save files/cpz-session-restore \
 	files/cpz-session-save-as-user files/cpz-conn-status \
-	files/cpz-brightness files/cpz-screen-timeout \
+	files/cpz-brightness \
 	files/cpz-keyboard-layout \
 	files/cpz-layout-next files/cpz-layout-apply files/cpz-display-toggle \
 	"${ROOTFS_DIR}/usr/local/bin/"
 install -d -m 0755 "${ROOTFS_DIR}/etc/udev/rules.d"
 install -m 0644 files/99-cpz-backlight.rules files/99-cpz-keyboard.rules \
-	files/99-cpz-hdmi-console.rules \
+	files/99-cpz-kmscon-output.rules \
 	"${ROOTFS_DIR}/etc/udev/rules.d/"
 install -m 0644 files/cpz-keyboard-layout.service \
 	files/cpz-keyboard-layout.path \
@@ -78,9 +83,9 @@ if [ -n "$first_home" ]; then
 		"$user_config/systemd/user" "$user_config/cpz"
 fi
 
-# The active fbcon path uses console-setup. Terminus 6x12 (53x14 cells on the
-# 320x170 panel) is the smallest readable font; the default 8x16 only fits
-# 40x10.
+# tty2/tty3 keep a plain fbcon console-setup font for recovery logins. The
+# kmscon session on tty1 does not use it (FreeType, Terminus OTB), but 6x12 is
+# the smallest readable cell on the 320x170 panel.
 console_setup="${ROOTFS_DIR}/etc/default/console-setup"
 if [ -f "$console_setup" ]; then
 	sed -i \
@@ -90,41 +95,30 @@ fi
 
 # The CardputerZero TCA8418 driver emits different keycodes for the Sym/Fn
 # layers. The vendor loadkeys map is installed by the hardware stage but was
-# never applied; without it Sym produces the default US punctuation.
+# never applied; it stays active on the fbcon recovery consoles.
 install -m 0644 files/cardputerzero-keymap.service \
 	"${ROOTFS_DIR}/etc/systemd/system/cardputerzero-keymap.service"
 
-# fbcon tty1 is the CPZ session; cpz-hdmi-console moves it between the panel
-# and HDMI. tty2/tty3 stay plain recovery logins.
-install -m 0755 files/cpz-getty "${ROOTFS_DIR}/usr/local/bin/"
+# kmscon owns tty1. The wrapper renders /run/cpz-kmscon/kmscon.conf from the
+# CPZ settings and starts the autologin session through login(1).
 install -d -m 0755 \
-	"${ROOTFS_DIR}/etc/systemd/system/getty@tty1.service.d"
-install -m 0644 files/getty@tty1.service.d/10-cpz-autologin.conf \
-	"${ROOTFS_DIR}/etc/systemd/system/getty@tty1.service.d/10-cpz-autologin.conf"
+	"${ROOTFS_DIR}/etc/systemd/system/kmsconvt@tty1.service.d"
+install -m 0644 files/kmsconvt@tty1.service.d/10-cpz.conf \
+	"${ROOTFS_DIR}/etc/systemd/system/kmsconvt@tty1.service.d/10-cpz.conf"
 
-# HDMI hotplug: move the active tty1 console to HDMI and back, with a console
-# font sized for the actual framebuffer mode (so fallback modes stay usable).
-# While HDMI is active the internal panel is cleared and switched off at the
-# backlight.
-install -m 0755 files/cpz-hdmi-console "${ROOTFS_DIR}/usr/local/bin/"
-
-# Terminal QR renderers (qrencode -t UTF8/ANSIUTF8) use the half-block glyphs
-# U+2580/U+2584. The console-setup Terminus builds keep only U+2588, so add the
-# missing block glyphs to every console font cpz-hdmi-console can select.
-install -m 0755 files/cpz-font-blocks "${ROOTFS_DIR}/usr/local/sbin/"
-# Auto HDMI text size keeps about 25 rows; the packaged Terminus fonts stop at
-# 16x32, which is too small on 1080p+ screens. cpz-font-scale derives a larger
-# cell size at runtime and caches it in /run.
-install -m 0755 files/cpz-font-scale "${ROOTFS_DIR}/usr/local/sbin/"
-install -m 0644 files/cpz-hdmi-console.service files/cpz-hdmi-console.timer \
+# One working output: HDMI when a usable monitor is attached, otherwise the
+# internal panel. The reconciler restarts kmscon when the decision or the
+# rendered configuration changes and switches the panel backlight off while
+# HDMI is active.
+install -m 0644 files/cpz-kmscon-output.service files/cpz-kmscon-output.timer \
 	"${ROOTFS_DIR}/etc/systemd/system/"
 install -d -m 0755 "${ROOTFS_DIR}/etc/systemd/system-sleep"
-install -m 0755 files/cpz-hdmi-sleep \
-	"${ROOTFS_DIR}/etc/systemd/system-sleep/cpz-hdmi"
+install -m 0755 files/cpz-kmscon-sleep \
+	"${ROOTFS_DIR}/etc/systemd/system-sleep/cpz-kmscon"
 
 # userconf-pi's cancel-rename enables getty/LightDM autologin for Raspberry Pi
-# OS. CPZ installs its own getty@tty1 autologin above; keep only the SSH/rename
-# bookkeeping so an rpi-preseed rename does not undo the CPZ console session.
+# OS. CPZ installs its own kmscon autologin above; keep only the SSH/rename
+# bookkeeping so an rpi-preseed rename does not undo the CPZ session.
 install -d -m 0755 "${ROOTFS_DIR}/usr/local/share/cpz"
 install -m 0755 files/cancel-rename \
 	"${ROOTFS_DIR}/usr/local/share/cpz/cancel-rename"
@@ -141,7 +135,7 @@ install -m 0755 /usr/local/share/cpz/cancel-rename /usr/bin/cancel-rename
 
 systemctl enable cardputerzero-keymap.service
 systemctl enable cpz-keyboard-layout.path
-systemctl enable cpz-hdmi-console.timer
+systemctl enable cpz-kmscon-output.timer
 systemctl enable cpz-session-save.timer
 systemctl enable cpz-conn-status.timer
 
@@ -154,19 +148,7 @@ if [ -n "$FIRST_USER" ]; then
 	usermod -aG bluetooth "$FIRST_USER"
 fi
 
-# Add the block glyphs missing from the packaged Terminus subsets, then apply
-# the 6x12 console font at boot (fbcon path). Only PSF2 sizes are listed:
-# cpz-font-blocks cannot patch the PSF1 Terminus14/16 files. The font files are
-# overwritten in place so console-setup's cache and cpz-hdmi-console's setfont
-# path both see the patched versions.
-/usr/local/sbin/cpz-font-blocks \
-	/usr/share/consolefonts/Lat15-Terminus12x6.psf.gz \
-	/usr/share/consolefonts/Lat15-Terminus18x10.psf.gz \
-	/usr/share/consolefonts/Lat15-Terminus20x10.psf.gz \
-	/usr/share/consolefonts/Lat15-Terminus22x11.psf.gz \
-	/usr/share/consolefonts/Lat15-Terminus24x12.psf.gz \
-	/usr/share/consolefonts/Lat15-Terminus28x14.psf.gz \
-	/usr/share/consolefonts/Lat15-Terminus32x16.psf.gz
+# Apply the 6x12 recovery-console font at boot.
 systemctl enable console-setup.service 2>/dev/null || true
 setupcon --force --save-only 2>/dev/null || true
 

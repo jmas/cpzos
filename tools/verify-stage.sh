@@ -1,5 +1,5 @@
 #!/bin/bash
-# Host-side structural checks for the CPZ fbcon image branch.
+# Host-side structural checks for the CPZ kmscon image branch.
 # No root, Docker or ARM hardware required.
 # shellcheck disable=SC2016  # grep patterns intentionally contain a literal $
 set -euo pipefail
@@ -127,16 +127,21 @@ echo "== stage layout =="
 for file in \
 	stage3/prerun.sh \
 	stage3/EXPORT_IMAGE \
+	stage3/00-kmscon/00-run.sh \
 	stage3/01-session/00-packages \
 	stage3/01-session/01-run.sh \
 	stage3/01-session/02-run.sh \
-	stage3/01-session/files/cpz-getty \
 	stage3/01-session/files/cpz-first-login \
-	stage3/01-session/files/getty@tty1.service.d/10-cpz-autologin.conf \
-	stage3/01-session/files/cpz-hdmi-console \
-	stage3/01-session/files/cpz-hdmi-console.service \
-	stage3/01-session/files/cpz-hdmi-console.timer \
-	stage3/01-session/files/cpz-hdmi-sleep \
+	stage3/01-session/files/kmscon.conf \
+	stage3/01-session/files/cpz-kmscon \
+	stage3/01-session/files/cpz-kmscon-config \
+	stage3/01-session/files/cpz-login \
+	stage3/01-session/files/cpz-kmscon-output \
+	stage3/01-session/files/cpz-kmscon-output.service \
+	stage3/01-session/files/cpz-kmscon-output.timer \
+	stage3/01-session/files/cpz-kmscon-sleep \
+	stage3/01-session/files/99-cpz-kmscon-output.rules \
+	stage3/01-session/files/kmsconvt@tty1.service.d/10-cpz.conf \
 	stage3/01-session/files/cpz-session.sh \
 	stage3/01-session/files/tmux.conf \
 	stage3/01-session/files/cpz-session-ensure \
@@ -149,7 +154,6 @@ for file in \
 	stage3/01-session/files/cpz-settings-shell \
 	stage3/01-session/files/cpz-status \
 	stage3/01-session/files/cpz-apply-settings \
-	stage3/01-session/files/cpz-console-theme \
 	stage3/01-session/files/cpz-help \
 	stage3/01-session/files/cpz-session-save \
 	stage3/01-session/files/cpz-session-restore \
@@ -160,7 +164,6 @@ for file in \
 	stage3/01-session/files/cpz-conn-status.service \
 	stage3/01-session/files/cpz-conn-status.timer \
 	stage3/01-session/files/cpz-brightness \
-	stage3/01-session/files/cpz-screen-timeout \
 	stage3/01-session/files/cpz-keyboard-layout \
 	stage3/01-session/files/cpz-layout-next \
 	stage3/01-session/files/cpz-layout-apply \
@@ -179,6 +182,7 @@ for file in \
 	config.cpz.example \
 	config.debug.example \
 	docs/M5-IMAGER.md \
+	docs/CPZ-KMSCON.md \
 	tools/make-m5stack-entry.py; do
 	have "$file"
 done
@@ -201,6 +205,7 @@ for file in \
 	stage2/05-cardputerzero/files/kernel8-splash.img \
 	export-image/01-user-rename \
 	docs/CARDPUTERZERO-IMAGE-DESIGN.md \
+	docs/CPZ-FBCON.md \
 	docs/fix-firstboot-partition-expand.md \
 	tools/compare-images.sh \
 	tools/fix-os-list-init-format.sh; do
@@ -213,12 +218,15 @@ done
 
 for script in \
 	stage3/prerun.sh \
+	stage3/00-kmscon/00-run.sh \
 	stage3/01-session/01-run.sh \
 	stage3/01-session/02-run.sh \
-	stage3/01-session/files/cpz-getty \
 	stage3/01-session/files/cpz-first-login \
-	stage3/01-session/files/cpz-hdmi-console \
-	stage3/01-session/files/cpz-hdmi-sleep \
+	stage3/01-session/files/cpz-kmscon \
+	stage3/01-session/files/cpz-kmscon-config \
+	stage3/01-session/files/cpz-login \
+	stage3/01-session/files/cpz-kmscon-output \
+	stage3/01-session/files/cpz-kmscon-sleep \
 	stage3/01-session/files/cpz-session.sh \
 	stage3/01-session/files/cpz-session-ensure \
 	stage3/01-session/files/cpz-tab-new \
@@ -230,14 +238,12 @@ for script in \
 	stage3/01-session/files/cpz-settings-shell \
 	stage3/01-session/files/cpz-status \
 	stage3/01-session/files/cpz-apply-settings \
-	stage3/01-session/files/cpz-console-theme \
 	stage3/01-session/files/cpz-help \
 	stage3/01-session/files/cpz-session-save \
 	stage3/01-session/files/cpz-session-restore \
 	stage3/01-session/files/cpz-session-save-as-user \
 	stage3/01-session/files/cpz-conn-status \
 	stage3/01-session/files/cpz-brightness \
-	stage3/01-session/files/cpz-screen-timeout \
 	stage3/01-session/files/cpz-keyboard-layout \
 	stage3/01-session/files/cpz-layout-next \
 	stage3/01-session/files/cpz-layout-apply \
@@ -265,22 +271,35 @@ contains stage3/01-session/files/tmux.conf 'cpz-session-ensure'
 contains stage3/01-session/files/tmux.conf 'window-size largest'
 contains stage3/01-session/files/cpz-session.sh 'cpz-session-ensure main'
 contains stage3/01-session/files/cpz-session.sh 'cpz-first-login'
+contains stage3/01-session/files/cpz-session.sh '/run/cpz-kmscon/session.tty'
+contains stage3/01-session/files/cpz-login '/run/cpz-kmscon/session.tty'
 contains stage3/01-session/files/cpz-first-login 'passwd'
-contains stage3/01-session/files/cpz-session.sh 'cpz-console-theme'
 contains stage3/01-session/files/cpz-conn-status.timer 'OnUnitActiveSec=30s'
 contains stage3/01-session/files/cpz-session-save.timer 'OnUnitActiveSec=5min'
-contains stage3/01-session/files/cpz-hdmi-console 'select_console_font'
-contains stage3/01-session/files/cpz-hdmi-console 'Terminus18x10'
-contains stage3/01-session/files/cpz-hdmi-console 'Terminus24x12'
-contains stage3/01-session/files/cpz-hdmi-console 'get_setting font_panel'
-contains stage3/01-session/files/cpz-hdmi-console 'get_setting font_hdmi'
-contains stage3/01-session/files/cpz-hdmi-console 'Terminus16.psf.gz'
+contains stage3/01-session/files/cpz-kmscon-config 'get_setting font_panel'
+contains stage3/01-session/files/cpz-kmscon-config 'get_setting screen_timeout'
+contains stage3/01-session/files/cpz-kmscon-config 'get_setting keyboard_layout_active'
+contains stage3/01-session/files/cpz-kmscon-config 'palette-background'
+contains stage3/01-session/files/cpz-kmscon-config 'multi-monitor=scaled'
+contains stage3/01-session/files/cpz-kmscon '--configdir /run/cpz-kmscon'
+contains stage3/01-session/files/cpz-kmscon-output 'hdmi_debounce=2'
+contains stage3/01-session/files/cpz-kmscon-output 'hdmi_edid'
+contains stage3/01-session/files/cpz-kmscon-output 'hdmi_pinned'
+contains stage3/01-session/files/cpz-kmscon-output 'bl_power'
+contains stage3/01-session/files/cpz-kmscon-output 'panel_off'
+contains stage3/01-session/files/cpz-kmscon-output 'panel_on'
+contains stage3/01-session/files/cpz-kmscon-output 'restart_session'
+contains stage3/01-session/files/cpz-kmscon-output '--status'
+contains stage3/01-session/files/cpz-kmscon-output '--recover'
+contains stage3/01-session/files/kmscon.conf 'multi-monitor=scaled'
+contains stage3/01-session/files/kmscon.conf 'term=xterm-256color'
 contains stage3/01-session/files/cpz-settings 'Panel Text Size'
-contains stage3/01-session/files/cpz-settings 'HDMI Text Size'
+not_contains stage3/01-session/files/cpz-settings 'HDMI Text Size'
 contains stage3/01-session/files/settings.conf 'font_panel=6x12'
-contains stage3/01-session/files/settings.conf 'font_hdmi=auto'
-contains stage3/01-session/01-run.sh 'Terminus18x10'
-contains stage3/01-session/01-run.sh 'Terminus24x12'
+contains stage3/01-session/files/99-cpz-kmscon-output.rules 'HOTPLUG'
+contains stage3/01-session/files/99-cpz-kmscon-output.rules 'systemctl --no-block start'
+contains stage3/01-session/01-run.sh 'cpz-kmscon-output.timer'
+contains stage3/01-session/01-run.sh '99-cpz-kmscon-output.rules'
 contains stage3/01-session/files/cpz-status '/run/cpz-conn'
 contains stage3/01-session/files/cpz-status 'show_volume'
 contains stage3/01-session/files/cpz-status 'show_brightness'
@@ -298,7 +317,7 @@ contains stage3/01-session/files/settings.conf 'show_brightness=0'
 contains stage3/01-session/files/cpz-conn-status 'E+'
 contains stage3/01-session/files/tmux.conf 'status-right-length 36'
 contains stage3/01-session/01-run.sh 'enable cpz-conn-status.timer'
-contains stage3/01-session/files/cpz-apply-settings 'cpz-console-theme'
+not_contains stage3/01-session/files/cpz-apply-settings 'cpz-console-theme'
 contains stage3/01-session/files/cpz-apply-settings '--theme'
 contains stage3/01-session/files/cpz-apply-settings 'window-active-style'
 contains stage3/01-session/files/cpz-apply-settings 'pane-colours'
@@ -308,51 +327,41 @@ contains stage3/01-session/files/cpz-settings 'cpz-apply-settings'
 contains stage3/01-session/files/cpz-settings 'refresh_clients'
 contains stage3/01-session/files/cpz-settings 'NAV_UP'
 contains stage3/01-session/files/cpz-settings 'ord("z")'
-contains stage3/01-session/files/cpz-settings 'cpz-console-theme'
-contains stage3/01-session/files/cpz-console-theme ']P%X%s'
+not_contains stage3/01-session/files/cpz-settings 'cpz-console-theme'
+absent stage3/01-session/files/cpz-console-theme
 contains stage3/01-session/files/cpz-session.sh 'cpz-session-restore'
 contains stage3/01-session/files/cpz-session-ensure '@cpz_restoring'
 contains stage3/01-session/files/tmux.conf 'cpz-session-save'
 contains stage3/01-session/01-run.sh 'enable cpz-session-save.timer'
-contains stage3/01-session/files/cpz-session.sh '/dev/tty1'
-contains stage3/01-session/01-run.sh 'cpz-hdmi-console'
+contains stage3/01-session/01-run.sh 'cpz-kmscon'
 absent stage3/01-session/files/cpz-panel-message
-contains stage3/01-session/01-run.sh 'enable cpz-hdmi-console.timer'
+contains stage3/01-session/01-run.sh 'enable cpz-kmscon-output.timer'
 contains stage3/01-session/01-run.sh 'system-sleep'
-contains stage3/01-session/files/cpz-hdmi-console '--force'
-contains stage3/01-session/files/cpz-hdmi-console 'resize-window'
-contains stage3/01-session/files/cpz-hdmi-console 'pending_file'
-contains stage3/01-session/files/cpz-hdmi-console 'hdmi_debounce=2'
-contains stage3/01-session/files/cpz-hdmi-console 'decide_target "$override" "$connected" "$ready"'
-contains stage3/01-session/files/99-cpz-hdmi-console.rules 'systemctl --no-block start'
-contains stage3/01-session/files/99-cpz-hdmi-console.rules 'HOTPLUG'
-contains stage3/01-session/01-run.sh '99-cpz-hdmi-console.rules'
-contains stage3/01-session/files/cpz-hdmi-console 'unblank_fb'
-contains stage3/01-session/files/cpz-hdmi-console '--panel'
-contains stage3/01-session/files/cpz-hdmi-console 'console_geometry'
-contains stage3/01-session/files/cpz-hdmi-console 'status_mode'
-contains stage3/01-session/files/cpz-hdmi-console 'hdmi_ready'
-contains stage3/01-session/files/cpz-hdmi-console 'hdmi_edid_size'
-contains stage3/01-session/files/cpz-hdmi-console 'hdmi_edid_ok'
-contains stage3/01-session/files/cpz-hdmi-console 'hdmi_pinned_token'
-contains stage3/01-session/files/cpz-hdmi-console 'auto decision'
-contains stage3/01-session/files/cpz-hdmi-console 'hdmi_preferred_mode'
-contains stage3/01-session/files/cpz-hdmi-console '--recover'
-contains stage3/01-session/files/cpz-hdmi-console 'fallback_file'
-contains stage3/01-session/files/cpz-hdmi-console 'fb_blank_level'
-contains stage3/01-session/files/cpz-hdmi-console 'blank_state_file'
-contains stage3/01-session/files/cpz-screen-timeout '-powerdown 0'
-contains stage3/01-session/files/cpz-settings '-powerdown", "0"'
+contains stage3/01-session/files/cpz-kmscon-output '--force'
+contains stage3/01-session/files/cpz-kmscon-output 'pending_file'
+contains stage3/01-session/files/cpz-kmscon-output 'hdmi_debounce=2'
+contains stage3/01-session/files/99-cpz-kmscon-output.rules 'systemctl --no-block start'
+contains stage3/01-session/files/99-cpz-kmscon-output.rules 'HOTPLUG'
+contains stage3/01-session/01-run.sh '99-cpz-kmscon-output.rules'
+contains stage3/01-session/files/cpz-kmscon-output '--panel'
+contains stage3/01-session/files/cpz-kmscon-output 'status_mode'
+contains stage3/01-session/files/cpz-kmscon-output 'hdmi_usable'
+contains stage3/01-session/files/cpz-kmscon-output 'hdmi_edid'
+contains stage3/01-session/files/cpz-kmscon-output 'hdmi_pinned'
+contains stage3/01-session/files/cpz-kmscon-output '--recover'
+contains stage3/01-session/files/cpz-kmscon-output 'systemctl restart'
 contains stage3/01-session/02-run.sh 'CPZ_HDMI_VIDEO'
 contains build.sh 'CPZ_HDMI_VIDEO'
 contains config.cpz.example 'CPZ_HDMI_VIDEO'
-contains stage3/01-session/files/cpz-hdmi-console 'virtual_size'
-contains stage3/01-session/files/cpz-hdmi-console 'backlight'
-contains stage3/01-session/files/cpz-hdmi-console 'bl_power'
-contains stage3/01-session/files/cpz-hdmi-console 'clear_fb'
-contains stage3/01-session/files/cpz-hdmi-console 'panel_display_off'
+contains stage3/01-session/files/cpz-kmscon-output 'backlight'
+contains stage3/01-session/files/cpz-kmscon-output 'bl_power'
+contains stage3/01-session/files/cpz-kmscon-output 'panel_on'
+not_contains stage3/01-session/files/cpz-apply-settings 'cpz-screen-timeout'
+absent stage3/01-session/files/cpz-screen-timeout
+not_contains stage3/01-session/files/cpz-settings '-powerdown'
+contains stage3/01-session/files/kmscon.conf 'dpms-timeout'
 contains stage3/01-session/files/cmdline.append 'consoleblank=0'
-contains stage3/01-session/02-run.sh 'enable getty@tty3.service'
+contains stage3/01-session/02-run.sh "enable getty@tty2.service getty@tty3.service"
 contains stage3/01-session/02-run.sh 'mask tmp.mount'
 contains stage3/01-session/01-run.sh 'install -d -m 1777'
 contains stage3/01-session/files/settings.conf 'theme=cpz-tokyo-night'
@@ -382,11 +391,11 @@ contains stage3/01-session/files/cpz-settings 'Change Password'
 contains stage3/01-session/files/cpz-settings 'VPN'
 contains stage3/01-session/files/cpz-settings 'status_interval'
 contains stage3/01-session/files/cpz-apply-settings 'cpz-brightness'
-contains stage3/01-session/files/cpz-apply-settings 'cpz-screen-timeout'
+not_contains stage3/01-session/files/cpz-apply-settings 'setterm'
 contains stage3/01-session/files/cpz-apply-settings 'mode-keys'
 contains stage3/01-session/files/cpz-apply-settings 'set-clipboard'
 contains stage3/01-session/files/cpz-apply-settings 'automatic-rename'
-contains stage3/01-session/files/cpz-hdmi-console 'display='
+contains stage3/01-session/files/cpz-kmscon-output 'get_setting display'
 contains stage3/01-session/files/99-cpz-backlight.rules 'backlight'
 contains stage3/01-session/files/cpz-keyboard-layout 'capabilities/key'
 contains stage3/01-session/files/cpz-keyboard-layout 'id/bustype'
@@ -405,7 +414,7 @@ contains stage3/01-session/01-run.sh 'cpz-keyboard-layout'
 contains stage3/01-session/files/cpz-settings 'system_info_lines'
 contains stage3/01-session/files/cpz-settings 'theme_label'
 contains stage3/01-session/files/cpz-settings 'theme_labels'
-contains stage3/01-session/files/cpz-console-theme '# palette'
+contains stage3/01-session/files/cpz-kmscon-config '# palette'
 contains stage3/01-session/files/cpz-settings 'select_popup'
 contains stage3/01-session/files/cpz-settings 'display-popup'
 contains stage3/01-session/files/cpz-settings 'Power:'
@@ -467,14 +476,12 @@ contains stage3/01-session/files/cpz-apply-settings 'status-right-length'
 contains stage3/01-session/01-run.sh 'cpz-settings'
 contains stage3/01-session/01-run.sh 'FONTSIZE="6x12"'
 contains stage3/01-session/01-run.sh 'FONTFACE="Terminus"'
-contains stage3/01-session/01-run.sh 'cpz-font-blocks'
-contains stage3/01-session/files/cpz-font-blocks '0x2580'
-contains stage3/01-session/files/cpz-font-blocks '0x2584'
-contains stage3/01-session/01-run.sh 'cpz-font-scale'
-contains stage3/01-session/files/cpz-font-scale 'nearest'
-contains stage3/01-session/files/cpz-hdmi-console 'hdmi_target_rows'
-contains stage3/01-session/files/cpz-hdmi-console 'select_auto_hdmi_font'
-contains stage3/01-session/files/cpz-hdmi-console 'cpz-font-scale'
+not_contains stage3/01-session/01-run.sh 'cpz-font-blocks'
+absent stage3/01-session/files/cpz-font-blocks
+not_contains stage3/01-session/01-run.sh 'cpz-font-scale'
+absent stage3/01-session/files/cpz-font-scale
+contains stage3/01-session/files/cpz-kmscon-config 'font_size'
+contains stage3/01-session/files/cpz-kmscon 'cpz-kmscon-config'
 contains stage3/01-session/01-run.sh 'chown 1000:1000 "$user_config"'
 contains stage2/05-cardputerzero/02-run.sh 'chown 1000:1000 "$user_config"'
 contains stage3/01-session/files/cpz-settings 'nmtui'
@@ -496,15 +503,13 @@ contains stage3/01-session/files/cpz-tab-info 'cpz_settings'
 contains stage3/01-session/files/cpz-tab-info 'cpz_tab_total'
 contains stage3/01-session/01-run.sh 'cpz-tab-close'
 contains stage3/01-session/files/cpz-session-ensure '@cpz_main'
-not_contains stage3/01-session/01-run.sh "kmscon"
-not_contains stage3/01-session/02-run.sh "kmscon"
+contains stage3/01-session/01-run.sh "kmscon"
+contains stage3/01-session/02-run.sh "kmscon"
 contains stage3/01-session/02-run.sh "rpi-preseed.service"
 contains stage3/01-session/02-run.sh "enable getty@tty1.service"
-contains stage3/01-session/01-run.sh 'getty@tty1.service.d'
-contains stage3/01-session/01-run.sh 'cpz-getty'
-contains stage3/01-session/files/cpz-getty 'getent passwd 1000'
-contains stage3/01-session/files/cpz-getty '--autologin'
-contains stage3/01-session/files/getty@tty1.service.d/10-cpz-autologin.conf '/usr/local/bin/cpz-getty'
+not_contains stage3/01-session/01-run.sh 'cpz-getty'
+absent stage3/01-session/files/cpz-getty
+absent stage3/01-session/files/getty@tty1.service.d
 contains stage3/01-session/02-run.sh \
 	'rm -f /etc/systemd/system/getty@tty1.service.d/10-cpz-autologin.conf'
 contains stage2/05-cardputerzero/02-run.sh "fb_load.service"
@@ -529,9 +534,9 @@ contains stage2/05-cardputerzero/02-run.sh 'purge -y rpi-update'
 have stage2/05-cardputerzero/files/99-cpz-no-rpi-update.pref
 contains stage2/05-cardputerzero/files/99-cpz-no-rpi-update.pref 'Pin-Priority: -1'
 contains stage2/05-cardputerzero/02-run.sh '99-cpz-no-rpi-update.pref'
-not_contains stage3/01-session/00-packages 'fonts-dejavu-core'
-not_contains stage3/01-session/00-packages 'fontconfig'
-not_contains stage3/01-session/00-packages 'fonts-terminus-otb'
+contains stage3/01-session/00-packages 'fonts-dejavu-core'
+contains stage3/01-session/00-packages 'fontconfig'
+contains stage3/01-session/00-packages 'fonts-terminus-otb'
 not_contains stage3/01-session/00-packages 'xdg-utils'
 not_contains stage3/01-session/00-packages 'alsa-utils'
 contains stage3/01-session/files/cpz-settings 'devices Connected'
@@ -557,7 +562,7 @@ echo "== host checks =="
 have tests/run.sh
 have tests/lint.sh
 have tests/test_cpz_settings.py
-have tests/shell/test-hdmi-console.sh
+absent tests/shell/test-hdmi-console.sh
 have .github/workflows/ci.yml
 contains .github/workflows/ci.yml 'pull_request'
 contains .github/workflows/ci.yml './tools/verify-stage.sh'
@@ -566,7 +571,7 @@ contains .github/workflows/ci.yml './tests/lint.sh'
 contains tests/lint.sh 'shellcheck'
 contains tests/lint.sh 'ruff'
 contains tests/lint.sh 'mypy'
-contains tests/shell/test-hdmi-console.sh 'CPZ_HDMI_CONSOLE_LIB'
+contains tests/run.sh 'cpz-settings'
 contains tests/test_cpz_settings.py 'check_pages'
 
 echo

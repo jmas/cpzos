@@ -23,6 +23,14 @@ esac
 [ "$percent" -ge 1 ] || percent=1
 [ "$percent" -le 100 ] || percent=100
 
+# While HDMI is the active output the panel is dark and its brightness is
+# stored in the settings only; cpz-kmscon-output restores it when the session
+# returns to the panel. Writing brightness here would wake the panel.
+if [ -r /run/cpz-kmscon/output.state ] &&
+	[ "$(sed -n 's/^target=//p' /run/cpz-kmscon/output.state | tail -n 1)" = hdmi ]; then
+	exit 0
+fi
+
 for backlight in /sys/class/backlight/*; do
 	[ -r "$backlight/max_brightness" ] || continue
 	max=$(cat "$backlight/max_brightness" 2>/dev/null || echo 0)

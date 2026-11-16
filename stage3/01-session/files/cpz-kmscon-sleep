@@ -1,0 +1,10 @@
+#!/bin/sh
+# systemd suspend hook: the HDMI link and the panel backlight can come back in
+# a different state after suspend. Re-apply the output decision and restart
+# kmscon, which also re-reads its generated configuration.
+case "${1:-}" in
+	post)
+		/usr/local/bin/cpz-kmscon-output --force >/dev/null 2>&1 || true
+		;;
+esac
+exit 0

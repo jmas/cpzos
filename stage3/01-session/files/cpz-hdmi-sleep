@@ -1,9 +1,0 @@
-#!/bin/sh
-# systemd suspend hook: the framebuffer mode, console font and tmux window size
-# can be reset during suspend. Re-apply the CPZ console mapping on resume.
-case "${1:-}" in
-	post)
-		/usr/local/bin/cpz-hdmi-console --force || true
-		;;
-esac
-exit 0

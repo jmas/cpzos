@@ -1,0 +1,31 @@
+#!/bin/sh
+# Autologin for the CPZ kmscon session.
+#
+# kmscon runs this as root on the pseudo-terminal it allocates for the session.
+# Resolve uid 1000 at service start instead of baking in a username: Raspberry
+# Pi Imager/rpi-preseed may rename the first user on first boot. login(1)
+# creates the real PAM/logind session, which gives systemd --user, PipeWire and
+# XDG_RUNTIME_DIR the expected environment.
+#
+# The pty name is recorded so /etc/profile.d/cpz-session.sh can tell the CPZ
+# kmscon terminal apart from SSH, a getty on tty2/tty3 and a debug boot:
+# kmscon runs its child on a pty, so `tty` is /dev/pts/N there, not /dev/tty1.
+set -eu
+
+user=$(getent passwd 1000 | cut -d: -f1 || true)
+case "$user" in
+	[a-z]*) ;;
+	*) exit 1 ;;
+esac
+printf '%s\n' "$user" | grep -Eq '^[a-z][-a-z0-9_]*$' || exit 1
+
+tty_name=$(tty 2>/dev/null || true)
+case "$tty_name" in
+	/dev/*)
+		mkdir -p /run/cpz-kmscon 2>/dev/null || true
+		printf '%s\n' "$tty_name" \
+			>/run/cpz-kmscon/session.tty 2>/dev/null || true
+		;;
+esac
+
+exec /bin/login -f "$user"

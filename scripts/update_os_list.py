@@ -80,10 +80,10 @@ def main():
     tag_short = "-".join(args.tag.split("-")[:2])  # "20260608-102710"
     if is_prerelease:
         display_name = f"CardputerZero CPZ (Trixie arm64) {tag_short} (Beta)"
-        description = "Terminal-first fbcon + tmux image for CardputerZero. Pre-release build."
+        description = "Terminal-first kmscon + tmux image for CardputerZero. Pre-release build."
     else:
         display_name = "CardputerZero CPZ (Trixie arm64)"
-        description = "Terminal-first fbcon + tmux image for CardputerZero."
+        description = "Terminal-first kmscon + tmux image for CardputerZero."
 
     new_entry = {
         "name": display_name,

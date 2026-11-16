@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   build-image:
-    name: Build CPZ fbcon image (arm64)
+    name: Build CPZ kmscon image (arm64)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
 
@@ -165,7 +165,7 @@ jobs:
             --notes "Built from pi-gen commit ${GITHUB_SHA}
 
           **Components:**
-          - UI: CPZ fbcon + tmux
+          - UI: CPZ kmscon + tmux
           - Kernel: ${{ steps.components.outputs.kernel_version }}
           - Driver overlay: m5stack/m5stack-linux-dtoverlays @ ${{ steps.components.outputs.driver_commit }}
           - CONFIG_CARDPUTERO_V0_5: y (enabled)" \
@@ -179,7 +179,7 @@ jobs:
           cat > /tmp/build-info.json <<EOF
           {
             "pigen_commit": "${GITHUB_SHA}",
-            "ui": "cpz-fbcon-tmux",
+            "ui": "cpz-kmscon-tmux",
             "kernel_version": "${{ steps.components.outputs.kernel_version }}",
             "driver_commit": "${{ steps.components.outputs.driver_commit }}",
             "config_cardputero_v0_5": true
@@ -204,7 +204,7 @@ jobs:
           NOTES="Built from pi-gen commit ${GITHUB_SHA}
 
           **Components:**
-          - UI: CPZ fbcon + tmux
+          - UI: CPZ kmscon + tmux
           - Kernel: ${{ steps.components.outputs.kernel_version }}
           - Driver overlay: m5stack/m5stack-linux-dtoverlays @ ${{ steps.components.outputs.driver_commit }}
           - CONFIG_CARDPUTERO_V0_5: y (enabled)

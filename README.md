@@ -1,7 +1,7 @@
 # CardputerZero image
 
 This branch builds the **CardputerZero CPZ** image: a terminal-first Raspberry
-Pi OS system with the CardputerZero hardware enablement plus an fbcon + tmux
+Pi OS system with the CardputerZero hardware enablement plus a kmscon + tmux
 session. This is the regular image; there is no separate desktop or lite
 variant.
 
@@ -11,7 +11,7 @@ It is intentionally small:
 stage0       debootstrap / apt / firmware
 stage1       minimal bootable system
 stage2       Raspberry Pi OS base + CardputerZero hardware
-stage3       console + tmux login session
+stage3       kmscon + tmux login session
 export-image final image export
 ```
 
@@ -19,21 +19,27 @@ There is no desktop, launcher, NOOBS, cloud-init, Mathematica, or desktop/full
 image stage. Those paths were removed so the build is shorter and the boot
 surface is limited to the CPZ terminal session.
 
-The terminal session starts tmux on tty1 with a top status bar (`current / total`
+kmscon owns tty1 and starts tmux with a top status bar (`current / total`
 working tabs, language layout, optional volume/brightness, battery, clock),
 window 1 as the shell and the last window as the `cpz-settings` TUI. Settings
-is a maintenance window and is not counted as a tab. Panels use the Terminus
-console font (6x12 by default; 8x16 is selectable in Settings). HDMI text size
-is configurable separately: `Auto` keeps about 25 rows and scales Terminus up
-for large modes, and a fixed cell size can still be pinned in Settings. Themes
-are switchable from Settings. Connecting HDMI moves the session to the external
-screen and switches the internal panel off; unplugging it returns the session
-to the panel immediately. `Alt+D` toggles back to the panel.
+is a maintenance window and is not counted as a tab. Text is rendered by
+kmscon from the Terminus OTB font; the panel uses a 12px cell (53x14) by
+default and 16px (40x10) is selectable in Settings. kmscon keeps the panel
+grid and scales the font up on HDMI, so the same layout fits both screens.
+Themes are switchable from Settings.
+
+There is exactly one working output at a time. When a usable HDMI monitor is
+attached the session is drawn there and the internal panel backlight is
+switched off; unplugging HDMI restores the panel. `Alt+D` forces the panel
+back (useful when a monitor keeps HPD asserted in standby). kmscon only reads
+its configuration at startup, so a display change or a Settings change is
+applied by restarting the session; tmux runs as a detached server, so tabs,
+panes and running programs survive the restart.
 
 The hardware stage still supports the CM0 panel, keyboard, audio, battery,
 backlight, WiFi/Bluetooth and boot splash. The terminal session replaces the
-old APPLaunch/desktop UI. See [docs/CPZ-FBCON.md](docs/CPZ-FBCON.md) for the
-boot path and recovery/debug image details.
+old APPLaunch/desktop UI. See [docs/CPZ-KMSCON.md](docs/CPZ-KMSCON.md) for the
+boot path, output policy and recovery/debug image details.
 
 ## Dependencies
 
@@ -116,7 +122,7 @@ built into a running system.
 stage0/                      bootstrap and firmware pinning
 stage1/                      boot files, network, base packages
 stage2/05-cardputerzero/     CM0 hardware, splash, audio, kernel modules
-stage3/                      console and tmux session
+stage3/                      kmscon and tmux session
 export-image/                image finalisation
 scripts/                     pi-gen helpers
 tools/verify-stage.sh host-side structural checks (no root)
@@ -135,7 +141,7 @@ Run the host-side checks after changing stages:
 Unit tests and linters (no root or device needed):
 
 ```bash
-./tests/run.sh    # cpz-settings and cpz-hdmi-console policy tests
+./tests/run.sh    # cpz-settings unit tests
 ./tests/lint.sh   # shellcheck + ruff + mypy
 ```
 

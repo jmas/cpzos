@@ -3,7 +3,7 @@
 #
 # Bound to Alt+D in tmux so the panel can be recovered even when an HDMI
 # monitor is powered off but keeps HPD asserted (the Pi cannot detect that).
-# The choice is stored like any other setting and cpz-hdmi-console applies it
+# The choice is stored like any other setting and cpz-kmscon-output applies it
 # on its next tick.
 set -u
 
