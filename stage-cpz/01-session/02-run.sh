@@ -36,6 +36,47 @@ append_config_file "${ROOTFS_DIR}/boot/firmware/config.txt" \
 append_cmdline_file "${ROOTFS_DIR}/boot/firmware/cmdline.txt" \
 	files/cmdline.append
 
+# Debug boot: keep kmscon out of the way and show a verbose console on the
+# panel/HDMI plus serial. This is the image to use when the normal kmscon
+# session produces a black screen.
+if [ "${CPZ_DEBUG_BOOT:-0}" = "1" ]; then
+	config="${ROOTFS_DIR}/boot/firmware/config.txt"
+	cmdline="${ROOTFS_DIR}/boot/firmware/cmdline.txt"
+
+	if [ -f "$config" ]; then
+		sed -i '/^[[:space:]]*splash_screen=/d' "$config"
+		sed -i '/^[[:space:]]*disable_splash=/d' "$config"
+		sed -i '1i disable_splash=1' "$config"
+	fi
+	rm -f "${ROOTFS_DIR}/boot/firmware/splash.bmp" \
+		"${ROOTFS_DIR}/boot/firmware/CardputerZero_splash_custom.bin"
+
+	if [ -f "$cmdline" ]; then
+		awk '
+			{
+				out = ""
+				for (i = 1; i <= NF; i++) {
+					if ($i != "quiet" &&
+					    $i != "fbcon=map:off" &&
+					    $i != "loglevel=3" &&
+					    $i != "vt.global_cursor_default=0" &&
+					    $i != "logo.nologo")
+						out = out (out == "" ? "" : " ") $i
+				}
+				print out
+			}
+		' "$cmdline" > "${cmdline}.tmp"
+		mv "${cmdline}.tmp" "$cmdline"
+		debug_line=$(mktemp)
+		printf '%s\n' "console=serial0,115200 console=tty1 loglevel=8 ignore_loglevel systemd.show_status=1 systemd.log_level=debug" >"$debug_line"
+		append_cmdline_file "$cmdline" "$debug_line"
+		rm -f "$debug_line"
+	fi
+
+	install -m 0644 /dev/null "${ROOTFS_DIR}/etc/cpz-debug-boot"
+	echo "stage-cpz: CPZ_DEBUG_BOOT=1 (splash off, verbose console, kmscon masked)"
+fi
+
 # Never ship a preseed file; Imager writes the user's one at flash time.
 rm -f "${ROOTFS_DIR}/boot/firmware/rpi-preseed.toml"
 
@@ -61,12 +102,23 @@ apt-get autoremove -y --purge || true
 # kmscon is the only login surface on tty1. tty2 keeps a visible recovery
 # login through kmscon as well; fbcon is mapped off for the panel.
 systemctl set-default multi-user.target
-systemctl enable kmsconvt@tty1.service
-systemctl enable kmsconvt@tty2.service
-systemctl add-wants multi-user.target kmsconvt@tty1.service
-systemctl add-wants multi-user.target kmsconvt@tty2.service
-systemctl mask getty@tty1.service || true
-systemctl disable getty@tty2.service || true
+
+if [ -f /etc/cpz-debug-boot ]; then
+	# Debug image: do not start kmscon. Keep tty1/tty2 as visible getty
+	# consoles so the kernel/systemd log and a login prompt are available.
+	systemctl disable kmsconvt@tty1.service kmsconvt@tty2.service || true
+	systemctl mask kmsconvt@tty1.service kmsconvt@tty2.service || true
+	systemctl unmask getty@tty1.service getty@tty2.service || true
+	systemctl enable getty@tty1.service getty@tty2.service || true
+else
+	systemctl disable getty@tty1.service || true
+	systemctl disable getty@tty2.service || true
+	systemctl enable kmsconvt@tty1.service
+	systemctl enable kmsconvt@tty2.service
+	systemctl add-wants multi-user.target kmsconvt@tty1.service
+	systemctl add-wants multi-user.target kmsconvt@tty2.service
+	systemctl mask getty@tty1.service || true
+fi
 
 # The old first-boot wizard belongs to Raspberry Pi OS. rpi-preseed handles
 # account/network setup on this image.

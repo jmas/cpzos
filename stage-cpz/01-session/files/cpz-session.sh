@@ -2,6 +2,7 @@
 # plain recovery shells.
 
 [ -n "${TMUX:-}" ] && return 0
+[ -f /etc/cpz-debug-boot ] && return 0
 
 if [ "$(tty 2>/dev/null || true)" != "/dev/tty1" ]; then
 	return 0
