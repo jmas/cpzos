@@ -43,6 +43,7 @@ for arg in "$@"; do
 done
 
 run_dir=/run/cpz-kmscon
+mkdir -p "$run_dir" 2>/dev/null || true
 state_file=$run_dir/output.state
 pending_file=$run_dir/output.pending
 miss_file=$run_dir/output.hdmi-miss
@@ -163,6 +164,13 @@ panel_on() {
 	done
 }
 
+session_up() {
+	# "activating" counts as up: kmscon needs a few seconds to draw, and a
+	# restart in that window would loop at boot.
+	systemctl is-active --quiet "$unit" ||
+		systemctl is-activating --quiet "$unit"
+}
+
 restart_session() {
 	if ! systemctl restart "$unit" >/dev/null 2>&1; then
 		log "restart $unit failed"
@@ -198,6 +206,10 @@ configured_target=$(sed -n 's/^target=//p' "$state_file" 2>/dev/null |
 retry_after=$(sed -n 's/^retry_after=//p' "$state_file" 2>/dev/null |
 	tail -n 1)
 last_conn=$(cat "$run_dir/conn.state" 2>/dev/null || true)
+start_fail_until=$(cat "$run_dir/start-fail" 2>/dev/null || printf 0)
+case "$start_fail_until" in
+	'' | *[!0-9]*) start_fail_until=0 ;;
+esac
 fail_conn=$(sed -n 's/^fail_conn=//p' "$state_file" 2>/dev/null | tail -n 1)
 fail_edid=$(sed -n 's/^fail_edid=//p' "$state_file" 2>/dev/null | tail -n 1)
 now=$(date +%s 2>/dev/null || printf 0)
@@ -263,10 +275,10 @@ fi
 # boot also has to make it re-scan the panel card. Nudge the DRM cards before
 # the debounce so kmscon can re-scan while the switch settles.
 if [ "${last_conn:-}" != "$conn_fingerprint" ]; then
-	log "drm: connector state is $conn_fingerprint; nudging cards"
+	log "drm: $drm_state; nudging cards"
 	nudge_drm
 	last_conn=$conn_fingerprint
-	printf '%s\n' "$last_conn" >"$run_dir/conn.state"
+	printf '%s\n' "$last_conn" >"$run_dir/conn.state" 2>/dev/null || true
 fi
 
 # Debounce the HDMI direction in auto mode. A forced panel/HDMI choice and a
@@ -278,7 +290,7 @@ if [ "$target" = hdmi ] && [ "$configured_target" != hdmi ] &&
 		'' | *[!0-9]*) count=0 ;;
 	esac
 	count=$((count + 1))
-	printf '%s\n' "$count" >"$pending_file"
+	printf '%s\n' "$count" >"$pending_file" 2>/dev/null || true
 	if [ "$count" -lt "$hdmi_debounce" ]; then
 		log "pending HDMI switch ($count/$hdmi_debounce)"
 		exit 0
@@ -294,6 +306,14 @@ fi
 
 need_restart=0
 if [ "$force" = 1 ] || [ "$recover" = 1 ] || [ "$config_state" = changed ]; then
+	need_restart=1
+fi
+
+# Self-heal: if the session is not running (failed boot start, crash loop) and
+# the start-failure backoff has expired, start it.
+if [ "$need_restart" = 0 ] && ! session_up &&
+	[ "$now" -ge "$start_fail_until" ]; then
+	log "session is not active; starting it"
 	need_restart=1
 fi
 
@@ -314,13 +334,14 @@ fi
 # Detect a hotplug that kmscon missed even after the nudges: HDMI is
 # connected and usable, but no CRTC is attached to it. Give kmscon a few ticks
 # first; a normal hotplug is handled without a restart.
-if [ "$target" = hdmi ] && [ "$hdmi_enabled" = 0 ] && [ "$need_restart" = 0 ]; then
+if [ "$target" = hdmi ] && [ "$hdmi_enabled" = 0 ] && [ "$need_restart" = 0 ] &&
+	session_up; then
 	miss=$(cat "$miss_file" 2>/dev/null || printf 0)
 	case "$miss" in
 		'' | *[!0-9]*) miss=0 ;;
 	esac
 	miss=$((miss + 1))
-	printf '%s\n' "$miss" >"$miss_file"
+	printf '%s\n' "$miss" >"$miss_file" 2>/dev/null || true
 	case "$retry_after" in
 		'' | *[!0-9]*) retry_after=0 ;;
 	esac
@@ -341,6 +362,8 @@ if [ "$need_restart" = 1 ]; then
 	fi
 	if restart_session; then
 		rm -f "$miss_file"
+		rm -f "$run_dir/start-fail"
+		start_fail_until=0
 		hdmi_probe
 		if [ "$target" = hdmi ] && [ "$hdmi_connected" = 1 ] &&
 			[ "$hdmi_enabled" = 0 ]; then
@@ -354,11 +377,14 @@ if [ "$need_restart" = 1 ]; then
 			fail_edid=""
 		fi
 		log "output: $target (session restarted)"
+	else
+		# Do not hammer a failing unit: retry in a minute.
+		printf '%s\n' "$((now + 60))" >"$run_dir/start-fail" 2>/dev/null || true
+		log "restart failed; retrying in 60s"
 	fi
 fi
 
-if [ "$target" = hdmi ] && [ "$hdmi_enabled" = 1 ] &&
-	systemctl is-active --quiet "$unit"; then
+if [ "$target" = hdmi ] && [ "$hdmi_enabled" = 1 ] && session_up; then
 	panel_off
 else
 	# Also the fallback when kmscon has not enabled HDMI yet: never hide the
