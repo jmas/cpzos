@@ -30,13 +30,19 @@ Themes are switchable from Settings: Campbell (default), Homebrew, Ocean, Red
 Sands, Terminal Basic, Man Page, Novel and PaperColor Light, plus Mono and
 Light High Contrast for accessibility.
 
-There is exactly one working output at a time. When a usable HDMI monitor is
-attached the session is drawn there and the internal panel backlight is
-switched off; unplugging HDMI restores the panel. `Alt+D` forces the panel
-back (useful when a monitor keeps HPD asserted in standby). kmscon only reads
-its configuration at startup, so a display change or a Settings change is
-applied by restarting the session; tmux runs as a detached server, so tabs,
-panes and running programs survive the restart.
+There is exactly one working output at a time. kmscon uses
+`multi-monitor=largest`: the session is drawn on HDMI and the panel screen is
+disabled when a usable monitor is attached, and the panel backlight is
+switched off. Unplugging HDMI restores the panel without restarting the
+session, so the monitor does not renegotiate its link. `Alt+D` switches to
+clone mode and forces the panel back (useful when a monitor keeps HPD asserted
+in standby). Settings changes that kmscon can only read at startup (font,
+theme, timeout, forced panel) restart the session; tmux runs as a detached
+server, so tabs, panes and running programs survive the restart.
+
+fbcon is mapped off because it cannot share the panel framebuffer with kmscon.
+The gettys are masked; tty2 and tty3 run kmscon instances with a plain
+login for local recovery, and SSH/serial remain available.
 
 The hardware stage still supports the CM0 panel, keyboard, audio, battery,
 backlight, WiFi/Bluetooth and boot splash. The terminal session replaces the

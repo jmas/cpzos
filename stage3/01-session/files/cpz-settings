@@ -1694,7 +1694,7 @@ def active_output_text(data: dict) -> str:
     connected = hdmi_status_text() == "connected"
     mode = data.get("display", "auto")
     if mode == "panel":
-        return "CPZ panel (HDMI blanked)"
+        return "CPZ panel (HDMI mirrors)"
     if mode == "hdmi":
         return "HDMI" if connected else "CPZ panel (no HDMI)"
     if hdmi_ready():

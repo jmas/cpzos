@@ -1,3 +1,8 @@
 # Append to the single line in /boot/firmware/cmdline.txt.
-quiet loglevel=3 logo.nologo nowatchdog consoleblank=0
-fbcon=map:10
+#
+# kmscon owns the DRM console. fbcon must not bind any framebuffer: with
+# fbcon=map:10 the panel framebuffer (fb1) stays a kernel console and kmscon
+# cannot take the panel card, which shows up as a blank screen with a cursor.
+# The debug image removes map:off and maps fbcon back to the panel.
+quiet loglevel=3 vt.global_cursor_default=0 logo.nologo nowatchdog
+fbcon=map:off

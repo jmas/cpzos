@@ -141,7 +141,7 @@ for file in \
 	stage3/01-session/files/cpz-kmscon-output.timer \
 	stage3/01-session/files/cpz-kmscon-sleep \
 	stage3/01-session/files/99-cpz-kmscon-output.rules \
-	stage3/01-session/files/kmsconvt@tty1.service.d/10-cpz.conf \
+	stage3/01-session/files/kmsconvt@.service.d/10-cpz.conf \
 	stage3/01-session/files/cpz-session.sh \
 	stage3/01-session/files/tmux.conf \
 	stage3/01-session/files/cpz-session-ensure \
@@ -271,8 +271,8 @@ contains stage3/01-session/files/tmux.conf 'cpz-session-ensure'
 contains stage3/01-session/files/tmux.conf 'window-size largest'
 contains stage3/01-session/files/cpz-session.sh 'cpz-session-ensure main'
 contains stage3/01-session/files/cpz-session.sh 'cpz-first-login'
-contains stage3/01-session/files/cpz-session.sh '/run/cpz-kmscon/session.tty'
-contains stage3/01-session/files/cpz-login '/run/cpz-kmscon/session.tty'
+contains stage3/01-session/files/cpz-session.sh '/run/cpz-kmscon/session.tty1.tty'
+contains stage3/01-session/files/cpz-login 'session.$vt.tty'
 contains stage3/01-session/files/cpz-first-login 'passwd'
 contains stage3/01-session/files/cpz-conn-status.timer 'OnUnitActiveSec=30s'
 contains stage3/01-session/files/cpz-session-save.timer 'OnUnitActiveSec=5min'
@@ -280,7 +280,7 @@ contains stage3/01-session/files/cpz-kmscon-config 'get_setting font_panel'
 contains stage3/01-session/files/cpz-kmscon-config 'get_setting screen_timeout'
 contains stage3/01-session/files/cpz-kmscon-config 'get_setting keyboard_layout_active'
 contains stage3/01-session/files/cpz-kmscon-config 'palette-background'
-contains stage3/01-session/files/cpz-kmscon-config 'multi-monitor=scaled'
+contains stage3/01-session/files/cpz-kmscon-config 'multi_monitor=clone'
 contains stage3/01-session/files/cpz-kmscon '--configdir /run/cpz-kmscon'
 contains stage3/01-session/files/cpz-kmscon-output 'hdmi_debounce=2'
 contains stage3/01-session/files/cpz-kmscon-output 'hdmi_edid'
@@ -291,7 +291,7 @@ contains stage3/01-session/files/cpz-kmscon-output 'panel_on'
 contains stage3/01-session/files/cpz-kmscon-output 'restart_session'
 contains stage3/01-session/files/cpz-kmscon-output '--status'
 contains stage3/01-session/files/cpz-kmscon-output '--recover'
-contains stage3/01-session/files/kmscon.conf 'multi-monitor=scaled'
+contains stage3/01-session/files/kmscon.conf 'multi-monitor=largest'
 contains stage3/01-session/files/kmscon.conf 'term=xterm-256color'
 contains stage3/01-session/files/cpz-settings 'Panel Text Size'
 not_contains stage3/01-session/files/cpz-settings 'HDMI Text Size'
@@ -360,8 +360,8 @@ not_contains stage3/01-session/files/cpz-apply-settings 'cpz-screen-timeout'
 absent stage3/01-session/files/cpz-screen-timeout
 not_contains stage3/01-session/files/cpz-settings '-powerdown'
 contains stage3/01-session/files/kmscon.conf 'dpms-timeout'
-contains stage3/01-session/files/cmdline.append 'consoleblank=0'
-contains stage3/01-session/02-run.sh "enable getty@tty2.service getty@tty3.service"
+contains stage3/01-session/files/cmdline.append 'fbcon=map:off'
+contains stage3/01-session/02-run.sh "mask getty@tty1.service getty@tty2.service getty@tty3.service"
 contains stage3/01-session/02-run.sh 'mask tmp.mount'
 contains stage3/01-session/01-run.sh 'install -d -m 1777'
 contains stage3/01-session/files/settings.conf 'theme=cpz-campbell'
@@ -510,8 +510,7 @@ contains stage3/01-session/02-run.sh "enable getty@tty1.service"
 not_contains stage3/01-session/01-run.sh 'cpz-getty'
 absent stage3/01-session/files/cpz-getty
 absent stage3/01-session/files/getty@tty1.service.d
-contains stage3/01-session/02-run.sh \
-	'rm -f /etc/systemd/system/getty@tty1.service.d/10-cpz-autologin.conf'
+contains stage3/01-session/02-run.sh 'enable kmsconvt@tty1.service kmsconvt@tty2.service'
 contains stage2/05-cardputerzero/02-run.sh "fb_load.service"
 contains build.sh 'STAGE_LIST=${STAGE_LIST:-${BASE_DIR}/stage*}'
 not_contains config.cpz.example 'STAGE_LIST='

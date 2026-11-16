@@ -212,7 +212,7 @@ for file in usr/local/bin/cpz-first-login \
     usr/local/bin/cpz-layout-next usr/local/bin/cpz-display-toggle \
     usr/bin/kmscon \
     etc/kmscon/kmscon.conf \
-    etc/systemd/system/kmsconvt@tty1.service.d/10-cpz.conf \
+    etc/systemd/system/kmsconvt@.service.d/10-cpz.conf \
     etc/udev/rules.d/99-cpz-backlight.rules \
     etc/udev/rules.d/99-cpz-keyboard.rules \
     etc/udev/rules.d/99-cpz-kmscon-output.rules \
@@ -353,24 +353,23 @@ else
     fail "kmsconvt@tty1 NOT enabled"
 fi
 
-if debugfs -R "stat etc/systemd/system/getty@tty1.service" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "/dev/null"; then
-    pass "getty@tty1 masked"
-else
-    fail "getty@tty1 NOT masked"
-fi
+for vt in tty1 tty2 tty3; do
+    if debugfs -R "stat etc/systemd/system/getty@$vt.service" "$TMPDIR/root.ext4" 2>/dev/null |
+        grep -q "/dev/null"; then
+        pass "getty@$vt masked (fbcon is off)"
+    else
+        fail "getty@$vt NOT masked"
+    fi
+done
 
-if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "getty@tty2"; then
-    pass "getty@tty2 enabled"
-else
-    fail "getty@tty2 NOT enabled"
-fi
-
-if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "getty@tty3"; then
-    pass "getty@tty3 enabled (recovery)"
-else
-    fail "getty@tty3 NOT enabled"
-fi
+for vt in tty2 tty3; do
+    if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null |
+        grep -q "kmsconvt@$vt"; then
+        pass "kmsconvt@$vt recovery login enabled"
+    else
+        fail "kmsconvt@$vt NOT enabled"
+    fi
+done
 
 if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "NetworkManager"; then
     pass "NetworkManager enabled"
@@ -400,7 +399,7 @@ else
     fail "first user NOT in bluetooth group"
 fi
 
-if debugfs -R "cat etc/systemd/system/kmsconvt@tty1.service.d/10-cpz.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "/usr/local/bin/cpz-kmscon"; then
+if debugfs -R "cat etc/systemd/system/kmsconvt@.service.d/10-cpz.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "/usr/local/bin/cpz-kmscon"; then
     pass "kmscon autologin wrapper"
 else
     fail "kmscon autologin wrapper MISSING"
@@ -682,7 +681,7 @@ else
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-session.sh" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "/run/cpz-kmscon/session.tty"; then
+    grep -q "/run/cpz-kmscon/session.tty1.tty"; then
     pass "cpz-session.sh attaches only to the kmscon pty"
 else
     fail "cpz-session.sh kmscon pty detection MISSING"

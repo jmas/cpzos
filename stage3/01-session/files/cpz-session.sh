@@ -2,15 +2,16 @@
 # CPZ-session bootstrap.
 #
 # tty1 is the CPZ kmscon session. kmscon runs its child on a pty, so the CPZ
-# terminal is identified by the pty name recorded by cpz-login, not by
-# /dev/tty1. tty2/tty3 stay plain fbcon recovery shells and SSH is unaffected.
+# terminal is identified by the tty1 pty name recorded by cpz-login, not by
+# /dev/tty1. The tty2 kmscon recovery login, SSH and a debug boot stay plain
+# shells.
 
 [ -n "${TMUX:-}" ] && return 0
 [ -f /etc/cpz-debug-boot ] && return 0
 [ -n "${SSH_CONNECTION:-}" ] && return 0
 
 tty_name=$(tty 2>/dev/null || true)
-marker=/run/cpz-kmscon/session.tty
+marker=/run/cpz-kmscon/session.tty1.tty
 [ -r "$marker" ] || return 0
 [ "$tty_name" = "$(cat "$marker" 2>/dev/null || true)" ] || return 0
 

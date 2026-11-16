@@ -8,6 +8,11 @@
 # The config is rendered from /etc/cpz/settings.conf on every start. kmscon
 # only reads it at startup, so cpz-kmscon-output restarts this unit when the
 # rendered file changes (font size, layout, theme, timeout, output).
+#
+# tty1 switches to its own VT on start: that vt_enter() is what puts the VT in
+# KD_GRAPHICS and makes fbcon release the DRM device. The tty2/tty3 recovery
+# instances must not do that, or they would fight over the foreground VT at
+# boot.
 set -eu
 
 vt=${1:-tty1}
@@ -19,8 +24,16 @@ esac
 
 /usr/local/bin/cpz-kmscon-config >/dev/null 2>&1 || true
 
+if [ "$vt" = tty1 ]; then
+	exec /usr/bin/kmscon \
+		--configdir /run/cpz-kmscon \
+		--vt="$vt" \
+		--switchvt \
+		--login -- /usr/local/bin/cpz-login "$vt"
+fi
+
 exec /usr/bin/kmscon \
 	--configdir /run/cpz-kmscon \
 	--vt="$vt" \
 	--no-switchvt \
-	--login -- /usr/local/bin/cpz-login
+	--login -- /usr/local/bin/cpz-login "$vt"

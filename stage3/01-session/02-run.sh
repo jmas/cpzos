@@ -141,7 +141,7 @@ if [ "${CPZ_DEBUG_BOOT:-0}" = "1" ]; then
 		' "$cmdline" > "${cmdline}.tmp"
 		mv "${cmdline}.tmp" "$cmdline"
 		debug_line=$(mktemp)
-		printf '%s\n' "console=serial0,115200 console=tty1 loglevel=8 ignore_loglevel systemd.show_status=1 systemd.log_level=debug" >"$debug_line"
+		printf '%s\n' "fbcon=map:10 consoleblank=0 console=serial0,115200 console=tty1 loglevel=8 ignore_loglevel systemd.show_status=1 systemd.log_level=debug" >"$debug_line"
 		append_cmdline_file "$cmdline" "$debug_line"
 		rm -f "$debug_line"
 	fi
@@ -156,31 +156,34 @@ rm -f "${ROOTFS_DIR}/boot/firmware/rpi-preseed.toml"
 on_chroot <<'CHROOT'
 set -e
 
-# kmscon owns tty1 and the CPZ session inside it; cpz-kmscon-output picks the
-# output every two seconds. tty2/tty3 are fbcon recovery logins.
+# kmscon owns the DRM console on tty1 (the CPZ session) and on tty2/tty3
+# (plain recovery logins). fbcon is mapped off in cmdline.txt, so the tty
+# gettys have no display and are masked in the normal image.
 systemctl set-default multi-user.target
 
 if [ -f /etc/cpz-debug-boot ]; then
 	# Debug image: keep tty1/tty2 as visible getty consoles so the
 	# kernel/systemd log and a login prompt are available. kmscon must not
 	# take the VT, otherwise the logs would be hidden.
-	rm -f /etc/systemd/system/getty@tty1.service.d/10-cpz-autologin.conf
-	rmdir /etc/systemd/system/getty@tty1.service.d 2>/dev/null || true
-	systemctl disable kmsconvt@tty1.service 2>/dev/null || true
-	systemctl mask kmsconvt@tty1.service || true
+	systemctl disable kmsconvt@tty1.service kmsconvt@tty2.service \
+		kmsconvt@tty3.service 2>/dev/null || true
+	systemctl mask kmsconvt@tty1.service kmsconvt@tty2.service \
+		kmsconvt@tty3.service || true
 	systemctl disable cpz-kmscon-output.timer 2>/dev/null || true
 	systemctl unmask getty@tty1.service getty@tty2.service getty@tty3.service || true
 	systemctl enable getty@tty1.service getty@tty2.service getty@tty3.service || true
+	systemctl enable console-setup.service 2>/dev/null || true
 else
-	# kmscon owns tty1 and the CPZ session inside it. getty@tty1 is masked
-	# so an upgrade or a stray getty.target dependency cannot take the VT
-	# back. tty2/tty3 stay plain fbcon recovery logins.
-	systemctl disable getty@tty1.service 2>/dev/null || true
-	systemctl mask getty@tty1.service || true
-	systemctl unmask kmsconvt@tty1.service || true
-	systemctl enable kmsconvt@tty1.service
-	systemctl unmask getty@tty2.service getty@tty3.service || true
-	systemctl enable getty@tty2.service getty@tty3.service
+	# kmscon on tty1/tty2/tty3. The getty units are masked: with fbcon=map:off
+	# they could not draw anything, and a stray enable would take the VT back.
+	systemctl disable getty@tty1.service getty@tty2.service getty@tty3.service 2>/dev/null || true
+	systemctl mask getty@tty1.service getty@tty2.service getty@tty3.service || true
+	systemctl unmask kmsconvt@tty1.service kmsconvt@tty2.service \
+		kmsconvt@tty3.service || true
+	systemctl enable kmsconvt@tty1.service kmsconvt@tty2.service \
+		kmsconvt@tty3.service
+	# fbcon is off, so there is no console font or VT keymap to apply.
+	systemctl disable console-setup.service 2>/dev/null || true
 fi
 
 # /tmp is a tmpfs sized from RAM by systemd. On the small-RAM CM0 the default

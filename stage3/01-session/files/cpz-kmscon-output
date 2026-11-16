@@ -2,25 +2,29 @@
 # Keep the CPZ kmscon session on exactly one usable display.
 #
 # Policy:
-#   HDMI connected and usable (EDID, or a pinned video= mode) -> HDMI, and the
-#     internal panel backlight is switched off
-#   otherwise -> the internal panel, with the backlight restored
-#   display=panel|hdmi in settings overrides the automatic choice
-#   --auto / --panel / --hdmi override settings for one run
-#   --force re-renders the kmscon config and restarts the session
-#   --recover re-applies the HDMI link and restarts the session
-#   --status prints the decision without changing anything
+#   display=auto (default): HDMI when a monitor with a readable EDID is
+#     attached (or a video= mode is pinned); once the session is on HDMI it
+#     stays there while the connector is connected, so a monitor that
+#     momentarily drops its EDID cannot bounce the panel.
+#   display=hdmi: HDMI while a monitor is connected, panel otherwise.
+#   display=panel: the panel; kmscon is rendered in clone mode so the panel is
+#     drawn even while HDMI is attached.
+#   --auto / --panel / --hdmi: override the setting for one run.
+#   --force: re-render the kmscon configuration and restart the session.
+#   --recover: restart the session (HDMI link recovery).
+#   --status: print the decision and the DRM connector state.
 #
-# kmscon has no runtime API and does not re-probe connectors on hotplug, so
-# both the display decision and the rendered configuration are applied by
-# restarting kmsconvt@tty1. The tmux server is started detached, so a restart
-# only replaces the terminal client: tabs, panes and running programs survive.
+# kmscon itself handles display hotplug: displays are added and removed, and
+# multi-monitor=largest makes it draw on the largest screen and stop drawing
+# on the others. This helper therefore does NOT restart kmscon when a monitor
+# is plugged or unplugged. A restart drops DRM master, which makes the monitor
+# renegotiate the link (the "monitor turns off and on" symptom). Restarts are
+# limited to configuration changes, an explicit --force/--recover, and a
+# hotplug that kmscon missed.
 #
-# The internal panel is not disabled at the DRM level. kmscon keeps drawing
-# the same layout on it (multi-monitor=scaled); switching the backlight off is
-# what makes it dark and what saves the power. On the panel side the backlight
-# is restored before the restart, so a failed kmscon start never leaves the
-# machine with no visible output.
+# Only the backlight is switched here. The panel is darkened only when kmscon
+# reports the HDMI connector as enabled, so a missed hotplug leaves a visible
+# panel instead of a black machine.
 set -eu
 
 force=0
@@ -41,12 +45,16 @@ done
 run_dir=/run/cpz-kmscon
 state_file=$run_dir/output.state
 pending_file=$run_dir/output.pending
+miss_file=$run_dir/output.hdmi-miss
 unit=kmsconvt@tty1.service
-# Samples needed before moving the session *to* HDMI. A monitor can pulse HPD
-# while it powers up or renegotiates, and the panel is dark on the other side
-# of the switch, so the HDMI direction is debounced. Returning to the panel is
-# immediate.
+# Samples needed before moving the session *to* HDMI: a monitor can pulse HPD
+# while it powers up. Returning to the panel is immediate.
 hdmi_debounce=2
+# Consecutive ticks with HDMI connected but no CRTC before kmscon is restarted
+# (a hotplug it missed). Three ticks are about six seconds.
+hdmi_miss_ticks=3
+# After a restart that still did not enable HDMI, do not try again for a while.
+hdmi_fail_backoff=60
 
 first_home=$(getent passwd 1000 2>/dev/null | cut -d: -f6 || true)
 [ -n "$first_home" ] || first_home=/root
@@ -66,20 +74,30 @@ get_setting() {
 }
 
 hdmi_probe() {
-	# Sets: hdmi_connected (0/1), hdmi_edid (bytes), hdmi_pinned (0/1).
+	# Sets: hdmi_connected, hdmi_edid (bytes), hdmi_pinned, hdmi_enabled and
+	# drm_state (one "name status enabled" line per DRM connector).
 	hdmi_connected=0
 	hdmi_edid=0
-	connector=""
-	for dir in /sys/class/drm/card*-HDMI-A-*; do
+	hdmi_enabled=0
+	drm_state=""
+	for dir in /sys/class/drm/card*-*; do
 		[ -e "$dir/status" ] || continue
-		[ -n "$connector" ] || connector=${dir##*/}
-		if [ "$(cat "$dir/status" 2>/dev/null || true)" = connected ]; then
-			hdmi_connected=1
-		fi
-		size=$(wc -c <"$dir/edid" 2>/dev/null || printf 0)
-		size=$(printf '%s' "$size" | tr -dc '0-9')
-		[ -n "$size" ] || size=0
-		[ "$size" -gt "$hdmi_edid" ] && hdmi_edid=$size
+		name=${dir##*/}
+		status=$(cat "$dir/status" 2>/dev/null || true)
+		enabled=$(cat "$dir/enabled" 2>/dev/null || true)
+		drm_state="${drm_state}${drm_state:+, }$name ${status:-unknown}/${enabled:-unknown}"
+		case "$name" in
+			*HDMI-A-*)
+				if [ "$status" = connected ]; then
+					hdmi_connected=1
+					[ "$enabled" = enabled ] && hdmi_enabled=1
+					size=$(wc -c <"$dir/edid" 2>/dev/null || printf 0)
+					size=$(printf '%s' "$size" | tr -dc '0-9')
+					[ -n "$size" ] || size=0
+					[ "$size" -gt "$hdmi_edid" ] && hdmi_edid=$size
+				fi
+				;;
+		esac
 	done
 	hdmi_pinned=0
 	# shellcheck disable=SC2013  # kernel cmdline tokens are whitespace-separated
@@ -133,37 +151,6 @@ panel_on() {
 	done
 }
 
-hdmi_has_crtc() {
-	# True when a connected HDMI connector has a CRTC attached. Returns true
-	# when the kernel does not expose the state file, so an unknown sysfs
-	# layout never hides a working panel.
-	known=0
-	for dir in /sys/class/drm/card*-HDMI-A-*; do
-		[ -e "$dir/status" ] || continue
-		[ -e "$dir/enabled" ] || continue
-		known=1
-		[ "$(cat "$dir/status" 2>/dev/null || true)" = connected ] || continue
-		if [ "$(cat "$dir/enabled" 2>/dev/null || true)" = enabled ]; then
-			return 0
-		fi
-	done
-	if [ "$known" = 1 ]; then
-		return 1
-	fi
-	return 0
-}
-
-hdmi_fallback() {
-	# Leave the panel visible and block another HDMI attempt for a minute so
-	# a monitor that is present but cannot be driven does not restart the
-	# session on every timer tick.
-	log "$1"
-	panel_on
-	printf 'target=panel\nmode=%s\nfail_until=%s\n' "$mode" \
-		"$((now + 60))" >"$state_file"
-	exit 0
-}
-
 restart_session() {
 	if ! systemctl restart "$unit" >/dev/null 2>&1; then
 		log "restart $unit failed"
@@ -175,8 +162,7 @@ restart_session() {
 		sleep 0.2
 		tries=$((tries + 1))
 	done
-	# kmscon sets the initial mode right after exec; give it a moment before
-	# the panel is blanked so a failed start stays visible.
+	# kmscon sets the initial mode right after exec.
 	sleep 0.7
 	systemctl is-active --quiet "$unit"
 }
@@ -194,36 +180,40 @@ else
 	hdmi_usable=0
 fi
 
-case "$mode" in
-	panel) target=panel ;;
-	hdmi)
-		[ "$hdmi_connected" = 1 ] && target=hdmi || target=panel
-		;;
-	*)
-		[ "$hdmi_usable" = 1 ] && target=hdmi || target=panel
-		;;
-esac
-
 configured_target=$(sed -n 's/^target=//p' "$state_file" 2>/dev/null |
 	tail -n 1)
-fail_until=$(sed -n 's/^fail_until=//p' "$state_file" 2>/dev/null |
+retry_after=$(sed -n 's/^retry_after=//p' "$state_file" 2>/dev/null |
 	tail -n 1)
+fail_conn=$(sed -n 's/^fail_conn=//p' "$state_file" 2>/dev/null | tail -n 1)
+fail_edid=$(sed -n 's/^fail_edid=//p' "$state_file" 2>/dev/null | tail -n 1)
 now=$(date +%s 2>/dev/null || printf 0)
 case "$now" in
 	'' | *[!0-9]*) now=0 ;;
 esac
 
-# A failed HDMI start is retried with a backoff so a monitor that is present
-# but cannot be driven does not restart the session every two seconds.
-if [ "$target" = hdmi ] && [ "$force" = 0 ] && [ -n "$fail_until" ]; then
-	case "$fail_until" in
-		*[!0-9]*) ;;
-		*) [ "$fail_until" -gt "$now" ] && target=panel ;;
-	esac
-fi
+case "$mode" in
+	panel) target=panel ;;
+	hdmi)
+		if [ "$hdmi_connected" = 1 ]; then
+			target=hdmi
+		else
+			target=panel
+		fi
+		;;
+	*)
+		if [ "$configured_target" = hdmi ] && [ "$hdmi_connected" = 1 ]; then
+			# Hysteresis: a monitor that drops its EDID for a moment while
+			# already active must not move the session back to the panel.
+			target=hdmi
+		elif [ "$hdmi_usable" = 1 ]; then
+			target=hdmi
+		else
+			target=panel
+		fi
+		;;
+esac
 
 # The debug image masks kmsconvt@tty1 and runs a plain fbcon getty instead.
-# Leave the console alone there; the udev rule still starts this unit.
 if [ -L /etc/systemd/system/kmsconvt@tty1.service ]; then
 	if [ "$status_mode" = 1 ]; then
 		printf 'session : masked (fbcon debug image)\n'
@@ -234,12 +224,14 @@ fi
 if [ "$status_mode" = 1 ]; then
 	printf 'mode    : %s%s\n' "$mode" \
 		"$([ -n "$override" ] && printf ' (command line)')"
-	printf 'HDMI    : %s, EDID %s bytes, pinned %s\n' \
+	printf 'HDMI    : %s, EDID %s bytes, pinned %s, enabled %s\n' \
 		"$([ "$hdmi_connected" = 1 ] && printf connected || printf disconnected)" \
 		"$hdmi_edid" \
-		"$([ "$hdmi_pinned" = 1 ] && printf yes || printf no)"
+		"$([ "$hdmi_pinned" = 1 ] && printf yes || printf no)" \
+		"$([ "$hdmi_enabled" = 1 ] && printf yes || printf no)"
 	printf 'target  : %s\n' "$target"
 	printf 'current : %s\n' "${configured_target:-unknown}"
+	printf 'drm     : %s\n' "${drm_state:-none}"
 	for light in /sys/class/backlight/*; do
 		[ -e "$light" ] || continue
 		printf 'panel   : %s brightness=%s/%s bl_power=%s\n' \
@@ -251,31 +243,6 @@ if [ "$status_mode" = 1 ]; then
 	printf 'session : %s\n' \
 		"$(systemctl is-active "$unit" 2>/dev/null || true)"
 	exit 0
-fi
-
-config_state=$(/usr/local/bin/cpz-kmscon-config 2>/dev/null || printf 'error')
-if [ "$config_state" = error ]; then
-	# Keep the last good config instead of restarting kmscon every tick.
-	log "kmscon config render failed"
-fi
-
-# A fresh boot has no state file. Without HDMI the panel is already correct,
-# so adopt it instead of restarting the session. With HDMI the session is
-# restarted once before the panel is darkened: if kmscon cannot take the HDMI
-# card, the failure path keeps the panel visible.
-if [ -z "$configured_target" ] && [ "$config_state" = same ] &&
-	[ "$target" = panel ]; then
-	configured_target=$target
-fi
-
-# Recover a stale HDMI link: cycle the connector DPMS before kmscon restarts.
-if [ "$recover" = 1 ]; then
-	for dpms in /sys/class/drm/card*-HDMI-A-*/dpms; do
-		[ -w "$dpms" ] || continue
-		printf 'Off' >"$dpms" 2>/dev/null || true
-		sleep 0.3
-		printf 'On' >"$dpms" 2>/dev/null || true
-	done
 fi
 
 # Debounce the HDMI direction in auto mode. A forced panel/HDMI choice and a
@@ -295,44 +262,90 @@ if [ "$target" = hdmi ] && [ "$configured_target" != hdmi ] &&
 fi
 rm -f "$pending_file"
 
-apply=0
-[ "$force" = 1 ] && apply=1
-[ "$target" != "$configured_target" ] && apply=1
-[ "$config_state" = changed ] && apply=1
+config_state=$(/usr/local/bin/cpz-kmscon-config 2>/dev/null || printf 'error')
+if [ "$config_state" = error ]; then
+	# Keep the last good config instead of restarting kmscon every tick.
+	log "kmscon config render failed"
+fi
 
-if [ "$target" = hdmi ]; then
-	if [ "$apply" = 1 ]; then
-		if ! restart_session; then
-			hdmi_fallback "HDMI start failed; keeping the panel on"
-		fi
-		if ! hdmi_has_crtc; then
-			hdmi_fallback "HDMI connector stayed disabled; keeping the panel on"
-		fi
-	fi
-	panel_off
-	if [ "$apply" = 1 ]; then
-		log "output: HDMI (panel backlight off)"
+need_restart=0
+if [ "$force" = 1 ] || [ "$recover" = 1 ] || [ "$config_state" = changed ]; then
+	need_restart=1
+fi
+
+# A failed restart is not retried in a loop: it waits until the connector
+# state changes (the monitor was replugged or woke up) or --recover is used.
+if [ -n "$retry_after" ] && [ "$retry_after" -gt "$now" ]; then
+	case "$retry_after" in
+		*[!0-9]*) retry_after=0 ;;
+		*)
+			if [ "${fail_conn:-}" != "$hdmi_connected" ] ||
+				[ "${fail_edid:-}" != "$hdmi_edid" ]; then
+				retry_after=0
+			fi
+			;;
+	esac
+fi
+
+# Detect a hotplug that kmscon missed: HDMI is connected and usable, but no
+# CRTC is attached to it. Give kmscon a few ticks first; a normal hotplug is
+# handled without a restart.
+if [ "$target" = hdmi ] && [ "$hdmi_enabled" = 0 ] && [ "$need_restart" = 0 ]; then
+	miss=$(cat "$miss_file" 2>/dev/null || printf 0)
+	case "$miss" in
+		'' | *[!0-9]*) miss=0 ;;
+	esac
+	miss=$((miss + 1))
+	printf '%s\n' "$miss" >"$miss_file"
+	case "$retry_after" in
+		'' | *[!0-9]*) retry_after=0 ;;
+	esac
+	if [ "$miss" -ge "$hdmi_miss_ticks" ] && [ "$retry_after" -le "$now" ]; then
+		log "HDMI hotplug was not picked up; restarting kmscon"
+		need_restart=1
 	fi
 else
-	# Restore the panel first: if kmscon then fails to come up, the machine
-	# still has a visible screen.
-	panel_on
-	if [ "$apply" = 1 ]; then
-		restart_session || true
-		log "output: CPZ panel"
+	rm -f "$miss_file"
+fi
+
+if [ "$need_restart" = 1 ]; then
+	if restart_session; then
+		rm -f "$miss_file"
+		hdmi_probe
+		if [ "$target" = hdmi ] && [ "$hdmi_connected" = 1 ] &&
+			[ "$hdmi_enabled" = 0 ]; then
+			log "HDMI is still not enabled after restart"
+			retry_after=$((now + hdmi_fail_backoff))
+			fail_conn=$hdmi_connected
+			fail_edid=$hdmi_edid
+		else
+			retry_after=0
+			fail_conn=""
+			fail_edid=""
+		fi
+		log "output: $target (session restarted)"
 	fi
+fi
+
+if [ "$target" = hdmi ] && [ "$hdmi_enabled" = 1 ] &&
+	systemctl is-active --quiet "$unit"; then
+	panel_off
+else
+	# Also the fallback when kmscon has not enabled HDMI yet: never hide the
+	# panel while it may be the only working output.
+	panel_on
 fi
 
 tmp=$state_file.tmp.$$
 {
 	printf 'target=%s\nmode=%s\n' "$target" "$mode"
-	# Keep an active HDMI failure backoff across ticks; it is dropped once it
-	# expires or a successful start rewrites the state without it.
-	case "$fail_until" in
+	case "$retry_after" in
 		'' | *[!0-9]*) ;;
 		*)
-			if [ "$fail_until" -gt "$now" ]; then
-				printf 'fail_until=%s\n' "$fail_until"
+			if [ "$retry_after" -gt 0 ]; then
+				printf 'retry_after=%s\n' "$retry_after"
+				printf 'fail_conn=%s\n' "${fail_conn:-}"
+				printf 'fail_edid=%s\n' "${fail_edid:-}"
 			fi
 			;;
 	esac

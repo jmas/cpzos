@@ -102,9 +102,9 @@ install -m 0644 files/cardputerzero-keymap.service \
 # kmscon owns tty1. The wrapper renders /run/cpz-kmscon/kmscon.conf from the
 # CPZ settings and starts the autologin session through login(1).
 install -d -m 0755 \
-	"${ROOTFS_DIR}/etc/systemd/system/kmsconvt@tty1.service.d"
-install -m 0644 files/kmsconvt@tty1.service.d/10-cpz.conf \
-	"${ROOTFS_DIR}/etc/systemd/system/kmsconvt@tty1.service.d/10-cpz.conf"
+	"${ROOTFS_DIR}/etc/systemd/system/kmsconvt@.service.d"
+install -m 0644 files/kmsconvt@.service.d/10-cpz.conf \
+	"${ROOTFS_DIR}/etc/systemd/system/kmsconvt@.service.d/10-cpz.conf"
 
 # One working output: HDMI when a usable monitor is attached, otherwise the
 # internal panel. The reconciler restarts kmscon when the decision or the
