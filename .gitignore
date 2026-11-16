@@ -5,7 +5,6 @@ postrun.sh
 SKIP
 SKIP_IMAGES
 !stage2/SKIP_IMAGES
-!stage2/04-cloud-init/SKIP
 .pc
 *-pc
 .vscode/

@@ -1,7 +1,9 @@
-# CPZ kmscon phase 0
+# CPZ kmscon session
 
-This branch replaces the desktop/APPLaunch boot path with a kmscon + tmux
-session. It is intentionally a **phase 0 feasibility image**:
+This branch is the terminal-only CPZ image. It replaces the desktop and
+APPLaunch boot path with a kmscon + tmux session. The desktop stages, NOOBS,
+cloud-init and full-image extras are not present in this branch. It is
+intentionally a **phase 0 feasibility image**:
 
 ```text
 firmware splash
@@ -11,8 +13,8 @@ firmware splash
   → tty2 kmscon login for recovery
 ```
 
-Sway, Greetd, foot, the desktop stages and the launcher app debs are not
-installed.
+Sway, Greetd, foot, the launcher app debs and the desktop/full stages are not
+installed or present in this branch.
 
 ## Build
 

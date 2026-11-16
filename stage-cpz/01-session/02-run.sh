@@ -84,14 +84,15 @@ on_chroot <<'CHROOT'
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-# cloud-init conflicts with rpi-preseed and is not part of the CPZ boot path.
+# cloud-init is not part of this branch and conflicts with rpi-preseed; purge
+# it defensively when reusing an older rootfs.
 if dpkg -s cloud-init >/dev/null 2>&1 || dpkg -s rpi-cloud-init-mods >/dev/null 2>&1; then
 	apt-get purge -y cloud-init rpi-cloud-init-mods || true
 fi
 rm -rf /etc/cloud /var/lib/cloud
 
-# Desktop/launcher leftovers from the old image path. The stage list already
-# omits stage3/stage4, but keep this defensive for image reuse and upgrades.
+# Desktop/launcher leftovers from the old image path. Those stages are removed
+# from this branch, but keep this defensive for image reuse and upgrades.
 for pkg in applaunch packagekit packagekit-tools cups cups-browsed lightdm; do
 	if dpkg -s "$pkg" >/dev/null 2>&1; then
 		apt-get purge -y "$pkg" || true

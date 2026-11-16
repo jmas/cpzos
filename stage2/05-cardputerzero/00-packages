@@ -1,12 +1,7 @@
-fastfetch
-cmatrix
-pulseaudio-utils
-vim
-adbd
+# CardputerZero hardware stage runtime packages.
+#
+# The regular CPZ image is a terminal system: no desktop, launcher, GTK or
+# PulseAudio packages belong here. The kmscon session stage installs its own
+# console tooling.
 rtkit
-xdg-user-dirs
-xdg-user-dirs
 fonts-noto-cjk
-fonts-noto-cjk-extra
-python3-gi-cairo
-python3-cairo

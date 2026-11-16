@@ -307,17 +307,14 @@ else
     fail "tmux NOT installed"
 fi
 
-if grep -q "^Package: fastfetch$" "$TMPDIR/dpkg_status"; then
-    pass "fastfetch installed"
-else
-    fail "fastfetch NOT installed"
-fi
-
-if grep -q "^Package: cmatrix$" "$TMPDIR/dpkg_status"; then
-    pass "cmatrix installed"
-else
-    fail "cmatrix NOT installed"
-fi
+# Regular CPZ image: desktop/full-stage packages must not be present.
+for pkg in fastfetch cmatrix adbd pulseaudio-utils python3-cairo python3-gi-cairo; do
+    if grep -q "^Package: ${pkg}$" "$TMPDIR/dpkg_status"; then
+        fail "${pkg} should not be installed"
+    else
+        pass "${pkg} absent"
+    fi
+done
 set -e
 
 echo ""

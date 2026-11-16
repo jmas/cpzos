@@ -20,9 +20,6 @@ sed -i \
     -e '1i splash_screen=CardputerZero_splash_custom.bin\ngpu_mem=128\n' \
     "${ROOTFS_DIR}/boot/firmware/config.txt"
 
-# ADB is off by default. adbd ships in this stage's package list; the launcher
-# package used to enable the hotplug monitor, so keep the default explicit.
-#
 # fb_load comes from the m5stack driver's "make install". It draws the splash
 # on the SPI panel and then waits for APPLaunch/LaunchWizard to start - but CPZ
 # OS has no launcher, so it never exits and keeps DRM master on the panel card.
@@ -31,9 +28,6 @@ sed -i \
 # already covers the pre-terminal screen, so drop the unit entirely.
 on_chroot << CHROOT
 set -e
-systemctl disable cardputer-adb-hotplug.service adbd.service 2>/dev/null || true
-rm -f /etc/systemd/system/multi-user.target.wants/cardputer-adb-hotplug.service \
-    /etc/systemd/system/multi-user.target.wants/adbd.service
 systemctl disable fb_load.service 2>/dev/null || true
 rm -f /etc/systemd/system/sysinit.target.wants/fb_load.service \
     /etc/systemd/system/fb_load.service

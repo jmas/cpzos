@@ -1,9 +1,9 @@
-# CPZ kmscon image configuration.
+# CPZ image configuration.
 # Copy to ./config before running ./build.sh.
 
-IMG_NAME="cardputerzero-cpz-kmscon-trixie-arm64"
-IMG_FILENAME="cardputerzero-cpz-kmscon-trixie-arm64"
-ARCHIVE_FILENAME="cardputerzero-cpz-kmscon-trixie-arm64"
+IMG_NAME="cardputerzero-trixie-arm64"
+IMG_FILENAME="cardputerzero-trixie-arm64"
+ARCHIVE_FILENAME="cardputerzero-trixie-arm64"
 RELEASE="trixie"
 DEPLOY_COMPRESSION="xz"
 TARGET_HOSTNAME="cardputerzero"
@@ -18,6 +18,5 @@ TIMEZONE_DEFAULT="Asia/Shanghai"
 # The CPZ image uses only the hardware stage plus the kmscon session stage.
 STAGE_LIST="stage0 stage1 stage2 stage-cpz"
 DISABLE_FIRST_BOOT_USER_RENAME=1
-ENABLE_CLOUD_INIT=0
 PASSWORDLESS_SUDO=0
 CPZ_DEBUG_BOOT=0

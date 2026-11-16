@@ -235,8 +235,6 @@ export PREV_STAGE_DIR
 export ROOTFS_DIR
 export PREV_ROOTFS_DIR
 export IMG_SUFFIX
-export NOOBS_NAME
-export NOOBS_DESCRIPTION
 export EXPORT_DIR
 export EXPORT_ROOTFS_DIR
 
@@ -245,7 +243,6 @@ export QUILT_NO_DIFF_INDEX=1
 export QUILT_NO_DIFF_TIMESTAMPS=1
 export QUILT_REFRESH_ARGS="-p ab"
 
-export ENABLE_CLOUD_INIT=${ENABLE_CLOUD_INIT:-1}
 export CPZ_DEBUG_BOOT=${CPZ_DEBUG_BOOT:-0}
 
 # shellcheck source=scripts/common
@@ -318,7 +315,10 @@ fi
 
 log "Begin ${BASE_DIR}"
 
-STAGE_LIST=${STAGE_LIST:-${BASE_DIR}/stage*}
+# There is one regular CPZ image. Keep the order explicit: stage-cpz must
+# always run after the Raspberry Pi OS base stages (a plain stage* glob would
+# sort it before stage0 because '-' sorts before '0').
+STAGE_LIST=${STAGE_LIST:-"${BASE_DIR}/stage0 ${BASE_DIR}/stage1 ${BASE_DIR}/stage2 ${BASE_DIR}/stage-cpz"}
 export STAGE_LIST
 
 EXPORT_CONFIG_DIR=$(realpath "${EXPORT_CONFIG_DIR:-"${BASE_DIR}/export-image"}")
@@ -340,14 +340,6 @@ for EXPORT_DIR in ${EXPORT_DIRS}; do
 	source "${EXPORT_DIR}/EXPORT_IMAGE"
 	EXPORT_ROOTFS_DIR=${WORK_DIR}/$(basename "${EXPORT_DIR}")/rootfs
 	run_stage
-	if [ "${USE_QEMU}" != "1" ]; then
-		if [ -e "${EXPORT_DIR}/EXPORT_NOOBS" ]; then
-			# shellcheck source=/dev/null
-			source "${EXPORT_DIR}/EXPORT_NOOBS"
-			STAGE_DIR="${BASE_DIR}/export-noobs"
-			run_stage
-		fi
-	fi
 done
 
 if [ -x "${BASE_DIR}/postrun.sh" ]; then
