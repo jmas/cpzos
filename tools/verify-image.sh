@@ -161,6 +161,24 @@ else
     pass "cmdline.txt: console=serial0,115200 removed"
 fi
 
+if grep -q "fbcon=map:off" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
+    pass "cmdline.txt: fbcon is mapped off (kmscon owns DRM)"
+else
+    fail "cmdline.txt: fbcon=map:off missing"
+fi
+
+if grep -q "fbcon=map:10" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
+    fail "cmdline.txt: fbcon still claims the panel (map:10)"
+else
+    pass "cmdline.txt: fbcon does not claim the panel"
+fi
+
+if grep -q "vt.global_cursor_default=0" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
+    pass "cmdline.txt: VT cursor hidden"
+else
+    fail "cmdline.txt: vt.global_cursor_default=0 missing"
+fi
+
 umount "$TMPDIR/boot" 2>/dev/null || true
 
 echo ""
@@ -348,7 +366,7 @@ else
     fail "rpi-update apt pin MISSING"
 fi
 
-if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "kmsconvt@tty1"; then
+if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "kmsconvt@tty1"; then
     pass "kmsconvt@tty1 enabled"
 else
     fail "kmsconvt@tty1 NOT enabled"
@@ -364,7 +382,7 @@ for vt in tty1 tty2 tty3; do
 done
 
 for vt in tty2 tty3; do
-    if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null |
+    if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null |
         grep -q "kmsconvt@$vt"; then
         pass "kmsconvt@$vt recovery login enabled"
     else
@@ -641,8 +659,8 @@ else
 fi
 
 if debugfs -R "cat etc/kmscon/kmscon.conf" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "multi-monitor=scaled"; then
-    pass "kmscon keeps the panel grid on HDMI"
+    grep -q "multi-monitor=largest"; then
+    pass "kmscon draws on one screen"
 else
     fail "kmscon multi-monitor config MISSING"
 fi
@@ -688,7 +706,7 @@ else
     fail "cpz-login: uid 1000 resolution MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-session.sh" "$TMPDIR/root.ext4" 2>/dev/null |
+if debugfs -R "cat etc/profile.d/cpz-session.sh" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "/run/cpz-kmscon/session.tty1.tty"; then
     pass "cpz-session.sh attaches only to the kmscon pty"
 else
