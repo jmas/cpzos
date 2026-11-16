@@ -180,8 +180,8 @@ for mod in "${REQUIRED_MODULES[@]}"; do
     if debugfs -R "ls lib/modules" "$TMPDIR/root.ext4" 2>/dev/null | grep -q .; then
         KVER=$(debugfs -R "ls lib/modules" "$TMPDIR/root.ext4" 2>/dev/null | grep -o '[0-9][^ ]*rpi-v8')
         if debugfs -R "stat lib/modules/${KVER}/extra/${mod}" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
-            SIZE=$(debugfs -R "stat lib/modules/${KVER}/extra/${mod}" "$TMPDIR/root.ext4" 2>/dev/null | grep "Size:" | awk '{print $2}')
-            pass "$mod ($SIZE bytes)"
+            SIZE=$(debugfs -R "stat lib/modules/${KVER}/extra/${mod}" "$TMPDIR/root.ext4" 2>/dev/null | grep -o 'Size: [0-9]*' | head -1 | cut -d' ' -f2)
+            pass "$mod (${SIZE:-unknown} bytes)"
         else
             fail "$mod MISSING"
         fi
@@ -245,7 +245,7 @@ else
     fail "rpi-preseed NOT enabled"
 fi
 
-if debugfs -R "stat etc/systemd/system/getty@tty1.service" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Fast link dest: /dev/null"; then
+if debugfs -R "stat etc/systemd/system/getty@tty1.service" "$TMPDIR/root.ext4" 2>/dev/null | grep -q 'Fast link dest:.*/dev/null'; then
     pass "getty@tty1 masked"
 else
     fail "getty@tty1 NOT masked"
