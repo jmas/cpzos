@@ -255,6 +255,8 @@ fi
 for file in usr/share/APPLaunch/bin/M5CardputerZero-APPLaunch \
     usr/lib/systemd/system/LaunchWizard.service \
     usr/bin/fb-mirror.py usr/share/applications/fb-mirror.desktop \
+    etc/systemd/system/fb_load.service \
+    etc/systemd/system/sysinit.target.wants/fb_load.service \
     usr/lib/python3/dist-packages/cloudinit; do
     if debugfs -R "stat $file" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
         fail "$file should not be present"

@@ -97,6 +97,7 @@ contains stage-cpz/01-session/02-run.sh "kmsconvt@tty1.service"
 contains stage-cpz/01-session/02-run.sh "kmsconvt@tty2.service"
 contains stage-cpz/01-session/02-run.sh "rpi-preseed.service"
 contains stage-cpz/01-session/02-run.sh "mask getty@tty1.service"
+contains stage2/05-cardputerzero/02-run.sh "fb_load.service"
 contains config.cpz.example 'STAGE_LIST="stage0 stage1 stage2 stage-cpz"'
 
 echo
