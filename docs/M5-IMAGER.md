@@ -17,6 +17,14 @@ https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/os-list.json
 | Use the M5Stack device picker and default OS list | Use M5 Imager. |
 | Use the Imager customisation wizard | The image must be offered through a manifest entry with a **supported** `init_format`. A local file alone does not reliably enable customisation. |
 
+The app does not discover new images by itself. The production OS list at
+`cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/os-list.json` must be updated
+with a CPZ entry, or the app must be pointed at a custom manifest. The current
+production CardputerZero entry points at
+`cardputerzero-trixie-arm64-latest.img.xz`, uses `init_format: "systemd"`, and
+still has `extract_size: 0` plus empty hashes. That is the old desktop image
+entry and is not sufficient metadata for a new CPZ release.
+
 ## Critical: `rpi-preseed` is not supported by M5 Imager
 
 The fork validates manifest entries in `src/oslistmodel.cpp`. The accepted
