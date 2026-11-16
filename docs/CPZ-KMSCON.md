@@ -108,24 +108,56 @@ sudo cpz-kmscon-output --recover   # restart the session (HDMI link recovery)
 Brightness → Output sets `auto`, `panel` or `hdmi`. The timer picks the change
 up within two seconds.
 
+### Diagnosing the panel
+
+kmscon logs one line per display it drives:
+
+```sh
+journalctl -u kmsconvt@tty1 -b | grep -E 'Display|master|drm'
+```
+
+`Display [HDMI-A-1] ...` is the monitor. A working panel adds a second line
+with the panel connector (`SPI-1`). If only HDMI appears, kmscon did not bind
+the panel connector; check what the kernel reports:
+
+```sh
+for d in /sys/class/drm/card*-*; do
+    echo "$d: $(cat "$d/status") $(cat "$d/enabled" 2>/dev/null)"
+done
+cat /sys/class/drm/card*-SPI-*/modes 2>/dev/null
+```
+
+`connected/disabled` means the connector is fine but nothing drew on it (the
+card nudge should correct that on the next boot or plug). `disconnected` or an
+empty `modes` list is a driver issue: kmscon can only use a DRM connector that
+reports `connected` with at least one mode.
+
 ### Hotplug and the "monitor turns off and on" symptom
 
-kmscon handles display hotplug itself: a new display is added to the terminal,
-`largest` re-evaluates the size, and the other screens are disabled. Restarting
-kmscon is **not** part of a normal hotplug. That matters because a restart
-drops DRM master and makes the monitor renegotiate the link, which looks like
-the monitor switching off and on.
+kmscon handles hotplug in `drm_video_hotplug`: a new display is added to the
+terminal, `largest` re-evaluates the size, and the other screens are disabled.
+Restarting kmscon is **not** part of a normal hotplug. That matters because a
+restart drops DRM master and makes the monitor renegotiate the link, which
+looks like the monitor switching off and on.
+
+kmscon 10 only listens for `HOTPLUG=1` on the **DRM card** device, but vc4
+reports an HDMI hotplug on the **connector** (`card0-HDMI-A-1`), which
+`uterm_monitor` ignores. `cpz-kmscon-output` therefore writes `change` to
+`/sys/class/drm/cardN/uevent` when the connector state changes (and once after
+boot, so the panel card is re-scanned). `99-cpz-kmscon-nudge.rules` marks that
+synthetic event `HOTPLUG=1`, and kmscon re-scans its connectors in place. The
+session, tmux and all panes keep running; only the screen layout changes.
 
 Restarts only happen for:
 
 - a changed generated configuration (font size, theme, screen timeout, layout,
   `display=panel` ↔ auto/HDMI);
 - `--force` / `--recover`;
-- a hotplug kmscon missed: HDMI is connected and usable but no CRTC is
-  attached for three ticks (~6 s). After one restart that still does not
-  enable HDMI, retries stop until the connector state changes (replug or
-  monitor wake) or `--recover` is used. The monitor is never blinked in a
-  loop.
+- a hotplug kmscon missed even after the card nudge: HDMI is connected and
+  usable but no CRTC is attached for three ticks (~6 s). After one restart
+  that still does not enable HDMI, retries stop until the connector state
+  changes (replug or monitor wake) or `--recover` is used. The monitor is
+  never blinked in a loop.
 
 Switching *to* HDMI is debounced by two samples; returning to the panel is
 immediate. Once on HDMI, the session stays there while the connector is
@@ -187,6 +219,7 @@ the debug image stay plain shells.
 /etc/systemd/system/cpz-kmscon-output.service
 /etc/systemd/system/cpz-kmscon-output.timer
 /etc/udev/rules.d/99-cpz-kmscon-output.rules
+/etc/udev/rules.d/99-cpz-kmscon-nudge.rules
 /etc/systemd/system-sleep/cpz-kmscon
 /etc/profile.d/cpz-session.sh
 /etc/tmux.conf

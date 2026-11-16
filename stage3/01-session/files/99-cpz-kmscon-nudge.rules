@@ -1,0 +1,8 @@
+# kmscon only reacts to HOTPLUG=1 on the DRM card device, but vc4 reports an
+# HDMI hotplug on the connector (card0-HDMI-A-1). cpz-kmscon-output writes
+# "change" to /sys/class/drm/cardN/uevent when a connector changes; mark that
+# event as a hotplug so kmscon re-scans its connectors without a restart.
+#
+# The kernel's own card-level hotplug events already carry HOTPLUG=1, so this
+# rule only affects the synthetic events used by the CPZ reconciler.
+ACTION=="change", SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{HOTPLUG}="1"

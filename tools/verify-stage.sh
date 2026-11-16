@@ -141,6 +141,7 @@ for file in \
 	stage3/01-session/files/cpz-kmscon-output.timer \
 	stage3/01-session/files/cpz-kmscon-sleep \
 	stage3/01-session/files/99-cpz-kmscon-output.rules \
+	stage3/01-session/files/99-cpz-kmscon-nudge.rules \
 	stage3/01-session/files/kmsconvt@.service.d/10-cpz.conf \
 	stage3/01-session/files/cpz-session.sh \
 	stage3/01-session/files/tmux.conf \
@@ -350,6 +351,8 @@ contains stage3/01-session/files/cpz-kmscon-output 'hdmi_edid'
 contains stage3/01-session/files/cpz-kmscon-output 'hdmi_pinned'
 contains stage3/01-session/files/cpz-kmscon-output '--recover'
 contains stage3/01-session/files/cpz-kmscon-output 'systemctl restart'
+contains stage3/01-session/files/cpz-kmscon-output 'nudge_drm'
+contains stage3/01-session/files/99-cpz-kmscon-nudge.rules 'ENV{HOTPLUG}="1"'
 contains stage3/01-session/02-run.sh 'CPZ_HDMI_VIDEO'
 contains build.sh 'CPZ_HDMI_VIDEO'
 contains config.cpz.example 'CPZ_HDMI_VIDEO'

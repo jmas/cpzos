@@ -1,2 +1,7 @@
 # Let the video group adjust the panel backlight from cpz-settings.
 SUBSYSTEM=="backlight", ACTION=="add|change", RUN+="/bin/chgrp video /sys%p/brightness", RUN+="/bin/chmod 0664 /sys%p/brightness"
+
+# systemd-backlight@backlight is masked on purpose: the CPZ settings own the
+# backlight. Clearing SYSTEMD_WANTS stops a failed-job message on every
+# brightness/bl_power write.
+SUBSYSTEM=="backlight", ACTION=="change", ENV{SYSTEMD_WANTS}=""

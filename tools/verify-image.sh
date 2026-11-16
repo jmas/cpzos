@@ -216,6 +216,7 @@ for file in usr/local/bin/cpz-first-login \
     etc/udev/rules.d/99-cpz-backlight.rules \
     etc/udev/rules.d/99-cpz-keyboard.rules \
     etc/udev/rules.d/99-cpz-kmscon-output.rules \
+    etc/udev/rules.d/99-cpz-kmscon-nudge.rules \
     etc/systemd/system/cpz-keyboard-layout.service \
     etc/systemd/system/cpz-keyboard-layout.path \
     etc/systemd/system/cardputerzero-keymap.service \
@@ -651,6 +652,13 @@ if debugfs -R "cat usr/local/bin/cpz-kmscon" "$TMPDIR/root.ext4" 2>/dev/null |
     pass "cpz-kmscon starts the autologin wrapper"
 else
     fail "cpz-kmscon autologin wiring MISSING"
+fi
+
+if debugfs -R "cat etc/udev/rules.d/99-cpz-kmscon-nudge.rules" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "HOTPLUG"; then
+    pass "kmscon hotplug nudge rule present"
+else
+    fail "kmscon hotplug nudge rule MISSING"
 fi
 
 if debugfs -R "cat etc/systemd/system-sleep/cpz-kmscon" "$TMPDIR/root.ext4" 2>/dev/null |

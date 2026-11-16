@@ -108,6 +108,18 @@ hdmi_probe() {
 	done
 }
 
+nudge_drm() {
+	# vc4 sends connector hotplug uevents on card0-HDMI-A-1. kmscon only
+	# reacts to HOTPLUG=1 on the card device itself, so re-emit a card-level
+	# change; 99-cpz-kmscon-nudge.rules marks it HOTPLUG=1 and kmscon
+	# re-scans its connectors. This is what makes HDMI plug/unplug work
+	# without restarting the session (and drops DRM master).
+	for uevent in /sys/class/drm/card[0-9]*/uevent; do
+		[ -w "$uevent" ] || continue
+		printf 'change' >"$uevent" 2>/dev/null || true
+	done
+}
+
 panel_off() {
 	# Zero the brightness *and* power the backlight down. The m5stack driver
 	# honours bl_power, but zeroing brightness as well keeps the panel dark on
@@ -168,6 +180,7 @@ restart_session() {
 }
 
 hdmi_probe
+conn_fingerprint="$hdmi_connected/$hdmi_edid/$hdmi_pinned"
 mode=${override:-$(get_setting display)}
 case "$mode" in
 	panel | hdmi | auto) ;;
@@ -184,6 +197,7 @@ configured_target=$(sed -n 's/^target=//p' "$state_file" 2>/dev/null |
 	tail -n 1)
 retry_after=$(sed -n 's/^retry_after=//p' "$state_file" 2>/dev/null |
 	tail -n 1)
+last_conn=$(cat "$run_dir/conn.state" 2>/dev/null || true)
 fail_conn=$(sed -n 's/^fail_conn=//p' "$state_file" 2>/dev/null | tail -n 1)
 fail_edid=$(sed -n 's/^fail_edid=//p' "$state_file" 2>/dev/null | tail -n 1)
 now=$(date +%s 2>/dev/null || printf 0)
@@ -245,6 +259,16 @@ if [ "$status_mode" = 1 ]; then
 	exit 0
 fi
 
+# A connector change is not visible to kmscon, and the very first run after
+# boot also has to make it re-scan the panel card. Nudge the DRM cards before
+# the debounce so kmscon can re-scan while the switch settles.
+if [ "${last_conn:-}" != "$conn_fingerprint" ]; then
+	log "drm: connector state is $conn_fingerprint; nudging cards"
+	nudge_drm
+	last_conn=$conn_fingerprint
+	printf '%s\n' "$last_conn" >"$run_dir/conn.state"
+fi
+
 # Debounce the HDMI direction in auto mode. A forced panel/HDMI choice and a
 # --force/--recover run are explicit and apply immediately.
 if [ "$target" = hdmi ] && [ "$configured_target" != hdmi ] &&
@@ -287,9 +311,9 @@ if [ -n "$retry_after" ] && [ "$retry_after" -gt "$now" ]; then
 	esac
 fi
 
-# Detect a hotplug that kmscon missed: HDMI is connected and usable, but no
-# CRTC is attached to it. Give kmscon a few ticks first; a normal hotplug is
-# handled without a restart.
+# Detect a hotplug that kmscon missed even after the nudges: HDMI is
+# connected and usable, but no CRTC is attached to it. Give kmscon a few ticks
+# first; a normal hotplug is handled without a restart.
 if [ "$target" = hdmi ] && [ "$hdmi_enabled" = 0 ] && [ "$need_restart" = 0 ]; then
 	miss=$(cat "$miss_file" 2>/dev/null || printf 0)
 	case "$miss" in
@@ -301,7 +325,7 @@ if [ "$target" = hdmi ] && [ "$hdmi_enabled" = 0 ] && [ "$need_restart" = 0 ]; t
 		'' | *[!0-9]*) retry_after=0 ;;
 	esac
 	if [ "$miss" -ge "$hdmi_miss_ticks" ] && [ "$retry_after" -le "$now" ]; then
-		log "HDMI hotplug was not picked up; restarting kmscon"
+		log "HDMI was not picked up after nudging; restarting kmscon"
 		need_restart=1
 	fi
 else
@@ -309,6 +333,12 @@ else
 fi
 
 if [ "$need_restart" = 1 ]; then
+	case "$config_state" in
+		changed) log "restart: configuration changed" ;;
+	esac
+	if [ "$force" = 1 ]; then
+		log "restart: forced"
+	fi
 	if restart_session; then
 		rm -f "$miss_file"
 		hdmi_probe
@@ -339,6 +369,7 @@ fi
 tmp=$state_file.tmp.$$
 {
 	printf 'target=%s\nmode=%s\n' "$target" "$mode"
+	printf 'conn=%s\n' "$conn_fingerprint"
 	case "$retry_after" in
 		'' | *[!0-9]*) ;;
 		*)

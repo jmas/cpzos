@@ -34,7 +34,7 @@ install -m 0755 \
 	"${ROOTFS_DIR}/usr/local/bin/"
 install -d -m 0755 "${ROOTFS_DIR}/etc/udev/rules.d"
 install -m 0644 files/99-cpz-backlight.rules files/99-cpz-keyboard.rules \
-	files/99-cpz-kmscon-output.rules \
+	files/99-cpz-kmscon-output.rules files/99-cpz-kmscon-nudge.rules \
 	"${ROOTFS_DIR}/etc/udev/rules.d/"
 install -m 0644 files/cpz-keyboard-layout.service \
 	files/cpz-keyboard-layout.path \
