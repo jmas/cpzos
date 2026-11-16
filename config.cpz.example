@@ -9,7 +9,9 @@ DEPLOY_COMPRESSION="xz"
 TARGET_HOSTNAME="cardputerzero"
 FIRST_USER_NAME="pi"
 FIRST_USER_PASS="raspberry"
-ENABLE_SSH=1
+# SSH is opt-in. The first console login requires a password change before
+# the CPZ session starts.
+ENABLE_SSH=0
 LOCALE_DEFAULT="en_US.UTF-8"
 KEYBOARD_KEYMAP="us"
 KEYBOARD_LAYOUT="English (US)"
@@ -17,3 +19,17 @@ TIMEZONE_DEFAULT="Asia/Shanghai"
 
 PASSWORDLESS_SUDO=0
 CPZ_DEBUG_BOOT=0
+
+# Wi-Fi regulatory domain (ISO 3166-1 alpha-2, e.g. US/GB/DE). Empty keeps
+# Wi-Fi off until the user turns the radio on in Settings.
+WPA_COUNTRY=""
+
+# CardputerZero driver overlay commit. Keep this pinned for reproducible
+# images; set it to "main" only when intentionally tracking upstream.
+CPZ_DTOVERLAYS_REF="4f7aeee9fc103ebb03d22cac476bb191ecfb321e"
+
+# Optional HDMI mode pin for monitors that renegotiate or lose their EDID after
+# standby. Empty = use the monitor's EDID. Do not use ':D' here: forcing HPD
+# always-connected would defeat the "panel off while HDMI is active" policy.
+# Example: CPZ_HDMI_VIDEO="HDMI-A-1:1920x1080@60"
+CPZ_HDMI_VIDEO=""

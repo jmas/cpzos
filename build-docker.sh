@@ -38,19 +38,30 @@ do
 	esac
 done
 
-# Ensure that the configuration file is an absolute path
-if test -x /usr/bin/realpath; then
-	CONFIG_FILE=$(realpath -s "$CONFIG_FILE" || realpath "$CONFIG_FILE")
+# Ensure that the configuration file is present before normalizing the path.
+# Normalizing an empty value would turn it into the repository directory and
+# produce a confusing "source: ... is a directory" error.
+if [ -z "${CONFIG_FILE}" ]; then
+	echo "Configuration file needs to be present in '${DIR}/config' or passed with -c FILE" >&2
+	exit 1
+fi
+if [ ! -f "${CONFIG_FILE}" ]; then
+	echo "Configuration file not found: ${CONFIG_FILE}" >&2
+	exit 1
 fi
 
-# Ensure that the confguration file is present
-if test -z "${CONFIG_FILE}"; then
-	echo "Configuration file need to be present in '${DIR}/config' or path passed as parameter"
-	exit 1
+# Ensure that the configuration file is an absolute path. Docker treats a
+# relative -v source (e.g. "config") as a named volume, which mounts an empty
+# directory at /config.
+if command -v realpath >/dev/null 2>&1; then
+	CONFIG_FILE=$(realpath -s "$CONFIG_FILE" 2>/dev/null || realpath "$CONFIG_FILE")
 else
-	# shellcheck disable=SC1090
-	source ${CONFIG_FILE}
+	CONFIG_DIR=$(CDPATH='' cd -- "$(dirname -- "$CONFIG_FILE")" && pwd)
+	CONFIG_FILE="${CONFIG_DIR}/$(basename -- "$CONFIG_FILE")"
 fi
+
+# shellcheck disable=SC1090
+source "${CONFIG_FILE}"
 
 CONTAINER_NAME=${CONTAINER_NAME:-pigen_work}
 CONTINUE=${CONTINUE:-0}
@@ -121,6 +132,7 @@ if [[ "${binfmt_misc_required}" == "1" ]]; then
   fi
   if ! grep -q "^interpreter ${qemu_arm}" /proc/sys/fs/binfmt_misc/qemu-aarch64* ; then
     # Register qemu-aarch64 for binfmt_misc
+    # shellcheck disable=SC2140  # adjacent quoted pieces form one binfmt line
     reg="echo ':qemu-aarch64-rpi:M::"\
 "\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xb7\x00:"\
 "\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:"\
@@ -130,7 +142,10 @@ if [[ "${binfmt_misc_required}" == "1" ]]; then
   fi
 fi
 
+# Word splitting is intentional: DOCKER may be "sudo docker".
+# shellcheck disable=SC2086
 trap 'echo "got CTRL+C... please wait 5s" && ${DOCKER} stop -t 5 ${DOCKER_CMDLINE_NAME}' SIGINT SIGTERM
+# shellcheck disable=SC2086
 time ${DOCKER} run \
   $DOCKER_CMDLINE_PRE \
   --name "${DOCKER_CMDLINE_NAME}" \

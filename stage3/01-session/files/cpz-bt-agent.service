@@ -1,0 +1,19 @@
+[Unit]
+Description=CPZ Bluetooth pairing agent
+After=bluetooth.service
+Requires=bluetooth.service
+ConditionPathExists=/usr/bin/bt-agent
+
+[Service]
+Type=simple
+# Make sure a soft rfkill block does not prevent Settings from powering the
+# adapter on.
+ExecStartPre=-/usr/sbin/rfkill unblock bluetooth
+# Auto-accept Just Works / numeric-comparison pairing so devices can be paired
+# from cpz-settings without a separate confirmation UI.
+ExecStart=/usr/bin/bt-agent -c NoInputNoOutput
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

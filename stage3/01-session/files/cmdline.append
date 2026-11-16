@@ -1,3 +1,3 @@
 # Append to the single line in /boot/firmware/cmdline.txt.
-quiet loglevel=3 vt.global_cursor_default=0 logo.nologo nowatchdog
-fbcon=map:off cfg80211.ieee80211_regdom=AE
+quiet loglevel=3 logo.nologo nowatchdog consoleblank=0
+fbcon=map:10

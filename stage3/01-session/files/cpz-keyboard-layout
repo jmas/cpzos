@@ -1,0 +1,348 @@
+#!/bin/sh
+# Select the console keymap for the connected keyboard(s).
+#
+# The CPZ internal TCA8418 map is a *partial* overlay that remaps the vendor
+# keyboard's Sym/Fn keycodes (and, unfortunately, the standard comma/period/
+# slash keycodes) to punctuation. Applying it to a USB/Bluetooth keyboard
+# scrambles punctuation, so the selector must apply a complete standard layout
+# when an external keyboard is present.
+#
+# Detection reads sysfs instead of the udev database. capabilities/key says
+# whether a node is a full alphanumeric keyboard (the same mask udev's
+# input_id uses for ID_INPUT_KEYBOARD), and id/bustype says whether it is USB,
+# Bluetooth or PS/2. That stays correct at boot and while unplugging, when
+# udev properties may be missing or stale, and it catches Bluetooth HID
+# keyboards even if ID_BUS was not assigned yet. Consumer-control interfaces
+# (mice, audio docks, media remotes) do not expose the full keyboard mask, so
+# a USB receiver cannot keep the standard layout selected by itself.
+#
+# The internal TCA8418 is identified positively by its i2c bus, its device
+# path, the cardputer-zero-internal udev symlink, or its name. Only an
+# external keyboard that is not the internal device switches to the standard
+# layout. `--detect` prints "external" or "internal" for the settings UI and
+# for diagnostics.
+#
+# Debian's kbd package no longer ships /usr/share/keymaps/*.kmap, so plain
+# `loadkeys us` fails. Standard keymaps are generated with ckbcomp (the same
+# source console-setup uses) and applied with loadkeys.
+#
+# Enabled layouts (keyboard_layouts) and the active one
+# (keyboard_layout_active) come from cpz-settings. The effective state is
+# published in /run/cpz-layout.active ("cpz" or a layout code) so cpz-status can
+# show it in the status bar.
+set -eu
+
+tty_list="/dev/tty1 /dev/tty2 /dev/tty3"
+state_file=/run/cpz-layout.active
+log_file=/run/cpz-keyboard-layout.log
+cached_keymap=/etc/console-setup/cached_UTF-8_del.kmap.gz
+cpz_map=/usr/share/keymaps/tca8418_keypad_m5stack_keymap.map
+internal_link=/dev/input/cardputer-zero-internal
+internal_path=3f804000.i2c
+internal_bustype=0018
+usb_bustype=0003
+bluetooth_bustype=0005
+ps2_bustype=0011
+external_keyboard=0
+applied_layout=
+
+log() {
+	[ -d "${log_file%/*}" ] || return 0
+	printf '%s %s\n' "$(date +%H:%M:%S)" "$1" >>"$log_file" 2>/dev/null || true
+}
+
+event_sysfs() {
+	printf '/sys/class/input/%s' "${1##*/}"
+}
+
+# True when the event node advertises a complete alphanumeric keyboard. udev's
+# input_id builtin uses exactly this test: keycodes 1..31 (ESC, the number row
+# and the QWERTY block) must all be present. Consumer-control interfaces with
+# only media keys fail it.
+is_typing_keyboard() {
+	event=$1
+	caps=$(cat "$(event_sysfs "$event")/device/capabilities/key" 2>/dev/null || true)
+	[ -n "$caps" ] || return 1
+	# capabilities/key is a space-separated bitmap, highest word first. The
+	# last word holds keycodes 0..63; bits 1..31 set spells 0xfffffffe.
+	last=$(printf '%s' "$caps" | tr 'A-F' 'a-f' | sed 's/.* //')
+	case "$last" in
+		*fffffffe) return 0 ;;
+	esac
+	return 1
+}
+
+device_path() {
+	readlink -f "$(event_sysfs "$1")/device" 2>/dev/null || true
+}
+
+device_name() {
+	cat "$(event_sysfs "$1")/device/name" 2>/dev/null || true
+}
+
+device_bustype() {
+	cat "$(event_sysfs "$1")/device/id/bustype" 2>/dev/null | tr 'A-F' 'a-f'
+}
+
+# True when the event node belongs to the built-in Cardputer keyboard. Check
+# several independent signals: a missing/renamed udev rule must not turn the
+# internal keyboard into an "external" one.
+is_internal_device() {
+	event=$1
+	name_lc=$2
+	bustype=$(device_bustype "$event")
+	path=$(device_path "$event")
+
+	if [ -L "$internal_link" ]; then
+		link_target=$(readlink -f "$internal_link" 2>/dev/null || true)
+		event_target=$(readlink -f "$event" 2>/dev/null || true)
+		if [ -n "$link_target" ] && [ "$link_target" = "$event_target" ]; then
+			log "ignoring internal keyboard (udev symlink): $event"
+			return 0
+		fi
+	fi
+
+	if [ "$bustype" = "$internal_bustype" ]; then
+		log "ignoring internal keyboard (bustype=$bustype): $event"
+		return 0
+	fi
+
+	case "$path" in
+		*"$internal_path"*)
+			log "ignoring internal keyboard (path=$path): $event"
+			return 0
+			;;
+	esac
+
+	case "$name_lc" in
+		*tca8418*|*m5stack*|*cardputer*zero*)
+			log "ignoring internal keyboard (name=${name:-?}): $event"
+			return 0
+			;;
+	esac
+	return 1
+}
+
+# Return success when a real USB, Bluetooth or PS/2 keyboard is connected.
+detect_external_keyboard() {
+	for event in /dev/input/event*; do
+		[ -e "$event" ] || continue
+		if ! is_typing_keyboard "$event"; then
+			continue
+		fi
+		name=$(device_name "$event")
+		name_lc=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+		if is_internal_device "$event" "$name_lc"; then
+			continue
+		fi
+		bustype=$(device_bustype "$event")
+		case "$bustype" in
+			"$usb_bustype"|"$bluetooth_bustype"|"$ps2_bustype") ;;
+			*)
+				log "ignoring keyboard $event (name=${name:-?}, bustype=${bustype:-unknown}): not USB/Bluetooth/PS2"
+				continue
+				;;
+		esac
+		log "external keyboard: $event name=${name:-?} bustype=$bustype path=$(device_path "$event")"
+		return 0
+	done
+	return 1
+}
+
+detect_requested=0
+case "${1:-}" in
+	'')
+		;;
+	--detect)
+		detect_requested=1
+		;;
+	-h|--help)
+		cat <<'EOF'
+Usage: cpz-keyboard-layout [--detect]
+
+Without arguments, select and load the console keymap for the connected
+keyboard(s). With --detect, print "external" when a full USB/Bluetooth/PS2
+keyboard is connected, or "internal" when the built-in Cardputer keyboard
+should be used.
+EOF
+		exit 0
+		;;
+	*)
+		echo "usage: cpz-keyboard-layout [--detect]" >&2
+		exit 2
+		;;
+esac
+
+if [ "$detect_requested" = 1 ]; then
+	if detect_external_keyboard; then
+		printf 'external\n'
+	else
+		printf 'internal\n'
+	fi
+	exit 0
+fi
+
+# A single unplug removes several devices (event node, input device, HID
+# interface) as separate udev events. Wait until the queue is empty so the
+# first run already sees the final keyboard set instead of a half-removed
+# keyboard that still looks external.
+if command -v udevadm >/dev/null 2>&1; then
+	udevadm settle --timeout=2 >/dev/null 2>&1 || true
+fi
+
+first_home=$(getent passwd 1000 | cut -d: -f6 2>/dev/null || true)
+user_settings="${first_home}/.config/cpz/settings.conf"
+system_settings=/etc/cpz/settings.conf
+get() {
+	for file in "$user_settings" "$system_settings"; do
+		[ -r "$file" ] || continue
+		value=$(sed -n "s/^$1=//p" "$file" | tail -n 1)
+		[ -n "$value" ] && { printf '%s' "$value"; return 0; }
+	done
+	return 0
+}
+
+mode=$(get keyboard_layout)
+layout=$(get keyboard_layout_active)
+case "$layout" in
+	''|*[!a-z0-9_-]*) layout=us ;;
+esac
+
+cached_layout=us
+if [ -r /etc/default/keyboard ]; then
+	value=$(sed -n 's/^XKBLAYOUT="\([^"]*\)".*/\1/p' /etc/default/keyboard 2>/dev/null |
+		head -n 1)
+	value=${value%%,*}
+	[ -n "$value" ] && cached_layout=$value
+fi
+
+case "$mode" in
+	cpz) external_keyboard=0 ;;
+	standard) external_keyboard=1 ;;
+	*)
+		mode=auto
+		if detect_external_keyboard; then
+			external_keyboard=1
+		else
+			external_keyboard=0
+		fi
+		;;
+esac
+
+publish() {
+	[ -d "${state_file%/*}" ] || return 0
+	tmp="${state_file}.$$"
+	{ printf '%s\n' "$1" >"$tmp"; } 2>/dev/null || return 0
+	chmod 0644 "$tmp" 2>/dev/null || true
+	mv "$tmp" "$state_file" 2>/dev/null || rm -f "$tmp"
+}
+
+# Apply a keymap file to every console. Returns success if at least one console
+# accepted it, so a missing tty2/tty3 does not abort the selector.
+apply_map() {
+	map=$1
+	loaded=0
+	for tty in $tty_list; do
+		[ -e "$tty" ] || continue
+		if loadkeys -q -C "$tty" "$map" 2>/dev/null; then
+			loaded=1
+		else
+			log "loadkeys failed for $tty ($2)"
+		fi
+	done
+	[ "$loaded" = 1 ]
+}
+
+# Load a complete standard layout. Tries the requested layout, then US, then
+# the keymap console-setup generated at build time.
+load_standard() {
+	code=$1
+	if command -v ckbcomp >/dev/null 2>&1; then
+		map=$(mktemp 2>/dev/null || true)
+		if [ -n "$map" ]; then
+			if ckbcomp -layout "$code" >"$map" 2>/dev/null &&
+				apply_map "$map" "$code"; then
+				completed=1
+			else
+				completed=0
+			fi
+			if [ "$completed" = 0 ] && [ "$code" != "us" ]; then
+				log "layout $code failed, falling back to us"
+				if ckbcomp -layout us >"$map" 2>/dev/null &&
+					apply_map "$map" us; then
+					code=us
+					completed=1
+				fi
+			fi
+			rm -f "$map"
+			if [ "$completed" = 1 ]; then
+				applied_layout=$code
+				return 0
+			fi
+		fi
+	fi
+	if [ -r "$cached_keymap" ] && apply_map "$cached_keymap" console-setup; then
+		applied_layout=$cached_layout
+		log "used console-setup keymap ($cached_layout)"
+		return 0
+	fi
+	return 1
+}
+
+load_internal() {
+	# Start from a clean US base: the vendor overlay is partial, so anything
+	# left from a previously selected national layout would leak through.
+	if ! load_standard us; then
+		log "no usable base keymap before the CPZ overlay"
+	fi
+	if [ -r "$cpz_map" ]; then
+		apply_map "$cpz_map" cpz || log "CPZ overlay failed"
+	else
+		log "CPZ overlay missing: $cpz_map"
+	fi
+}
+
+apply_external() {
+	if load_standard "$layout"; then
+		publish "$applied_layout"
+		log "external keyboard: $applied_layout"
+	else
+		# Never leave the internal overlay on an external keyboard.
+		log "external keyboard: no standard layout could be applied"
+		publish "$layout"
+	fi
+}
+
+apply_internal() {
+	load_internal
+	publish cpz
+	log "internal keyboard: cpz"
+}
+
+# The layout may change while ckbcomp/loadkeys are running (for example the
+# external keyboard is unplugged and systemd coalesces the second service
+# start). Verify the applied choice and select again if the keyboard set moved
+# underneath us, so unplugging always ends on the CPZ map.
+attempt=0
+while :; do
+	attempt=$((attempt + 1))
+	if [ "$external_keyboard" = 1 ]; then
+		apply_external
+	else
+		apply_internal
+	fi
+
+	[ "$mode" = auto ] || break
+	[ "$attempt" -lt 3 ] || break
+	if command -v udevadm >/dev/null 2>&1; then
+		udevadm settle --timeout=2 >/dev/null 2>&1 || true
+	fi
+	if detect_external_keyboard; then
+		new_external=1
+	else
+		new_external=0
+	fi
+	[ "$new_external" != "$external_keyboard" ] || break
+	log "keyboard set changed during apply; selecting again"
+	external_keyboard=$new_external
+done

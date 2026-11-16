@@ -1,0 +1,58 @@
+#!/bin/sh
+# Toggle between automatic output selection and the internal panel.
+#
+# Bound to Alt+D in tmux so the panel can be recovered even when an HDMI
+# monitor is powered off but keeps HPD asserted (the Pi cannot detect that).
+# The choice is stored like any other setting and cpz-hdmi-console applies it
+# on its next tick.
+set -u
+
+home=${HOME:-/root}
+user_settings=${XDG_CONFIG_HOME:-$home/.config}/cpz/settings.conf
+system_settings=/etc/cpz/settings.conf
+
+get() {
+	for file in "$user_settings" "$system_settings"; do
+		[ -r "$file" ] || continue
+		value=$(sed -n "s/^$1=//p" "$file" | tail -n 1)
+		[ -n "$value" ] && { printf '%s' "$value"; return 0; }
+	done
+	return 0
+}
+
+say() {
+	if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+		tmux display-message -d 2000 "$1" >/dev/null 2>&1 || true
+	fi
+}
+
+current=$(get display)
+case "$current" in
+	panel) next=auto ;;
+	*) next=panel ;;
+esac
+
+# Update only the display key, preserving every other setting.
+mkdir -p "$(dirname "$user_settings")" 2>/dev/null || true
+tmp="${user_settings}.tmp.$$"
+if [ -r "$user_settings" ]; then
+	awk -v value="$next" '
+		BEGIN { done = 0 }
+		/^display=/ {
+			if (!done) { print "display=" value; done = 1 }
+			next
+		}
+		{ print }
+		END { if (!done) print "display=" value }
+	' "$user_settings" >"$tmp" || { rm -f "$tmp"; exit 1; }
+else
+	printf '# CPZ user settings. Written by cpz-settings.\ndisplay=%s\n' \
+		"$next" >"$tmp" || exit 1
+fi
+chmod 0644 "$tmp" 2>/dev/null || true
+mv "$tmp" "$user_settings" 2>/dev/null || { rm -f "$tmp"; exit 1; }
+
+case "$next" in
+	panel) say "display: CPZ panel" ;;
+	*) say "display: auto" ;;
+esac

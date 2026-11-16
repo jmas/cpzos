@@ -1,0 +1,21 @@
+#!/bin/sh
+# Focus the Settings tab, re-creating it if it was closed.
+set -eu
+
+session=${1:-main}
+tmux has-session -t "=$session" 2>/dev/null || exit 0
+
+/usr/local/bin/cpz-session-ensure "$session"
+
+settings_id=$(tmux list-windows -t "=$session" -F \
+	'#{window_id} #{?@cpz_settings,1,0} #{window_name}' |
+	awk '$2 == 1 || $3 == "settings" { print $1; exit }')
+[ -n "$settings_id" ] || exit 0
+
+# run-shell has no client context; switch the attached client explicitly.
+client=$(tmux list-clients -t "=$session" -F '#{client_name}' | head -n 1)
+if [ -n "$client" ]; then
+	tmux switch-client -c "$client" -t "$settings_id"
+else
+	tmux select-window -t "$settings_id" 2>/dev/null || true
+fi

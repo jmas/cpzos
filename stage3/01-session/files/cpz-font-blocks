@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Add the block-element glyphs used by terminal QR renderers to a PSF2 font.
+
+The console-setup builds of Terminus keep U+2588 FULL BLOCK but drop the
+half blocks U+2580/U+2584 and the vertical halves U+258C/U+2590.  Programs
+such as `qrencode -t UTF8` and `qrencode -t ANSIUTF8` use those half blocks
+to pack two QR rows into one terminal row, so the missing glyphs are drawn
+as replacement characters and the code cannot be scanned.
+
+This appends the missing glyphs (derived from the full block) to the font
+and adds their Unicode mappings.  Existing glyphs and mappings are left
+untouched.  PSF2 only; the old PSF1 format has no room for extra glyphs.
+
+Usage: cpz-font-blocks FONT.psf[.gz]...
+"""
+
+from __future__ import annotations
+
+import gzip
+import os
+import struct
+import sys
+import tempfile
+
+PSF2_MAGIC = 0x864AB572
+FULL_BLOCK = 0x2588
+BLOCKS = (
+    (0x2580, "upper"),
+    (0x2584, "lower"),
+    (0x258C, "left"),
+    (0x2590, "right"),
+)
+
+
+def read_font(path: str) -> tuple[bytes, tuple, bytes, bytes]:
+    raw = open(path, "rb").read()
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+    if len(raw) < 32:
+        raise ValueError("not a PSF2 font")
+    fields = struct.unpack_from("<IIIIIIII", raw, 0)
+    magic, version, header_size, flags, length, charsize, height, width = fields
+    if magic != PSF2_MAGIC:
+        raise ValueError("not a PSF2 font (PSF1 is not supported)")
+    if height == 0 or width == 0 or charsize < height * ((width + 7) // 8):
+        raise ValueError("invalid PSF2 geometry")
+    glyph_end = header_size + length * charsize
+    if glyph_end > len(raw):
+        raise ValueError("truncated glyph data")
+    return raw, fields, raw[header_size:glyph_end], raw[glyph_end:]
+
+
+def parse_unicode(table: bytes) -> tuple[list[bytes], dict[int, int]]:
+    entries = table.split(b"\xff")
+    if entries and entries[-1] == b"":
+        entries.pop()
+    mapping: dict[int, int] = {}
+    for glyph, entry in enumerate(entries):
+        try:
+            text = entry.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        for char in text:
+            mapping[ord(char)] = glyph
+    return entries, mapping
+
+
+def pixel(data: bytes, charsize: int, width: int, height: int, x: int, y: int) -> bool:
+    rowstride = (width + 7) // 8
+    if y >= height or x >= width:
+        return False
+    return bool(data[y * rowstride + x // 8] & (0x80 >> (x % 8)))
+
+
+def make_block(source: bytes, charsize: int, width: int, height: int,
+               kind: str) -> bytes:
+    rowstride = (width + 7) // 8
+    out = bytearray(charsize)
+    for y in range(height):
+        if kind == "upper" and y >= height // 2:
+            continue
+        if kind == "lower" and y < height // 2:
+            continue
+        for x in range(width):
+            if kind == "left" and x >= width // 2:
+                continue
+            if kind == "right" and x < width // 2:
+                continue
+            if pixel(source, charsize, width, height, x, y):
+                out[y * rowstride + x // 8] |= 0x80 >> (x % 8)
+    return bytes(out)
+
+
+def patch_font(path: str) -> int:
+    try:
+        raw, fields, glyphs, table = read_font(path)
+    except (OSError, ValueError, struct.error) as error:
+        print(f"{path}: {error}", file=sys.stderr)
+        return 1
+
+    magic, version, header_size, flags, length, charsize, height, width = fields
+    entries, mapping = parse_unicode(table)
+    if len(entries) != length:
+        print(f"{path}: unicode table has {len(entries)} entries for "
+              f"{length} glyphs", file=sys.stderr)
+        return 1
+
+    missing = [(code, kind) for code, kind in BLOCKS if code not in mapping]
+    if not missing:
+        print(f"{path}: already has block glyphs")
+        return 0
+
+    full_index = mapping.get(FULL_BLOCK)
+    if full_index is None:
+        # The full block is normally present; synthesize it if not.
+        source = bytes([0xFF] * (height * ((width + 7) // 8)))
+        source += bytes(charsize - len(source))
+    else:
+        start = full_index * charsize
+        source = glyphs[start:start + charsize]
+
+    new_glyphs = bytearray(glyphs)
+    new_table = bytearray(table)
+    if not new_table.endswith(b"\xff"):
+        new_table += b"\xff"
+    for code, kind in missing:
+        new_glyphs += make_block(source, charsize, width, height, kind)
+        new_table += chr(code).encode("utf-8") + b"\xff"
+
+    new_length = length + len(missing)
+    header = struct.pack("<IIIIIIII", magic, version, header_size, flags,
+                         new_length, charsize, height, width)
+    output = header + new_glyphs + new_table
+
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, temp_path = tempfile.mkstemp(prefix=".cpz-font-", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as temp:
+            if path.endswith(".gz"):
+                temp.write(gzip.compress(output, compresslevel=9, mtime=0))
+            else:
+                temp.write(output)
+        os.chmod(temp_path, os.stat(path).st_mode & 0o777)
+        os.replace(temp_path, path)
+    except BaseException:
+        os.unlink(temp_path)
+        raise
+
+    added = " ".join(f"U+{code:04X}" for code, _ in missing)
+    print(f"{path}: added {added}")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if not argv[1:]:
+        print(f"usage: {argv[0]} FONT.psf[.gz]...", file=sys.stderr)
+        return 2
+    status = 0
+    for path in argv[1:]:
+        if not os.path.exists(path):
+            print(f"{path}: not found", file=sys.stderr)
+            status = 1
+            continue
+        status = max(status, patch_font(path))
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

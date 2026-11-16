@@ -1,0 +1,33 @@
+#!/bin/sh
+# Autologin wrapper for the CPZ fbcon getty on tty1.
+#
+# getty@.service normally starts agetty, which prompts for a user name. Resolve
+# uid 1000 at service start instead of baking in a name: rpi-preseed or Imager
+# can rename the first user on first boot. agetty --autologin runs login(1) -f,
+# so the PAM/logind session is the same as a password login.
+set -eu
+
+vt=${1:-tty1}
+term=${2:-linux}
+case "$vt" in
+	tty[0-9]*) ;;
+	[0-9]*) vt="tty$vt" ;;
+	*) vt=tty1 ;;
+esac
+
+user=$(getent passwd 1000 | cut -d: -f1 || true)
+case "$user" in
+	[a-z]*) ;;
+	*) user= ;;
+esac
+if [ -n "$user" ] &&
+	! printf '%s\n' "$user" | grep -Eq '^[a-z][-a-z0-9_]*$'; then
+	user=
+fi
+
+# Fall back to a normal login prompt if the first user does not exist.
+if [ -z "$user" ]; then
+	exec /sbin/agetty --noclear "$vt" "$term"
+fi
+
+exec /sbin/agetty --autologin "$user" --noclear "$vt" "$term"

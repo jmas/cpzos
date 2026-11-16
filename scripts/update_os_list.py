@@ -3,8 +3,8 @@
 update_os_list.py — Accumulative update of os-list.json for the M5 Imager.
 
 Adds a new CardputerZero OS entry (or updates an existing one with the same
-tag). Preserves visible historical entries while hiding legacy prereleases
-before the configured cutoff date.
+tag). Preserves visible historical entries while hiding legacy CardputerZero
+builds (desktop/kmscon and prereleases) before the configured cutoff date.
 
 Usage (called by the CI publish workflow):
     python3 scripts/update_os_list.py \
@@ -24,7 +24,6 @@ import argparse
 import json
 from datetime import date
 
-
 BASE_URL = "https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com"
 ICON_URL = f"{BASE_URL}/icons/cardputerzero.png"
 PRERELEASE_VISIBLE_FROM = date(2026, 9, 29)
@@ -39,7 +38,12 @@ def is_cardputerzero_entry(entry):
 
 
 def is_hidden_prerelease(entry):
-    """Hide only old CardputerZero prereleases with a valid release date."""
+    """Hide old CardputerZero entries with a valid release date.
+
+    The cutoff intentionally hides legacy desktop/kmscon builds too; see
+    commit 791a985. The name is historical, not a guarantee that the entry is
+    a prerelease.
+    """
     if not is_cardputerzero_entry(entry):
         return False
     try:
@@ -76,10 +80,10 @@ def main():
     tag_short = "-".join(args.tag.split("-")[:2])  # "20260608-102710"
     if is_prerelease:
         display_name = f"CardputerZero CPZ (Trixie arm64) {tag_short} (Beta)"
-        description = "Terminal-first kmscon + tmux image for CardputerZero. Pre-release build."
+        description = "Terminal-first fbcon + tmux image for CardputerZero. Pre-release build."
     else:
         display_name = "CardputerZero CPZ (Trixie arm64)"
-        description = "Terminal-first kmscon + tmux image for CardputerZero."
+        description = "Terminal-first fbcon + tmux image for CardputerZero."
 
     new_entry = {
         "name": display_name,
@@ -91,7 +95,9 @@ def main():
         "image_download_size": args.download_size,
         "image_download_sha256": args.download_sha256,
         "release_date": args.release_date,
-        "init_format": "rpi-preseed",
+        # M5 Imager prunes rpi-preseed entries. The image supports both
+        # first-boot mechanisms; M5 uses systemd firstrun.
+        "init_format": "systemd",
         "devices": ["m5-cardputerzero", "pi3-64bit"],
         "architecture": "armv8",
         "capabilities": ["i2c", "spi", "serial", "usb_otg"],

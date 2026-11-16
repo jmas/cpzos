@@ -1,35 +1,36 @@
-# CPZ terminal session. kmscon itself is installed by 00-kmscon.
+# CPZ terminal session (fbcon + tmux).
 tmux
 
 # Input, network and audio plumbing used by the CPZ status bar and settings.
 network-manager
+polkitd
 iw
 rfkill
 bluez
 bluez-tools
-alsa-utils
 pipewire
 wireplumber
-rtkit
 
-# Fonts: Terminus gives the 6x12 cell grid on the 320x170 panel.
-fonts-dejavu-core
-fontconfig
+# Fonts: the fbcon session uses Terminus PSF fonts only. The OTB/X11 variant
+# and the DejaVu font stack are not used by the console session.
 fonts-terminus
-fonts-terminus-otb
 
 # Terminal tooling.
 nano
 vim
+less
 lf
 file
 util-linux
-xdg-utils
 fzf
 htop
 chafa
 rsync
 python3
+# Interactive package browser used by Settings > Applications.
+aptitude
+# terminfo for tmux-256color, used by the Settings TUI and other curses apps.
+ncurses-term
 
 # First-boot account/network provisioning. rpi-preseed is what Raspberry Pi
 # Imager writes; the other packages provide the helper scripts it calls.

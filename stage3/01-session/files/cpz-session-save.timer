@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically save the CPZ tmux session layout
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Unit=cpz-session-save.service
+
+[Install]
+WantedBy=timers.target

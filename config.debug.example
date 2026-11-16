@@ -1,6 +1,6 @@
-# CPZ kmscon debug-image configuration.
+# CPZ fbcon debug-image configuration.
 # Copy to ./config or pass with ./build-docker.sh -c FILE.
-# This image disables kmscon and boots to a visible getty with verbose logs.
+# This image boots to a visible getty with verbose logs and no autologin.
 
 IMG_NAME="cardputerzero-trixie-arm64-debug"
 IMG_FILENAME="cardputerzero-trixie-arm64-debug"
@@ -10,7 +10,7 @@ DEPLOY_COMPRESSION="xz"
 TARGET_HOSTNAME="cardputerzero"
 FIRST_USER_NAME="pi"
 FIRST_USER_PASS="raspberry"
-ENABLE_SSH=1
+ENABLE_SSH=0
 LOCALE_DEFAULT="en_US.UTF-8"
 KEYBOARD_KEYMAP="us"
 KEYBOARD_LAYOUT="English (US)"
@@ -18,3 +18,10 @@ TIMEZONE_DEFAULT="Asia/Shanghai"
 
 PASSWORDLESS_SUDO=0
 CPZ_DEBUG_BOOT=1
+
+# See config.cpz.example for both settings.
+WPA_COUNTRY=""
+CPZ_DTOVERLAYS_REF="4f7aeee9fc103ebb03d22cac476bb191ecfb321e"
+
+# Optional HDMI mode pin (see config.cpz.example).
+CPZ_HDMI_VIDEO=""

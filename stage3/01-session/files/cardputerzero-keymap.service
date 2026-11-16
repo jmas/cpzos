@@ -1,0 +1,15 @@
+[Unit]
+Description=Load the CardputerZero internal keyboard keymap
+After=keyboard-setup.service console-setup.service
+Before=getty@tty1.service getty@tty2.service
+ConditionPathExists=/usr/local/bin/cpz-keyboard-layout
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Prefer the standard layout when a USB keyboard is attached; otherwise load
+# the vendor TCA8418 map for the internal keyboard.
+ExecStart=/usr/local/bin/cpz-keyboard-layout
+
+[Install]
+WantedBy=sysinit.target

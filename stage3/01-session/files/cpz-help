@@ -1,0 +1,53 @@
+#!/bin/sh
+# Key reference shown by Alt+H in a tmux popup.
+#
+# The list is taller than the 53x14 panel, so it is paged with less. -X keeps
+# the popup contents on screen instead of switching the alternate screen and -F
+# skips the pager when everything fits (for example on a large HDMI console).
+keys() {
+	cat <<'EOF'
+CPZ keys
+==== Tabs ====
+ Alt+Left / Alt+Right  prev / next tab
+ Alt+1 .. Alt+9        select tab
+ Alt+T                 new tab
+ Alt+W                 close tab (asks)
+ Ctrl-b c              new tab
+ Ctrl-b n / p          next / prev tab
+ Ctrl-b 0 .. 9         select tab by number
+ Ctrl-b ,              rename tab
+ Ctrl-b &              close tab (asks)
+ Ctrl-b w              list tabs
+==== Panes ====
+ Ctrl-b %              split left / right
+ Ctrl-b "              split top / bottom
+ Ctrl-b o              next pane
+ Ctrl-b z              zoom pane
+ Ctrl-b x              close pane (asks)
+ Ctrl-b { / }          swap pane prev / next
+==== Scroll and copy ====
+ Ctrl-b [              enter copy mode (vi keys)
+ Space                 start / stop selection
+ Enter                 copy selection
+ q                     leave copy mode
+ Ctrl-b ]              paste a buffer
+==== Session ====
+ Ctrl-b d              detach
+ Ctrl-b ?              every tmux key
+==== Device ====
+ Alt+S                 Settings
+ Alt+H                 this help
+ Alt+Space             switch input layout
+ Alt+D                 CPZ panel / auto display
+ In Settings           Z/X/C/F move (Fn off)
+EOF
+}
+
+if command -v less >/dev/null 2>&1; then
+	keys | less -R -X -F -P 'q close'
+	exit 0
+fi
+
+keys
+printf '\nPress Enter to close.'
+read -r _ || true

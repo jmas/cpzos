@@ -1,0 +1,44 @@
+#!/bin/sh
+# Close the current tab. Bound to Alt+W and Ctrl-b & in tmux.conf; both ask for
+# confirmation there.
+#
+# Window 1 is the shell and the last window is Settings (see cpz-session-ensure),
+# so neither may be closed: closing tab 1 would only make the ensure hook create
+# a fresh shell in its place, and Settings would be re-created immediately.
+set -eu
+
+session=${1:-main}
+tmux has-session -t "=$session" 2>/dev/null || exit 0
+
+tab=$(printf '\t')
+windows=$(tmux list-windows -t "=$session" -F \
+	"#{window_id}${tab}#{window_index}${tab}#{window_name}${tab}#{window_active}${tab}#{?@cpz_main,1,0}${tab}#{?@cpz_settings,1,0}")
+
+current=$(printf '%s\n' "$windows" | awk -F "$tab" '$4 == 1 { print; exit }')
+[ -n "$current" ] || exit 0
+
+IFS=$tab read -r window_id index name _ is_main is_settings <<EOF
+$current
+EOF
+
+# Sessions created before @cpz_main existed fall back to window 1, unless it is
+# the Settings tab; the Settings check comes first for the same reason.
+if [ "$is_settings" = 1 ] || [ "$name" = settings ]; then
+	notice="Settings stays open"
+elif [ "$is_main" = 1 ] || [ "$index" = 1 ]; then
+	notice="Tab 1 is the shell tab"
+else
+	# tmux selects the neighbouring tab and renumber-windows closes the gap;
+	# the kill hooks save the new layout and keep Settings last.
+	if tmux kill-window -t "$window_id" 2>/dev/null; then
+		/usr/local/bin/cpz-tab-info "$session" 2>/dev/null || true
+		exit 0
+	fi
+	notice="Could not close the tab"
+fi
+
+# run-shell has no client context, so print on the attached client explicitly.
+client=$(tmux list-clients -t "=$session" -F '#{client_name}' | head -n 1)
+if [ -n "$client" ]; then
+	tmux display-message -c "$client" -d 3000 "$notice"
+fi

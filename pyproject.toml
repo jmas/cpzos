@@ -1,0 +1,20 @@
+# Lint/type configuration for the CPZ image tooling.
+#
+# The stage scripts are shell; these settings cover the Python helpers and the
+# settings TUI. Run them with tests/lint.sh.
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+extend-exclude = ["work", "deploy"]
+
+[tool.ruff.lint]
+# Keep the gate focused on real defects and import hygiene. Formatting-only
+# rules would rewrite the TUI's dense curses layout code for no benefit.
+select = ["E4", "E7", "E9", "F", "B", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+ignore_missing_imports = true
+warn_unused_ignores = true

@@ -1,0 +1,39 @@
+name: Lint and unit tests
+
+on:
+  pull_request:
+  push:
+    branches: [cpz, arm64]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: host-side checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dev tools
+        run: |
+          pip install --disable-pip-version-check \
+            ruff==0.17.5 mypy==1.19.1 shellcheck-py==0.11.0.1
+
+      - name: Verify stage structure
+        run: ./tools/verify-stage.sh
+
+      - name: Unit tests
+        run: ./tests/run.sh
+
+      - name: Static checks
+        run: ./tests/lint.sh

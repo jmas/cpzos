@@ -1,0 +1,50 @@
+#!/bin/sh
+# Restore the saved CPZ tmux layout into a freshly created session.
+#
+# Windows are inserted before the placeholder shell in reverse order so the
+# saved order is preserved. The placeholder is then removed and the saved
+# active window is selected. cpz-session-ensure adds the Settings tab and
+# marks the first restored tab as the main shell afterwards.
+set -eu
+
+session=${1:-main}
+state_file=${XDG_STATE_HOME:-$HOME/.local/state}/cpz/session.tsv
+
+[ -r "$state_file" ] || exit 0
+tmux has-session -t "=$session" 2>/dev/null || exit 0
+
+placeholder=$(tmux display-message -p -t "=$session:1" '#{window_id}' 2>/dev/null || true)
+[ -n "$placeholder" ] || exit 0
+
+marker=$(mktemp)
+trap 'rm -f "$marker"' EXIT
+tab=$(printf '\t')
+
+# Insert every saved window before the placeholder. In saved order this keeps
+# the original top-to-bottom order and leaves the placeholder last.
+cat "$state_file" |
+	while IFS="$tab" read -r kind _index name cwd _rest; do
+		[ "$kind" = "window" ] || continue
+		[ -d "$cwd" ] || cwd=$HOME
+		if [ -n "$name" ]; then
+			new_id=$(tmux new-window -d -P -F '#{window_id}' -b -t "$placeholder" \
+				-n "$name" -c "$cwd" 2>/dev/null) || continue
+			# Keep the saved tab name instead of letting automatic-rename
+			# replace it with "bash" as soon as the shell starts.
+			tmux set-option -w -t "$new_id" automatic-rename off \
+				2>/dev/null || true
+		else
+			new_id=$(tmux new-window -d -P -F '#{window_id}' -b -t "$placeholder" \
+				-c "$cwd" 2>/dev/null) || continue
+		fi
+		printf 'x\n' >>"$marker"
+	done
+
+if [ -s "$marker" ]; then
+	tmux kill-window -t "$placeholder" 2>/dev/null || true
+fi
+
+active=$(awk -F"$tab" '$1 == "active" { print $2; exit }' "$state_file")
+if [ -n "$active" ]; then
+	tmux select-window -t "=$session:$active" 2>/dev/null || true
+fi

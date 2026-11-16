@@ -1,0 +1,2 @@
+# Let the video group adjust the panel backlight from cpz-settings.
+SUBSYSTEM=="backlight", ACTION=="add|change", RUN+="/bin/chgrp video /sys%p/brightness", RUN+="/bin/chmod 0664 /sys%p/brightness"

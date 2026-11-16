@@ -1,0 +1,10 @@
+# Re-select the console keymap when a keyboard appears.
+#
+# cpz-keyboard-layout classifies devices from sysfs (full key bitmap + bus +
+# device path), so trigger for every input node udev identified as a keyboard.
+# Matching ENV{ID_BUS} here missed Bluetooth HID devices and early USB
+# enumeration, where the bus property may not be set yet.
+#
+# Removal is handled by cpz-keyboard-layout.path, not here: systemd ignores
+# SYSTEMD_WANTS on remove events, so this rule can only cover add/change.
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="systemd", ENV{SYSTEMD_WANTS}+="cpz-keyboard-layout.service"

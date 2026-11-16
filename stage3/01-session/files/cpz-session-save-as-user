@@ -1,0 +1,14 @@
+#!/bin/sh
+# systemd runs this as root; save the session as the first user so the state
+# file stays in that user's home and the tmux socket is the right one.
+set -eu
+
+user=$(getent passwd 1000 | cut -d: -f1 || true)
+[ -n "$user" ] || exit 0
+home=$(getent passwd 1000 | cut -d: -f6 || true)
+[ -n "$home" ] || home=/
+runuser_bin=$(command -v runuser || true)
+[ -n "$runuser_bin" ] || exit 0
+
+exec "$runuser_bin" -u "$user" -- env HOME="$home" \
+	XDG_STATE_HOME="$home/.local/state" /usr/local/bin/cpz-session-save

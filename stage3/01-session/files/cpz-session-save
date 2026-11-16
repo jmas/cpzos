@@ -1,0 +1,54 @@
+#!/bin/sh
+# Save the CPZ tmux layout so it can be restored after a reboot.
+#
+# Saved: one entry per window (name and active-pane working directory) and the
+# active window. Not saved: running processes, pane splits, or scrollback.
+#
+# Hooks can start this several times in quick succession (for example
+# after-select-window repeats while Alt+Left/Right is held) and the timer runs
+# it every minute. A shared "<state_file>.tmp" made overlapping runs race on
+# mv, so tmux showed "'cpz-session-save' returned 1". Serialise the writers and
+# publish through a unique temporary file instead.
+set -eu
+
+session=${1:-main}
+state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/cpz
+state_file=$state_dir/session.tsv
+
+tmux has-session -t "=$session" 2>/dev/null || exit 0
+
+# Do not capture a half-restored session.
+if [ "$(tmux show-options -gv @cpz_restoring 2>/dev/null || true)" = "1" ]; then
+	exit 0
+fi
+
+mkdir -p "$state_dir"
+
+# Serialise concurrent saves; a second save would only rewrite the same layout.
+if command -v flock >/dev/null 2>&1; then
+	exec 9>"$state_dir/.save.lock"
+	flock -w 5 9 || exit 0
+fi
+
+tmp=$(mktemp "$state_dir/session.tsv.XXXXXX")
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+tab=$(printf '\t')
+
+{
+	printf 'version\t1\n'
+	tmux list-windows -t "=$session" -F \
+		"#{window_index}${tab}#{window_name}${tab}#{pane_current_path}${tab}#{window_active}${tab}#{?@cpz_settings,1,0}" |
+		while IFS="$tab" read -r index name cwd active settings; do
+			[ "$settings" = "1" ] && continue
+			[ "$name" = "settings" ] && continue
+			[ -n "$index" ] || continue
+			name=$(printf '%s' "$name" | tr '\t\n' '  ')
+			cwd=$(printf '%s' "$cwd" | tr '\t\n' '  ')
+			printf 'window\t%s\t%s\t%s\n' "$index" "$name" "$cwd"
+			[ "$active" = "1" ] && printf 'active\t%s\n' "$index"
+			:
+		done
+} >"$tmp"
+
+mv -f "$tmp" "$state_file"
+trap - EXIT HUP INT TERM

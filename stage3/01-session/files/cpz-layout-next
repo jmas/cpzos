@@ -1,0 +1,95 @@
+#!/bin/sh
+# Cycle the active console input layout. Bound to Alt+Space in tmux.
+#
+# The enabled layouts live in keyboard_layouts; this updates
+# keyboard_layout_active in the user's settings and asks cpz-layout-apply (via
+# a narrow sudoers rule) to reload the console keymap.
+set -u
+
+home=${HOME:-/root}
+user_settings=${XDG_CONFIG_HOME:-$home/.config}/cpz/settings.conf
+system_settings=/etc/cpz/settings.conf
+state_file=/run/cpz-layout.active
+
+get() {
+	for file in "$user_settings" "$system_settings"; do
+		[ -r "$file" ] || continue
+		value=$(sed -n "s/^$1=//p" "$file" | tail -n 1)
+		[ -n "$value" ] && { printf '%s' "$value"; return 0; }
+	done
+	return 0
+}
+
+say() {
+	if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+		tmux display-message -d 2000 "$1" >/dev/null 2>&1 || true
+	fi
+}
+
+layouts=$(get keyboard_layouts)
+active=$(get keyboard_layout_active)
+layouts=$(printf '%s' "$layouts" | tr '[:space:]' ',')
+
+old_ifs=$IFS
+IFS=,
+# shellcheck disable=SC2086  # split the comma-separated layout list on purpose
+set -- $layouts
+IFS=$old_ifs
+
+next=
+first=
+found=0
+for code in "$@"; do
+	case "$code" in
+		'' | *[!a-z0-9_-]*) continue ;;
+	esac
+	[ -n "$first" ] || first=$code
+	if [ "$found" = 1 ]; then
+		next=$code
+		found=2
+		break
+	fi
+	if [ "$code" = "$active" ]; then
+		found=1
+	fi
+done
+[ -n "$first" ] || first=us
+[ "$found" = 2 ] || next=$first
+[ -n "$next" ] || next=us
+
+# Update only the active key, preserving every other setting.
+mkdir -p "$(dirname "$user_settings")" 2>/dev/null || true
+tmp="${user_settings}.tmp.$$"
+if [ -r "$user_settings" ]; then
+	awk -v code="$next" '
+		BEGIN { done = 0 }
+		/^keyboard_layout_active=/ {
+			if (!done) { print "keyboard_layout_active=" code; done = 1 }
+			next
+		}
+		{ print }
+		END { if (!done) print "keyboard_layout_active=" code }
+	' "$user_settings" >"$tmp" || { rm -f "$tmp"; exit 1; }
+else
+	printf '# CPZ user settings. Written by cpz-settings.\nkeyboard_layout_active=%s\n' \
+		"$next" >"$tmp" || exit 1
+fi
+chmod 0644 "$tmp" 2>/dev/null || true
+mv "$tmp" "$user_settings" 2>/dev/null || { rm -f "$tmp"; exit 1; }
+
+label=$(printf '%s' "$next" | tr '[:lower:]' '[:upper:]')
+
+if ! sudo -n /usr/local/bin/cpz-layout-apply >/dev/null 2>&1; then
+	say "layout $label saved; apply from Settings > Input"
+	exit 1
+fi
+
+state=$(head -n 1 "$state_file" 2>/dev/null || true)
+if [ "$state" = "cpz" ]; then
+	say "layout $label saved (CPZ internal keyboard)"
+else
+	say "layout: $label"
+fi
+if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+	tmux refresh-client -S >/dev/null 2>&1 || true
+fi

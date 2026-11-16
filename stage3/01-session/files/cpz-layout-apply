@@ -1,0 +1,9 @@
+#!/bin/sh
+# Reload the console keymap from the saved active layout.
+#
+# Installed with a narrow sudoers rule so the Alt+Space binding can switch
+# layouts without a password prompt. The helper takes no arguments and only
+# starts the cpz-keyboard-layout unit.
+set -eu
+
+/usr/bin/systemctl start cpz-keyboard-layout.service

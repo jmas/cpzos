@@ -5,6 +5,17 @@ install -d -m 0755 "${ROOTFS_DIR}/opt"
 # The upstream config_setup target otherwise downloads this unpinned Gist.
 install -m 0755 files/rpi-config.py "${ROOTFS_DIR}/opt/rpi-config.py"
 
+# The driver is pinned by default so rebuilding the same OS tag produces the
+# same kernel modules. Set CPZ_DTOVERLAYS_REF=main to track upstream.
+DTOVERLAYS_REF=${CPZ_DTOVERLAYS_REF:-4f7aeee9fc103ebb03d22cac476bb191ecfb321e}
+case "$DTOVERLAYS_REF" in
+    ''|*[!A-Za-z0-9._/-]*)
+        echo "stage2: invalid CPZ_DTOVERLAYS_REF '$DTOVERLAYS_REF'" >&2
+        exit 1
+        ;;
+esac
+printf '%s\n' "$DTOVERLAYS_REF" > "${ROOTFS_DIR}/opt/cpz-dtoverlays.ref"
+
 on_chroot << 'CHROOT'
 set -e
 
@@ -15,14 +26,19 @@ apt-get install -y --no-install-recommends \
     device-tree-compiler \
     git
 
-# Always build the latest driver from the main branch.
+# Fetch the configured commit/tag/branch, then check it out detached.
+DTOVERLAYS_REF=$(cat /opt/cpz-dtoverlays.ref)
 rm -rf /tmp/dtoverlays
-git clone --depth=1 https://github.com/m5stack/m5stack-linux-dtoverlays.git \
-    /tmp/dtoverlays
+git init -q /tmp/dtoverlays
+git -C /tmp/dtoverlays remote add origin \
+    https://github.com/m5stack/m5stack-linux-dtoverlays.git
+git -C /tmp/dtoverlays fetch --depth=1 origin "$DTOVERLAYS_REF"
+git -C /tmp/dtoverlays checkout -q --detach FETCH_HEAD
 git -C /tmp/dtoverlays rev-parse HEAD \
     > /etc/cardputerzero-dtoverlays.commit
+rm -f /opt/cpz-dtoverlays.ref
 
-KVER=$(ls /lib/modules/ | grep rpi-v8 | head -1)
+KVER=$(basename "$(ls -d /lib/modules/*-rpi-v8 | sort -V | tail -n 1)")
 export KERNELDIR="/lib/modules/${KVER}/build"
 export EXTRADIR="/lib/modules/${KVER}/extra"
 

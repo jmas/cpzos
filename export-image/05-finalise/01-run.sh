@@ -57,6 +57,9 @@ ln -nsf /proc/mounts "${ROOTFS_DIR}/etc/mtab"
 find "${ROOTFS_DIR}/var/log/" -type f -exec cp /dev/null {} \;
 
 update_issue "$(basename "${EXPORT_DIR}")"
+# Record the final mtime after every package operation. cpz-first-login and
+# cpz-settings compare it with /etc/shadow to detect the factory password.
+stat -c %Y "${ROOTFS_DIR}/etc/shadow" >"${ROOTFS_DIR}/etc/cpz/shadow-mtime"
 install -m 644 "${ROOTFS_DIR}/etc/rpi-issue" "${ROOTFS_DIR}/boot/firmware/issue.txt"
 if ! [ -L "${ROOTFS_DIR}/boot/issue.txt" ]; then
 	ln -s firmware/issue.txt "${ROOTFS_DIR}/boot/issue.txt"

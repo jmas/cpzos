@@ -1,0 +1,14 @@
+[Unit]
+Description=Re-select the console keymap when the input device set changes
+After=systemd-udevd.service
+
+[Path]
+# Device nodes appear and disappear directly in /dev/input. A path unit is
+# used instead of SYSTEMD_WANTS on the udev remove event: systemd intentionally
+# ignores wants for remove events because the device unit is already going
+# away, so an unplug would never start the selector.
+PathChanged=/dev/input
+Unit=cpz-keyboard-layout.service
+
+[Install]
+WantedBy=paths.target

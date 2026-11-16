@@ -1,0 +1,8 @@
+# CPZ: the panel, touch and keyboard modules are built out-of-tree against the
+# kernel installed in this image. rpi-update would replace that kernel without
+# rebuilding them, leaving the device without a working console. Keep the
+# package uninstallable so a user (or a stray dependency) cannot break the
+# image by accident. Kernel updates come with a new image from pi-gen.
+Package: rpi-update
+Pin: release *
+Pin-Priority: -1

@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically update CPZ connection indicators
+
+[Timer]
+OnBootSec=3s
+OnUnitActiveSec=30s
+Unit=cpz-conn-status.service
+
+[Install]
+WantedBy=timers.target

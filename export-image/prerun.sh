@@ -50,6 +50,7 @@ BOOT_DEV="${LOOP_DEV}p1"
 ROOT_DEV="${LOOP_DEV}p2"
 
 ROOT_FEATURES="^huge_file"
+# shellcheck disable=SC2043  # kept from upstream; the list may grow
 for FEATURE in 64bit; do
 if grep -q "$FEATURE" /etc/mke2fs.conf; then
 	ROOT_FEATURES="^$FEATURE,$ROOT_FEATURES"

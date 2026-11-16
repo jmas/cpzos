@@ -1,0 +1,7 @@
+[Unit]
+Description=Update CPZ status-bar connection indicators
+After=NetworkManager.service bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cpz-conn-status

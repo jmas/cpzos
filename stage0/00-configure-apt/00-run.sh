@@ -15,7 +15,7 @@ fi
 
 if [ -n "$TEMP_REPO" ]; then
 	install -m 644 /dev/null "${ROOTFS_DIR}/etc/apt/sources.list.d/00-temp.list"
-	echo "$TEMP_REPO" | sed "s/RELEASE/$RELEASE/g" > "${ROOTFS_DIR}/etc/apt/sources.list.d/00-temp.list"
+	printf '%s\n' "${TEMP_REPO//RELEASE/$RELEASE}" > "${ROOTFS_DIR}/etc/apt/sources.list.d/00-temp.list"
 else
 	rm -f "${ROOTFS_DIR}/etc/apt/sources.list.d/00-temp.list"
 fi

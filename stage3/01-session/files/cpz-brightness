@@ -1,0 +1,34 @@
+#!/bin/sh
+# Apply the saved panel brightness. Runs as the logged-in user; the udev rule
+# gives the video group write access to the backlight sysfs file.
+set -eu
+
+home=${HOME:-/root}
+user_settings=${XDG_CONFIG_HOME:-$home/.config}/cpz/settings.conf
+system_settings=/etc/cpz/settings.conf
+
+get() {
+	for file in "$user_settings" "$system_settings"; do
+		[ -r "$file" ] || continue
+		value=$(sed -n "s/^$1=//p" "$file" | tail -n 1)
+		[ -n "$value" ] && { printf '%s' "$value"; return 0; }
+	done
+	return 0
+}
+
+percent=$(get brightness)
+case "$percent" in
+	'' | *[!0-9]*) percent=100 ;;
+esac
+[ "$percent" -ge 1 ] || percent=1
+[ "$percent" -le 100 ] || percent=100
+
+for backlight in /sys/class/backlight/*; do
+	[ -r "$backlight/max_brightness" ] || continue
+	max=$(cat "$backlight/max_brightness" 2>/dev/null || echo 0)
+	[ "$max" -gt 0 ] 2>/dev/null || continue
+	value=$((percent * max / 100))
+	[ "$value" -ge 1 ] || value=1
+	printf '%s' "$value" >"$backlight/brightness" 2>/dev/null || true
+	break
+done

@@ -1,0 +1,16 @@
+[Unit]
+Description=Disarm the BCM2835 hardware watchdog
+DefaultDependencies=no
+Before=sysinit.target
+ConditionPathExists=/dev/watchdog0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The firmware can leave the PM watchdog armed. The initramfs normally
+# disarms it, but keep a belt-and-braces early write of the magic close
+# character so a failed/absent initramfs hook cannot reboot the board.
+ExecStart=/bin/sh -c 'echo -n V > /dev/watchdog0 || true'
+
+[Install]
+WantedBy=sysinit.target

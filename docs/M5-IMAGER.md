@@ -56,7 +56,7 @@ The CPZ image can support both first-boot mechanisms:
 - M5 Imager writes `/boot/firmware/firstrun.sh` and appends `systemd.run=...`
   to `cmdline.txt`.
 - Upstream imager writes `/boot/firmware/rpi-preseed.toml`.
-- `cpz-login` resolves uid 1000 dynamically, so either user-renaming path works.
+- `cpz-getty` resolves uid 1000 dynamically, so either user-renaming path works.
 
 ## Image requirements for M5 Imager `systemd` customisation
 
@@ -84,7 +84,7 @@ Trixie image satisfies this; still set a correct release date.
 ```json
 {
   "name": "CardputerZero CPZ (Trixie arm64)",
-  "description": "Terminal-first kmscon + tmux image for CardputerZero.",
+  "description": "Terminal-first fbcon + tmux image for CardputerZero.",
   "icon": "https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/icons/cardputerzero.png",
   "url": "https://example.invalid/cardputerzero-cpz-trixie-arm64-YYYYMMDD.img.xz",
   "extract_size": 0,
@@ -114,6 +114,10 @@ Generate the entry from a built image with:
 
 The tool defaults to `init_format: "systemd"` and rejects release dates before
 2023-10-11, when M5 Imager would use the old `/boot` paths.
+
+Regenerate the local entry after every build. A `deploy/m5stack-cpz-entry.json`
+left over from an older image can point at a stale artifact and carry an old
+description even when the source tree has moved on.
 
 ## Imager version
 

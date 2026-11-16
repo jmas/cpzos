@@ -1,0 +1,8 @@
+/* Allow the CPZ first user (netdev group) to manage NetworkManager,
+ * including the Wi-Fi radio and connections from cpz-settings/nmtui. */
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
+        subject.isInGroup("netdev")) {
+        return polkit.Result.YES;
+    }
+});

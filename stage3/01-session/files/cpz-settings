@@ -1,0 +1,2838 @@
+#!/usr/bin/python3
+"""Basic CPZ settings TUI.
+
+Runs in the last tmux tab. Keeps settings in
+~/.config/cpz/settings.conf (created on first change); the read-only system
+defaults are /etc/cpz/settings.conf. Theme changes apply to the live tmux
+server immediately, everything else is picked up by cpz-status / tmux on the
+next refresh.
+"""
+
+from __future__ import annotations
+
+import calendar
+import curses
+import glob
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime
+from typing import Any
+
+SYSTEM_SETTINGS = "/etc/cpz/settings.conf"
+THEME_DIR = "/etc/cpz/themes"
+# Build-time mtime of /etc/shadow. Any passwd/usermod/chage run changes the
+# mtime, so a match means the factory password was never changed.
+SECURITY_STAMP = "/etc/cpz/shadow-mtime"
+HISTORY_CHOICES = (2000, 5000, 10000)
+DATE_FORMATS = ("short", "iso", "eu", "us")
+DISPLAY_MODES = ("auto", "panel", "hdmi")
+SCREEN_TIMEOUTS = (0, 5, 10, 30)
+MODE_KEYS = ("vi", "emacs")
+STATUS_INTERVALS = (1, 2, 5)
+# Console font cell sizes (width x height, pixels). The panel is 320x170, so
+# 6x12 gives 53x14 cells and 8x16 gives 40x10. HDMI auto keeps about 25 rows
+# and scales a Terminus base font when the packaged sizes are too small; an
+# explicit entry pins that cell size.
+FONT_PANEL_CHOICES = ("6x12", "8x16")
+FONT_HDMI_CHOICES = (
+    "auto",
+    "32x64",
+    "28x56",
+    "24x48",
+    "20x40",
+    "16x32",
+    "14x28",
+    "12x24",
+    "11x22",
+    "10x20",
+    "10x18",
+    "6x12",
+)
+FONT_PANEL_LABELS = {
+    "6x12": "6x12 (normal)",
+    "8x16": "8x16 (large)",
+}
+FONT_HDMI_LABELS = {
+    "auto": "Auto (large)",
+    "32x64": "32x64",
+    "28x56": "28x56",
+    "24x48": "24x48",
+    "20x40": "20x40",
+    "16x32": "16x32",
+    "14x28": "14x28",
+    "12x24": "12x24",
+    "11x22": "11x22",
+    "10x20": "10x20",
+    "10x18": "10x18",
+    "6x12": "6x12 (smallest)",
+}
+
+# Arrow-key aliases for the internal CPZ keyboard when Fn is off. The Fn layer
+# uses F/X/Z/C for up/down/left/right, so those letters navigate Settings too.
+NAV_UP = (curses.KEY_UP, ord("k"), ord("f"))
+NAV_DOWN = (curses.KEY_DOWN, ord("j"), ord("x"))
+NAV_LEFT = (curses.KEY_LEFT, ord("h"), ord("z"))
+NAV_RIGHT = (curses.KEY_RIGHT, ord("l"), ord("c"))
+# Console layouts. The full list comes from xkb-data so every layout packaged
+# for XKB is selectable without editing this file. Fall back to a small set when
+# the rules file is not installed (e.g. running cpz-settings on a host).
+XKB_LAYOUTS_FILE = "/usr/share/X11/xkb/rules/evdev.lst"
+PREFERRED_LAYOUTS = (
+    "us",
+    "gb",
+    "ua",
+    "ru",
+    "de",
+    "fr",
+    "es",
+    "it",
+    "pl",
+    "pt",
+    "nl",
+    "cz",
+    "se",
+    "no",
+    "dk",
+    "fi",
+    "gr",
+    "tr",
+    "il",
+    "jp",
+    "kr",
+)
+FALLBACK_LAYOUTS = (
+    ("us", "English (US)"),
+    ("gb", "English (UK)"),
+    ("ua", "Ukrainian"),
+    ("ru", "Russian"),
+    ("de", "German"),
+    ("fr", "French"),
+    ("es", "Spanish"),
+    ("it", "Italian"),
+    ("pl", "Polish"),
+    ("pt", "Portuguese"),
+    ("cz", "Czech"),
+    ("se", "Swedish"),
+    ("no", "Norwegian"),
+    ("dk", "Danish"),
+    ("fi", "Finnish"),
+    ("nl", "Dutch"),
+    ("gr", "Greek"),
+    ("tr", "Turkish"),
+    ("il", "Hebrew"),
+    ("jp", "Japanese"),
+    ("kr", "Korean"),
+)
+
+
+def read_layouts() -> tuple:
+    """Read layout codes and labels from xkb-data's evdev.lst."""
+    layouts = []
+    seen = set()
+    try:
+        with open(XKB_LAYOUTS_FILE, "r", encoding="utf-8") as handle:
+            in_layout = False
+            for raw in handle:
+                line = raw.strip()
+                if line.startswith("!"):
+                    in_layout = line == "! layout"
+                    continue
+                if not in_layout or not line:
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) != 2:
+                    continue
+                code, label = parts[0].strip(), parts[1].strip()
+                # "custom" is not a ckbcomp layout.
+                if code == "custom" or not re.match(r"^[a-z][a-z0-9_]*$", code):
+                    continue
+                if code in seen:
+                    continue
+                seen.add(code)
+                layouts.append((code, label))
+    except OSError:
+        return FALLBACK_LAYOUTS
+    if not layouts:
+        return FALLBACK_LAYOUTS
+    labels = dict(layouts)
+    preferred = [
+        (code, labels[code]) for code in PREFERRED_LAYOUTS if code in labels
+    ]
+    rest = [item for item in layouts if item[0] not in PREFERRED_LAYOUTS]
+    return tuple(preferred + rest)
+
+
+LAYOUTS = read_layouts()
+LAYOUT_LABELS = dict(LAYOUTS)
+COMMON_TIMEZONES = (
+    "UTC",
+    "Europe/London",
+    "Europe/Berlin",
+    "Europe/Kyiv",
+    "Asia/Dubai",
+    "Asia/Shanghai",
+    "Asia/Tokyo",
+    "America/New_York",
+    "America/Chicago",
+    "America/Los_Angeles",
+    "Australia/Sydney",
+)
+TIMEZONE_TABLE = "/usr/share/zoneinfo/zone.tab"
+
+
+def read_timezones() -> tuple:
+    """Read every system time zone, keeping the common ones first."""
+    zones = []
+    seen = set()
+    try:
+        with open(TIMEZONE_TABLE, "r", encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split("\t")
+                if len(parts) < 3:
+                    parts = line.split(None, 3)
+                if len(parts) < 3:
+                    continue
+                zone = parts[2].strip()
+                if zone and zone not in seen:
+                    seen.add(zone)
+                    zones.append(zone)
+    except OSError:
+        return COMMON_TIMEZONES
+    if not zones:
+        return COMMON_TIMEZONES
+    preferred = [
+        zone for zone in COMMON_TIMEZONES if zone in seen or zone == "UTC"
+    ]
+    rest = [zone for zone in zones if zone not in COMMON_TIMEZONES]
+    return tuple(preferred + rest)
+
+
+TIMEZONES = read_timezones()
+
+DEFAULTS: dict[str, Any] = {
+    "keyboard_layout": "auto",
+    "keyboard_layouts": "us",
+    "keyboard_layout_active": "us",
+    "theme": "cpz-tokyo-night",
+    "show_clock": 1,
+    "clock_24h": 1,
+    "show_date": 0,
+    "date_format": "short",
+    "show_battery": 1,
+    "show_volume": 0,
+    "show_brightness": 0,
+    "show_conn": 1,
+    "show_eth": 0,
+    "show_wifi": 1,
+    "show_bt": 1,
+    "show_layout": 1,
+    "display": "auto",
+    "font_panel": "6x12",
+    "font_hdmi": "auto",
+    "brightness": 100,
+    "screen_timeout": 0,
+    "mouse": 0,
+    "history_limit": 2000,
+    "mode_keys": "vi",
+    "status_interval": 5,
+    "set_clipboard": 0,
+    "automatic_rename": 1,
+}
+
+DATE_FORMAT_LABELS = {
+    "short": "MM-DD",
+    "iso": "YYYY-MM-DD",
+    "eu": "DD.MM.YYYY",
+    "us": "MM/DD/YYYY",
+}
+
+DISPLAY_LABELS = {
+    "auto": "Auto",
+    "panel": "CPZ panel",
+    "hdmi": "HDMI",
+}
+
+SCREEN_TIMEOUT_LABELS = {
+    0: "never",
+    5: "5 min",
+    10: "10 min",
+    30: "30 min",
+}
+
+THEME_ORDER = (
+    "cpz-tokyo-night",
+    "cpz-catppuccin-mocha",
+    "cpz-gruvbox-dark",
+    "cpz-nord",
+    "cpz-kanagawa",
+    "cpz-github-light",
+    "cpz-mono",
+    "cpz-light-high-contrast",
+)
+
+THEME_LABELS = {
+    "cpz-tokyo-night": "Tokyo Night",
+    "cpz-catppuccin-mocha": "Catppuccin Mocha",
+    "cpz-gruvbox-dark": "Gruvbox Dark",
+    "cpz-nord": "Nord",
+    "cpz-kanagawa": "Kanagawa",
+    "cpz-github-light": "GitHub Light",
+    "cpz-mono": "Mono",
+    "cpz-light-high-contrast": "Light High Contrast",
+}
+
+
+def user_settings_path() -> str:
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config"
+    )
+    return os.path.join(base, "cpz", "settings.conf")
+
+
+def available_themes() -> list[str]:
+    names = {
+        os.path.splitext(os.path.basename(path))[0]
+        for path in glob.glob(os.path.join(THEME_DIR, "*.conf"))
+    }
+    ordered = [name for name in THEME_ORDER if name in names]
+    ordered.extend(sorted(names - set(THEME_ORDER)))
+    return ordered or [DEFAULTS["theme"]]
+
+
+def theme_label(name: str) -> str:
+    path = os.path.join(THEME_DIR, name + ".conf")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("# name:"):
+                    label = line.split(":", 1)[1].strip()
+                    if label:
+                        return label
+    except OSError:
+        pass
+    return THEME_LABELS.get(name, name)
+
+
+def theme_labels() -> dict:
+    return {name: theme_label(name) for name in available_themes()}
+
+
+def normalize_layouts(value) -> list:
+    """Return enabled layout codes in the canonical LAYOUTS order."""
+    seen = set()
+    for code in re.split(r"[,\s]+", str(value or "")):
+        code = code.strip()
+        if code in LAYOUT_LABELS:
+            seen.add(code)
+    ordered = [code for code, _label in LAYOUTS if code in seen]
+    return ordered or ["us"]
+
+
+def layout_codes(data: dict) -> list:
+    return normalize_layouts(data.get("keyboard_layouts", DEFAULTS["keyboard_layouts"]))
+
+
+def layout_label(code: str) -> str:
+    return LAYOUT_LABELS.get(code, str(code).upper())
+
+
+def layouts_text(data: dict) -> str:
+    return ", ".join(layout_label(code) for code in layout_codes(data))
+
+
+def active_layout(data: dict) -> str:
+    codes = layout_codes(data)
+    current = data.get("keyboard_layout_active", DEFAULTS["keyboard_layout_active"])
+    return current if current in codes else codes[0]
+
+
+def parse_file(path: str, data: dict) -> None:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"')
+                if key not in data:
+                    continue
+                if key in (
+                    "theme",
+                    "date_format",
+                    "display",
+                    "font_panel",
+                    "font_hdmi",
+                    "mode_keys",
+                    "keyboard_layout",
+                    "keyboard_layouts",
+                    "keyboard_layout_active",
+                ):
+                    data[key] = value
+                else:
+                    try:
+                        data[key] = int(value)
+                    except ValueError:
+                        pass
+    except OSError:
+        pass
+
+
+def load_settings() -> dict:
+    data = dict(DEFAULTS)
+    parse_file(SYSTEM_SETTINGS, data)
+    parse_file(user_settings_path(), data)
+    themes = available_themes()
+    if data["theme"] not in themes:
+        data["theme"] = DEFAULTS["theme"] if DEFAULTS["theme"] in themes else themes[0]
+    if data["history_limit"] not in HISTORY_CHOICES:
+        data["history_limit"] = DEFAULTS["history_limit"]
+    if data["date_format"] not in DATE_FORMATS:
+        data["date_format"] = DEFAULTS["date_format"]
+    if data["display"] not in DISPLAY_MODES:
+        data["display"] = DEFAULTS["display"]
+    if data["font_panel"] not in FONT_PANEL_CHOICES:
+        data["font_panel"] = DEFAULTS["font_panel"]
+    if data["font_hdmi"] not in FONT_HDMI_CHOICES:
+        data["font_hdmi"] = DEFAULTS["font_hdmi"]
+    if data["mode_keys"] not in MODE_KEYS:
+        data["mode_keys"] = DEFAULTS["mode_keys"]
+    if data["keyboard_layout"] not in ("auto", "cpz", "standard"):
+        data["keyboard_layout"] = DEFAULTS["keyboard_layout"]
+    data["keyboard_layouts"] = ",".join(layout_codes(data))
+    data["keyboard_layout_active"] = active_layout(data)
+    if data["status_interval"] not in STATUS_INTERVALS:
+        data["status_interval"] = DEFAULTS["status_interval"]
+    if data["screen_timeout"] not in SCREEN_TIMEOUTS:
+        data["screen_timeout"] = DEFAULTS["screen_timeout"]
+    try:
+        brightness = int(data["brightness"])
+    except (TypeError, ValueError):
+        brightness = DEFAULTS["brightness"]
+    data["brightness"] = max(10, min(100, brightness))
+    for key in (
+        "show_clock",
+        "clock_24h",
+        "show_date",
+        "show_battery",
+        "show_volume",
+        "show_brightness",
+        "show_conn",
+        "show_eth",
+        "show_wifi",
+        "show_bt",
+        "show_layout",
+        "mouse",
+        "set_clipboard",
+        "automatic_rename",
+    ):
+        data[key] = 1 if data[key] else 0
+    return data
+
+
+def save_settings(data: dict) -> None:
+    path = user_settings_path()
+    os.makedirs(os.path.dirname(path), mode=0o755, exist_ok=True)
+    temp = path + ".tmp"
+    with open(temp, "w", encoding="utf-8") as handle:
+        handle.write("# CPZ user settings. Written by cpz-settings.\n")
+        for key in (
+            "keyboard_layout",
+            "keyboard_layouts",
+            "keyboard_layout_active",
+            "theme",
+            "show_clock",
+            "clock_24h",
+            "show_date",
+            "date_format",
+            "show_battery",
+            "show_volume",
+            "show_brightness",
+            "show_conn",
+            "show_eth",
+            "show_wifi",
+            "show_bt",
+            "show_layout",
+            "display",
+            "font_panel",
+            "font_hdmi",
+            "brightness",
+            "screen_timeout",
+            "mouse",
+            "history_limit",
+            "mode_keys",
+            "status_interval",
+            "set_clipboard",
+            "automatic_rename",
+        ):
+            handle.write(f"{key}={data[key]}\n")
+    os.replace(temp, path)
+
+
+def tmux(*args: str) -> None:
+    if not os.environ.get("TMUX"):
+        return
+    try:
+        subprocess.run(
+            ("tmux",) + args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        pass
+
+
+def refresh_clients(status_only: bool = False) -> None:
+    """Repaint every attached tmux client after a style change.
+
+    ``tmux refresh-client`` without ``-t`` relies on a current client, which
+    does not exist when this runs from a pane process. The theme then only
+    became visible after the user switched tabs and tmux redrew on its own.
+    """
+    if not os.environ.get("TMUX"):
+        return
+    try:
+        result = subprocess.run(
+            ("tmux", "list-clients", "-F", "#{client_name}"),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return
+    clients = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if not clients:
+        tmux("refresh-client", *(["-S"] if status_only else []))
+        return
+    for client in clients:
+        tmux("refresh-client", *(["-S"] if status_only else []), "-t", client)
+
+
+def status_right_length(data: dict) -> int:
+    # Reserve three columns for the layout code (e.g. "UA "), three for the
+    # volume token (e.g. "V4 ") and four for the brightness token (e.g. "B10 ").
+    extra = 3 if data.get("show_layout") else 0
+    if data.get("show_volume"):
+        extra += 3
+    if data.get("show_brightness"):
+        extra += 4
+    if not data.get("show_date"):
+        return 30 + extra
+    return (34 if data.get("date_format") == "short" else 40) + extra
+
+
+def apply_live(data: dict, key: str) -> None:
+    if key == "theme":
+        apply_theme(data["theme"])
+    elif key in (
+        "show_date",
+        "date_format",
+        "show_layout",
+        "show_volume",
+        "show_brightness",
+    ):
+        tmux("set", "-g", "status-right-length", str(status_right_length(data)))
+    elif key == "brightness":
+        set_backlight_percent(data["brightness"])
+    elif key == "screen_timeout":
+        apply_screen_timeout(data["screen_timeout"])
+    elif key == "display":
+        pass
+    elif key in ("font_panel", "font_hdmi"):
+        # cpz-hdmi-console.timer reconciles the console font every two
+        # seconds; no privileged call is needed from the Settings pane.
+        pass
+    elif key == "mode_keys":
+        tmux("set", "-g", "mode-keys", data["mode_keys"])
+    elif key == "status_interval":
+        tmux("set", "-g", "status-interval", str(data["status_interval"]))
+    elif key == "set_clipboard":
+        tmux("set", "-g", "set-clipboard", "on" if data["set_clipboard"] else "off")
+    elif key == "automatic_rename":
+        tmux(
+            "set",
+            "-g",
+            "automatic-rename",
+            "on" if data["automatic_rename"] else "off",
+        )
+    elif key == "mouse":
+        tmux("set", "-g", "mouse", "on" if data["mouse"] else "off")
+    elif key == "history_limit":
+        tmux("set", "-g", "history-limit", str(data["history_limit"]))
+    # Clock/battery/volume/date are read by cpz-status on the next status
+    # refresh.
+    refresh_clients(status_only=True)
+
+
+def apply_theme(theme: str) -> None:
+    """Apply a theme to every tmux window and to the console palette."""
+    helper = "/usr/local/bin/cpz-apply-settings"
+    if os.path.exists(helper):
+        try:
+            result = subprocess.run(
+                (helper, "--theme"),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            if result.returncode == 0:
+                # Keep the repaint here as well, so switching still updates
+                # immediately if the installed helper is an older build.
+                refresh_clients()
+                return
+        except OSError:
+            pass
+
+    # Fallback for a host/dev run where the installed helper is unavailable.
+    path = os.path.join(THEME_DIR, theme + ".conf")
+    if os.path.exists(path):
+        tmux("source-file", path)
+    apply_console_theme()
+    refresh_clients()
+
+
+def apply_console_theme() -> None:
+    """Apply the full 16-colour console palette (fbcon OSC P)."""
+    try:
+        subprocess.run(
+            ("/usr/local/bin/cpz-console-theme",),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        pass
+
+
+def set_backlight_percent(percent: int) -> bool:
+    percent = max(1, min(100, percent))
+    for path in glob.glob("/sys/class/backlight/*"):
+        try:
+            with open(os.path.join(path, "max_brightness"), "r", encoding="utf-8") as fh:
+                maximum = int(fh.read().strip())
+            if maximum <= 0:
+                continue
+            value = max(1, percent * maximum // 100)
+            with open(os.path.join(path, "brightness"), "w", encoding="utf-8") as fh:
+                fh.write(str(value))
+            return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+def apply_screen_timeout(minutes: int) -> None:
+    try:
+        fd = os.open("/dev/tty1", os.O_WRONLY)
+    except OSError:
+        return
+    try:
+        subprocess.run(
+            # Blank only. DPMS powerdown makes monitors renegotiate HDMI on
+            # wake, which changes the console scale.
+            ("setterm", "-blank", str(minutes), "-powerdown", "0"),
+            stdout=fd,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def wpctl_status(kind: str):
+    """Return (percent, muted) for the default sink/source."""
+    target = f"@DEFAULT_AUDIO_{kind.upper()}@"
+    rc, out, _ = nm_run(["wpctl", "get-volume", target], timeout=5)
+    if rc != 0:
+        return None, False
+    match = re.search(r"Volume:\s*([0-9.]+)", out)
+    if not match:
+        return None, False
+    percent = max(0, min(100, round(float(match.group(1)) * 100)))
+    return percent, "[MUTED]" in out
+
+
+def wpctl_set_volume(kind: str, percent: int) -> None:
+    target = f"@DEFAULT_AUDIO_{kind.upper()}@"
+    nm_run(
+        ["wpctl", "set-volume", target, f"{max(0, min(100, percent)) / 100:.2f}"],
+        timeout=5,
+    )
+
+
+def wpctl_toggle_mute(kind: str) -> None:
+    target = f"@DEFAULT_AUDIO_{kind.upper()}@"
+    nm_run(["wpctl", "set-mute", target, "toggle"], timeout=5)
+
+
+def wpctl_nodes(kind: str):
+    """Return [(id, name, is_default)] for Sinks or Sources."""
+    rc, out, _ = nm_run(["wpctl", "status"], timeout=10)
+    if rc != 0:
+        return []
+    nodes = []
+    active = False
+    for line in out.splitlines():
+        stripped = line.strip()
+        header = f"{kind}s:"
+        if stripped.endswith(header) or stripped == header:
+            active = True
+            continue
+        if not active:
+            continue
+        if stripped.startswith("├─") or stripped.startswith("└─"):
+            break
+        if not stripped or not stripped.startswith("│"):
+            continue
+        content = stripped.lstrip("│").strip()
+        match = re.search(r"^(\*)?\s*(\d+)\.\s+(.+?)(?:\s+\[vol:.*)?$", content)
+        if not match:
+            continue
+        default = bool(match.group(1))
+        node_id = match.group(2)
+        name = match.group(3).strip()
+        name = name.split("[vol:")[0].strip()
+        nodes.append((node_id, name, default))
+    return nodes
+
+
+def wpctl_set_default(kind: str, node_id: str) -> None:
+    nm_run(["wpctl", "set-default", node_id], timeout=5)
+
+
+def split_terse(line: str) -> list:
+    """Split nmcli terse output, honouring backslash-escaped ':' and '\\'."""
+    fields = []
+    current = []
+    escaped = False
+    for char in line:
+        if escaped:
+            current.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == ":":
+            fields.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    if escaped:
+        current.append("\\")
+    fields.append("".join(current))
+    return fields
+
+
+def nm_devices():
+    rc, out, _ = nm_run(
+        ["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"],
+        timeout=10,
+    )
+    if rc != 0:
+        return []
+    devices = []
+    for line in out.splitlines():
+        parts = split_terse(line)
+        if len(parts) < 3:
+            continue
+        devices.append(
+            {
+                "device": parts[0],
+                "type": parts[1],
+                "state": parts[2],
+                "connection": parts[3] if len(parts) > 3 else "",
+            }
+        )
+    return devices
+
+
+def nm_ip(device: str) -> str:
+    rc, out, _ = nm_run(
+        ["nmcli", "-g", "IP4.ADDRESS,IP6.ADDRESS", "device", "show", device],
+        timeout=10,
+    )
+    if rc != 0:
+        return ""
+    addresses = []
+    for line in out.splitlines():
+        parts = split_terse(line)
+        if len(parts) < 2:
+            continue
+        value = ":".join(parts[1:]).strip()
+        if value:
+            addresses.append(value)
+    return " ".join(addresses)
+
+
+def wifi_ip() -> str:
+    for device in nm_devices():
+        if device["type"] == "wifi" and device["state"] == "connected":
+            return nm_ip(device["device"])
+    return ""
+
+
+def ethernet_info() -> str:
+    for device in nm_devices():
+        if device["type"] == "ethernet":
+            ip = nm_ip(device["device"])
+            return f"{device['device']} {device['state']}" + (f" - {ip}" if ip else "")
+    return "none"
+
+
+def wifi_info() -> str:
+    summary = wifi_summary()
+    ip = wifi_ip()
+    return f"{summary}" + (f" - {ip}" if ip else "")
+
+
+def vpn_profiles():
+    rc, out, _ = nm_run(
+        ["nmcli", "-t", "-f", "NAME,TYPE,ACTIVE", "connection", "show"], timeout=10
+    )
+    if rc != 0:
+        return []
+    profiles = []
+    for line in out.splitlines():
+        parts = split_terse(line)
+        if len(parts) < 3:
+            continue
+        name, kind, active = parts[0], parts[1], parts[2]
+        if kind not in ("vpn", "wireguard"):
+            continue
+        profiles.append({"name": name, "type": kind, "active": active == "yes"})
+    return profiles
+
+
+def network_details_lines():
+    lines = ["Connections", ""]
+    for device in nm_devices():
+        lines.append(
+            f"{device['device']}: {device['type']} {device['state']}"
+            + (f" ({device['connection']})" if device["connection"] else "")
+        )
+        ip = nm_ip(device["device"])
+        if ip:
+            lines.append(f"  IP: {ip}")
+    lines.extend(["", "Addresses"])
+    rc, out, _ = nm_run(["ip", "-brief", "addr", "show"], timeout=10)
+    if rc == 0:
+        lines.extend("  " + line for line in out.splitlines())
+    return lines
+
+
+def timedatectl_value(field: str) -> str:
+    rc, out, _ = nm_run(["timedatectl", "show", "-p", field, "--value"], timeout=10)
+    return out.strip() if rc == 0 else "unknown"
+
+
+DATETIME_FIELDS = ("Year", "Month", "Day", "Hour", "Min", "Sec")
+
+
+def datetime_parts(now=None) -> list:
+    now = now or datetime.now()
+    return [now.year, now.month, now.day, now.hour, now.minute, now.second]
+
+
+def datetime_text(parts) -> str:
+    return (
+        f"{parts[0]:04d}-{parts[1]:02d}-{parts[2]:02d} "
+        f"{parts[3]:02d}:{parts[4]:02d}:{parts[5]:02d}"
+    )
+
+
+def adjust_datetime_part(parts: list, index: int, step: int) -> None:
+    if index == 0:
+        parts[0] = max(1970, min(2099, parts[0] + step))
+    elif index == 1:
+        parts[1] = ((parts[1] - 1 + step) % 12) + 1
+    elif index == 2:
+        last_day = calendar.monthrange(parts[0], parts[1])[1]
+        parts[2] = ((parts[2] - 1 + step) % last_day) + 1
+    elif index == 3:
+        parts[3] = (parts[3] + step) % 24
+    elif index == 4:
+        parts[4] = (parts[4] + step) % 60
+    else:
+        parts[5] = (parts[5] + step) % 60
+    # Keep the selected day valid when the year or month moved.
+    if index in (0, 1):
+        parts[2] = min(parts[2], calendar.monthrange(parts[0], parts[1])[1])
+
+
+def set_datetime_part_text(parts: list, index: int, text: str) -> None:
+    """Apply a typed field value, clamped to a valid date/time range."""
+    if not text:
+        return
+    value = int(text)
+    if index == 0:
+        # Require a full year so a partial entry cannot jump the clock to 1970.
+        if len(text) < 4:
+            return
+        value = max(1970, min(2099, value))
+    elif index == 1:
+        value = max(1, min(12, value))
+    elif index == 2:
+        value = max(1, min(calendar.monthrange(parts[0], parts[1])[1], value))
+    elif index == 3:
+        value = max(0, min(23, value))
+    elif index == 4:
+        value = max(0, min(59, value))
+    else:
+        value = max(0, min(59, value))
+    parts[index] = value
+    if index in (0, 1):
+        parts[2] = min(parts[2], calendar.monthrange(parts[0], parts[1])[1])
+
+
+def draw_datetime_editor(
+    screen, parts: list, selected: int, notice: str, ntp: bool, typed: str = ""
+) -> None:
+    screen.erase()
+    height, width = screen.getmaxyx()
+    put(screen, 0, 0, " Set Date & Time", curses.A_BOLD)
+    put(screen, 1, 0, "-" * max(0, width - 1))
+
+    columns = (2, 14, 26)
+    for index in range(len(parts)):
+        row = 2 + (index // 3) * 2
+        column = columns[index % 3]
+        if index == selected and typed:
+            value = typed
+        else:
+            value = f"{parts[index]:04d}" if index == 0 else f"{parts[index]:02d}"
+        put(
+            screen,
+            row,
+            column,
+            DATETIME_FIELDS[index],
+            curses.A_BOLD if index == selected else 0,
+        )
+        put(
+            screen,
+            row + 1,
+            column,
+            value,
+            curses.A_REVERSE if index == selected else 0,
+        )
+
+    put(screen, 7, 0, f"  {datetime_text(parts)}")
+    put(
+        screen,
+        9,
+        0,
+        "  NTP: " + ("On (will be disabled)" if ntp else "Off"),
+    )
+    put(screen, height - 3, 0, " Type or Up/Down to edit field")
+    put(screen, height - 2, 0, " Left/Right field  Enter apply  q cancel")
+    if notice:
+        put(screen, height - 1, 0, f" {notice}")
+    screen.refresh()
+
+
+def datetime_edit_screen(screen):
+    """Edit the local system date/time. Returns parts or None on cancel."""
+    parts = datetime_parts()
+    selected = 0
+    ntp = timedatectl_value("NTP").lower() == "yes"
+    typed = ""
+    notice = ""
+    while True:
+        draw_datetime_editor(screen, parts, selected, notice, ntp, typed)
+        key = screen.getch()
+        notice = ""
+        if ord("0") <= key <= ord("9"):
+            typed += chr(key)
+            max_length = 4 if selected == 0 else 2
+            if len(typed) >= max_length:
+                set_datetime_part_text(parts, selected, typed)
+                typed = ""
+            continue
+        if key in (curses.KEY_BACKSPACE, 8, 127):
+            typed = typed[:-1]
+            continue
+        if typed:
+            set_datetime_part_text(parts, selected, typed)
+            typed = ""
+        if key in (ord("q"), ord("Q"), 27):
+            return None
+        if key in NAV_LEFT:
+            selected = (selected - 1) % len(parts)
+            continue
+        if key in NAV_RIGHT:
+            selected = (selected + 1) % len(parts)
+            continue
+        if key in NAV_UP:
+            adjust_datetime_part(parts, selected, 1)
+            continue
+        if key in NAV_DOWN:
+            adjust_datetime_part(parts, selected, -1)
+            continue
+        if key in (10, 13, ord(" ")):
+            return parts
+
+
+def set_datetime_action(screen, _data) -> str | None:
+    parts = datetime_edit_screen(screen)
+    if parts is None:
+        return None
+    value = datetime_text(parts)
+    if timedatectl_value("NTP").lower() == "yes":
+        rc = run_privileged(screen, ["timedatectl", "set-ntp", "false"])
+        if rc != 0:
+            return "Could not disable NTP"
+    rc = run_privileged(screen, ["timedatectl", "set-time", value])
+    if rc != 0:
+        return "Date/time change failed"
+    return f"Set: {value}"
+
+
+def battery_info() -> str:
+    for supply in glob.glob("/sys/class/power_supply/*"):
+        try:
+            with open(os.path.join(supply, "capacity"), "r", encoding="utf-8") as fh:
+                capacity = fh.read().strip()
+            status = ""
+            try:
+                with open(os.path.join(supply, "status"), "r", encoding="utf-8") as fh:
+                    status = fh.read().strip()
+            except OSError:
+                pass
+            return f"{capacity}%" + (f" {status}" if status else "")
+        except (OSError, ValueError):
+            continue
+    return "no battery"
+
+
+def ssh_status() -> str:
+    active = "unknown"
+    enabled = "unknown"
+    rc, out, _ = nm_run(["systemctl", "is-active", "ssh"], timeout=5)
+    if rc == 0:
+        active = out.strip() or "active"
+    else:
+        active = "inactive"
+    rc, out, _ = nm_run(["systemctl", "is-enabled", "ssh"], timeout=5)
+    if rc == 0:
+        enabled = out.strip() or "enabled"
+    else:
+        enabled = "disabled"
+    return f"{active}, {enabled}"
+
+
+def ssh_switch_text() -> str:
+    return "On" if ssh_status().split(",", 1)[0].strip() == "active" else "Off"
+
+
+def factory_password_active() -> bool:
+    """True until the factory password is changed.
+
+    cpz-settings cannot read /etc/shadow, but its mtime is public metadata and
+    every passwd/usermod/chage run updates it. The build records the original
+    mtime in SECURITY_STAMP, so a match means the account still has the
+    password baked into the image.
+    """
+    try:
+        with open(SECURITY_STAMP, "r", encoding="utf-8") as handle:
+            stamp = int(handle.read().strip())
+        return int(os.stat("/etc/shadow").st_mtime) == stamp
+    except (OSError, ValueError):
+        return False
+
+
+def security_issues() -> list[str]:
+    """Warnings shown above the Settings menu.
+
+    Keep this cheap and root-free: it runs when the main page is loaded.
+    """
+    issues = []
+    if factory_password_active():
+        issues.append("factory password in use")
+    if ssh_status().split(",", 1)[0].strip() == "active":
+        issues.append("SSH is on")
+    return issues
+
+
+def ntp_status() -> str:
+    value = timedatectl_value("NTP").lower()
+    return "On" if value in ("yes", "on", "true") else "Off"
+
+
+def run_interactive(screen, command) -> int:
+    curses.def_prog_mode()
+    curses.endwin()
+    try:
+        return subprocess.call(command)
+    except OSError:
+        return 1
+    finally:
+        curses.reset_prog_mode()
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
+
+
+def run_privileged(screen, command) -> int:
+    return run_interactive(screen, ["sudo"] + command)
+
+
+def confirm(screen, question: str) -> bool:
+    height, width = screen.getmaxyx()
+    put(screen, 0, 0, " " + question, curses.A_BOLD)
+    put(screen, 2, 0, " Enter/y = yes    n/Esc = cancel")
+    screen.refresh()
+    while True:
+        key = screen.getch()
+        if key in (10, 13, ord("y"), ord("Y")):
+            return True
+        if key in (27, ord("n"), ord("N"), ord("q")):
+            return False
+
+
+def text_page(screen, title: str, lines) -> None:
+    offset = 0
+    while True:
+        screen.erase()
+        height, width = screen.getmaxyx()
+        put(screen, 0, 0, f" {title}", curses.A_BOLD)
+        put(screen, 1, 0, "-" * max(0, width - 1))
+        visible = max(1, height - 4)
+        for index in range(visible):
+            line = lines[offset + index] if offset + index < len(lines) else ""
+            put(screen, 2 + index, 0, line)
+        put(screen, height - 2, 0, " Up/Down scroll   q back")
+        screen.refresh()
+        key = screen.getch()
+        if key in (ord("q"), ord("Q"), 27):
+            return
+        if key in NAV_UP:
+            offset = max(0, offset - 1)
+        elif key in NAV_DOWN:
+            offset = min(max(0, len(lines) - visible), offset + 1)
+        elif key == curses.KEY_PPAGE:
+            offset = max(0, offset - visible)
+        elif key == curses.KEY_NPAGE:
+            offset = min(max(0, len(lines) - visible), offset + visible)
+
+
+def value_text(
+    data: dict, key: str, wifi_value: str = "", bluetooth_value: str = ""
+) -> str:
+    if key == "wifi":
+        return wifi_value
+    if key == "bluetooth":
+        return bluetooth_value
+    if key == "theme":
+        return theme_label(data["theme"])
+    if key == "clock_24h":
+        return "24-hour" if data["clock_24h"] else "12-hour"
+    if key == "date_format":
+        return DATE_FORMAT_LABELS.get(data["date_format"], data["date_format"])
+    if key == "display":
+        return DISPLAY_LABELS.get(data["display"], data["display"])
+    if key == "screen_timeout":
+        return SCREEN_TIMEOUT_LABELS.get(data["screen_timeout"], str(data["screen_timeout"]))
+    if key == "brightness":
+        return f"{data['brightness']}%"
+    if key == "status_interval":
+        return f"{data['status_interval']}s"
+    if key == "mode_keys":
+        return data["mode_keys"]
+    if key == "keyboard_layout":
+        return {
+            "auto": "Auto",
+            "cpz": "CPZ internal",
+            "standard": "Standard",
+        }.get(data["keyboard_layout"], data["keyboard_layout"])
+    if key == "keyboard_layouts":
+        return layouts_text(data)
+    if key == "keyboard_layout_active":
+        return layout_label(active_layout(data))
+    if key == "history_limit":
+        return f"{data['history_limit']:,} lines"
+    return "On" if data[key] else "Off"
+
+
+def nm_env() -> dict:
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    return env
+
+
+def nm_run(args, timeout: int = 30):
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=nm_env(),
+            check=False,
+        )
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return 1, "", str(error)
+
+
+def wifi_summary() -> str:
+    if not shutil.which("nmcli"):
+        return "no nmcli"
+    rc, out, _ = nm_run(["nmcli", "-t", "-f", "WIFI", "general"])
+    if rc == 0 and out.startswith("WIFI:"):
+        if out.split(":", 1)[1] != "enabled":
+            return "Off"
+    for device in nm_devices():
+        if device["type"] == "wifi":
+            if device["state"] == "connected":
+                return device["connection"] or "connected"
+            return device["state"] or "Off"
+    return "no adapter"
+
+
+def open_network_tui() -> str:
+    if not shutil.which("nmtui"):
+        return "nmtui is not installed"
+    # The image writes WirelessEnabled=false until a country is configured;
+    # enable the radio before opening the NetworkManager TUI.
+    nm_run(["nmcli", "radio", "wifi", "on"], timeout=15)
+
+    # Run nmtui in a popup so its alternate-screen/terminal-mode changes do not
+    # leak into the Settings pane or trigger a console/tmux resize.
+    if os.environ.get("TMUX") and shutil.which("tmux"):
+        result = subprocess.call(
+            [
+                "tmux",
+                "display-popup",
+                "-E",
+                "-w",
+                "100%",
+                "-h",
+                "100%",
+                "nmtui",
+            ],
+            env=nm_env(),
+        )
+        return "" if result == 0 else "nmtui exited with an error"
+
+    curses.def_prog_mode()
+    curses.endwin()
+    try:
+        subprocess.call(["nmtui"], env=nm_env())
+    except OSError as error:
+        return str(error).splitlines()[0]
+    finally:
+        curses.reset_prog_mode()
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
+    return ""
+
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def clean_output(text: str) -> str:
+    return ANSI_RE.sub("", text or "").strip()
+
+
+def first_line(text: str) -> str:
+    for line in clean_output(text).splitlines():
+        line = line.strip()
+        if line:
+            return line
+    return ""
+
+
+def error_line(text: str) -> str:
+    lines = [line.strip() for line in clean_output(text).splitlines() if line.strip()]
+    for line in lines:
+        low = line.lower()
+        if any(
+            word in low
+            for word in ("fail", "error", "not available", "not authorized", "denied")
+        ):
+            return line
+    return lines[-1] if lines else ""
+
+
+def bt_env() -> dict:
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    env["NO_COLOR"] = "1"
+    return env
+
+
+def bt_run(args, timeout: int = 20):
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=bt_env(),
+            check=False,
+        )
+        return (
+            result.returncode,
+            clean_output(result.stdout),
+            clean_output(result.stderr),
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return 1, "", clean_output(str(error))
+
+
+def bt_adapter() -> dict:
+    if not shutil.which("bluetoothctl"):
+        return {"name": "", "mac": "", "powered": False, "error": "no bluetoothctl"}
+    rc, out, err = bt_run(["bluetoothctl", "show"], timeout=6)
+    mac = ""
+    name = ""
+    powered = False
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("Controller "):
+            parts = line.split()
+            if len(parts) > 1:
+                mac = parts[1]
+        elif line.startswith("Name:"):
+            name = line.split(":", 1)[1].strip()
+        elif line.startswith("Alias:") and not name:
+            name = line.split(":", 1)[1].strip()
+        elif line.startswith("Powered:"):
+            powered = line.split(":", 1)[1].strip().lower() == "yes"
+    if not mac:
+        return {
+            "name": "",
+            "mac": "",
+            "powered": False,
+            "error": first_line(err or out) or "no adapter",
+        }
+    return {"name": name or mac, "mac": mac, "powered": powered, "error": ""}
+
+
+def bt_device_lines(command: str) -> list[tuple[str, str]]:
+    """Return (mac, name) from `bluetoothctl devices [command]`."""
+    rc, out, _ = bt_run(["bluetoothctl", "devices"] + command.split(), timeout=6)
+    if rc != 0:
+        return []
+    devices = []
+    for line in out.splitlines():
+        if not line.startswith("Device "):
+            continue
+        rest = line[len("Device ") :].strip()
+        mac, _, name = rest.partition(" ")
+        mac = mac.strip()
+        if mac:
+            devices.append((mac, name.strip()))
+    return devices
+
+
+def bt_devices() -> list[dict]:
+    if not shutil.which("bluetoothctl"):
+        return []
+    # `devices`, `devices Connected` and `devices Paired` are three cheap
+    # calls. The previous implementation ran `bluetoothctl info` once per
+    # device, so the Settings page could block for seconds on a busy adapter.
+    named = dict(bt_device_lines(""))
+    if not named:
+        return []
+    connected = {mac for mac, _name in bt_device_lines("Connected")}
+    paired = {mac for mac, _name in bt_device_lines("Paired")}
+    devices = [
+        {
+            "mac": mac,
+            "name": name or mac,
+            "paired": mac in paired,
+            "connected": mac in connected,
+        }
+        for mac, name in named.items()
+    ]
+    devices.sort(
+        key=lambda device: (
+            not device["connected"],
+            not device["paired"],
+            str(device["name"]).lower(),
+        )
+    )
+    return devices
+
+
+def bt_scan(seconds: int = 6) -> str:
+    rc, out, err = bt_run(
+        ["bluetoothctl", "--timeout", str(seconds), "scan", "on"],
+        timeout=seconds + 8,
+    )
+    if rc != 0:
+        return error_line(err or out) or "scan failed"
+    return ""
+
+
+def bt_power(on: bool) -> str:
+    rc, out, err = bt_run(
+        ["bluetoothctl", "power", "on" if on else "off"], timeout=10
+    )
+    if rc != 0:
+        return error_line(err or out) or "power failed"
+    return ""
+
+
+def bt_set_power(screen, on: bool) -> str:
+    result = bt_power(on)
+    if not result:
+        return ""
+    # A normal user may lack rfkill/BlueZ permission. Fall back to a single
+    # sudo prompt, unblocking the radio first when enabling.
+    if on:
+        run_privileged(screen, ["rfkill", "unblock", "bluetooth"])
+    rc = run_privileged(
+        screen, ["bluetoothctl", "power", "on" if on else "off"]
+    )
+    if rc == 0:
+        return ""
+    return result or "power change failed"
+
+
+def bt_connect(device: dict) -> str:
+    rc, out, err = bt_run(
+        ["bluetoothctl", "connect", device["mac"]], timeout=40
+    )
+    if rc != 0 or "fail" in (out + err).lower():
+        return error_line(err or out) or "connect failed"
+    return "connected"
+
+
+def bt_disconnect(device: dict) -> str:
+    rc, out, err = bt_run(
+        ["bluetoothctl", "disconnect", device["mac"]], timeout=20
+    )
+    if rc != 0 or "fail" in (out + err).lower():
+        return error_line(err or out) or "disconnect failed"
+    return "disconnected"
+
+
+def bt_pair_connect(device: dict) -> str:
+    mac = device["mac"]
+    if not device["paired"]:
+        rc, out, err = bt_run(["bluetoothctl", "pair", mac], timeout=60)
+        text = (out + "\n" + err).lower()
+        if rc != 0 or "failed" in text or "not available" in text:
+            return error_line(err or out) or "pairing failed"
+        bt_run(["bluetoothctl", "trust", mac], timeout=10)
+    return bt_connect(device)
+
+
+def bluetooth_summary() -> str:
+    if not shutil.which("bluetoothctl"):
+        return "no bluetoothctl"
+    adapter = bt_adapter()
+    if adapter["error"]:
+        return "no adapter" if "no adapter" in adapter["error"].lower() else "unavailable"
+    if not adapter["powered"]:
+        return "Off"
+    devices = bt_devices()
+    connected = [device["name"] for device in devices if device["connected"]]
+    if connected:
+        return connected[0]
+    paired = sum(1 for device in devices if device["paired"])
+    if paired:
+        return f"{paired} paired"
+    return "On"
+
+
+def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: str = "") -> None:
+    screen.erase()
+    height, width = screen.getmaxyx()
+
+    put(screen, 0, 0, " Bluetooth", curses.A_BOLD)
+    put(screen, 1, 0, "-" * max(0, width - 1))
+
+    if notice:
+        put(screen, 2, 0, f" {notice}")
+    elif adapter["error"]:
+        put(screen, 2, 0, f" {adapter['error']}")
+    else:
+        state = "On" if adapter["powered"] else "Off"
+        put(screen, 2, 0, f" {adapter['name']}: {state}")
+
+    items = ["power", "scan"] + devices
+    top = 3
+    for index, item in enumerate(items):
+        y = top + index
+        if y >= height - 3:
+            break
+        if item == "power":
+            mark = " "
+            label = f"Power: {'On' if adapter['powered'] else 'Off'}"
+        elif item == "scan":
+            mark = " "
+            label = "Scan for Devices"
+        else:
+            mark = "*" if item["connected"] else ("+" if item["paired"] else " ")
+            label = item["name"]
+        text = f"{'>' if index == selected else ' '} {mark} {label}"
+        attr = curses.A_REVERSE if index == selected else 0
+        put(screen, y, 0, text.ljust(max(0, width - 1)), attr)
+
+    put(screen, height - 3, 0, " Up/Down move  Enter toggle/scan/pair")
+    put(screen, height - 2, 0, " r rescan  p power  d disconnect  q back")
+    screen.refresh()
+
+
+def bluetooth_screen(screen) -> None:
+    adapter = bt_adapter()
+    devices = bt_devices()
+    selected = 0
+    notice = ""
+
+    while True:
+        draw_bluetooth(screen, adapter, devices, selected, notice)
+        key = screen.getch()
+        notice = ""
+        count = 2 + len(devices)
+
+        if key in (ord("q"), ord("Q"), 27):
+            return
+        if key in NAV_UP:
+            selected = (selected - 1) % count
+            continue
+        if key in NAV_DOWN:
+            selected = (selected + 1) % count
+            continue
+        if key in (ord("r"), ord("R")):
+            draw_bluetooth(screen, adapter, devices, selected, "Scanning...")
+            notice = bt_scan()
+            adapter = bt_adapter()
+            devices = bt_devices()
+            selected = min(selected, 1 + len(devices))
+            continue
+        if key in (ord("p"), ord("P")):
+            notice = bt_set_power(screen, not adapter["powered"])
+            adapter = bt_adapter()
+            devices = bt_devices()
+            selected = min(selected, 1 + len(devices))
+            continue
+        if key in (ord("d"), ord("D")) and selected > 1:
+            device = devices[selected - 2]
+            notice = bt_disconnect(device) if device["connected"] else "not connected"
+            adapter = bt_adapter()
+            devices = bt_devices()
+            selected = min(selected, 1 + len(devices))
+            continue
+        if key in (*NAV_LEFT, *NAV_RIGHT, ord(" "), 10, 13):
+            if selected == 0:
+                notice = bt_set_power(screen, not adapter["powered"])
+            elif selected == 1:
+                draw_bluetooth(screen, adapter, devices, selected, "Scanning...")
+                notice = bt_scan()
+            else:
+                device = devices[selected - 2]
+                if device["connected"]:
+                    notice = bt_disconnect(device)
+                elif device["paired"]:
+                    notice = bt_connect(device)
+                else:
+                    notice = bt_pair_connect(device)
+            adapter = bt_adapter()
+            devices = bt_devices()
+            selected = min(selected, 1 + len(devices))
+            continue
+
+
+def put(screen, y: int, x: int, text: str, attr: int = 0) -> None:
+    height, width = screen.getmaxyx()
+    if y < 0 or y >= height or x < 0 or x >= width:
+        return
+    try:
+        screen.addstr(y, x, text[: max(0, width - x - 1)], attr)
+    except curses.error:
+        pass
+
+
+def item_value(item: dict, data: dict) -> str:
+    getter = item.get("get")
+    if getter:
+        try:
+            return str(getter(data))
+        except Exception:
+            return "?"
+    key = item.get("key")
+    if not key:
+        return ""
+    kind = item.get("kind")
+    if kind == "cycle":
+        values = item.get("values")
+        if callable(values):
+            values = values()
+        values = tuple(values or ())
+        labels = item.get("labels") or {}
+        current = data.get(key)
+        return labels.get(current, str(current))
+    return value_text(data, key)
+
+
+def item_change(item: dict, data: dict, step: int, screen) -> None:
+    if item.get("change"):
+        item["change"](data, step, screen)
+        return
+    key = item.get("key")
+    if not key:
+        return
+    if item.get("kind") == "toggle":
+        data[key] = 0 if data[key] else 1
+    elif item.get("kind") == "cycle":
+        values = item.get("values")
+        if callable(values):
+            values = values()
+        values = tuple(values or ())
+        current = data.get(key)
+        index = values.index(current) if current in values else 0
+        data[key] = values[(index + step) % len(values)]
+    else:
+        return
+    save_settings(data)
+    apply_live(data, key)
+    if key == "keyboard_layout_active":
+        reload_keyboard_layout(screen)
+
+
+def sound_volume_text(kind: str) -> str:
+    percent, muted = wpctl_status(kind)
+    if percent is None:
+        return "unavailable"
+    return f"{percent}%" + (" muted" if muted else "")
+
+
+def sound_volume_change(kind: str, step: int) -> None:
+    percent, _muted = wpctl_status(kind)
+    if percent is None:
+        return
+    wpctl_set_volume(kind, percent + step * 5)
+
+
+def sound_mute_text(kind: str) -> str:
+    percent, muted = wpctl_status(kind)
+    if percent is None:
+        return "unavailable"
+    return "On" if muted else "Off"
+
+
+def sound_device_text(kind: str) -> str:
+    nodes = wpctl_nodes(kind.capitalize())
+    if not nodes:
+        return "unavailable"
+    for _node_id, name, default in nodes:
+        if default:
+            return name
+    return nodes[0][1]
+
+
+def sound_device_change(kind: str, step: int) -> None:
+    nodes = wpctl_nodes(kind.capitalize())
+    if not nodes:
+        return
+    current = 0
+    for index, (_node_id, _name, default) in enumerate(nodes):
+        if default:
+            current = index
+            break
+    node_id = nodes[(current + step) % len(nodes)][0]
+    wpctl_set_default(kind.capitalize(), node_id)
+
+
+def hdmi_status_text() -> str:
+    for path in glob.glob("/sys/class/drm/card*-HDMI-A-*/status"):
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                return handle.read().strip()
+        except OSError:
+            continue
+    return "no HDMI"
+
+
+def hdmi_edid_size() -> int:
+    size = 0
+    for path in glob.glob("/sys/class/drm/card*-HDMI-A-*/edid"):
+        try:
+            size = max(size, os.path.getsize(path))
+        except OSError:
+            continue
+    return size
+
+
+def hdmi_ready() -> bool:
+    return hdmi_status_text() == "connected" and hdmi_edid_size() >= 128
+
+
+def active_output_text(data: dict) -> str:
+    # Mirrors the policy in cpz-hdmi-console.
+    connected = hdmi_status_text() == "connected"
+    mode = data.get("display", "auto")
+    if mode == "panel":
+        return "CPZ panel (HDMI blanked)"
+    if mode == "hdmi":
+        return "HDMI" if connected else "CPZ panel (no HDMI)"
+    if hdmi_ready():
+        return "HDMI (panel off)"
+    if connected:
+        return "CPZ panel (HDMI has no EDID)"
+    return "CPZ panel"
+
+
+def autologin_status() -> str:
+    path = "/etc/systemd/system/getty@tty1.service.d/10-cpz-autologin.conf"
+    return "enabled" if os.path.exists(path) else "disabled"
+
+
+def disk_info(path: str) -> str:
+    try:
+        usage = shutil.disk_usage(path)
+    except OSError:
+        return "n/a"
+    total = usage.total // (1024**3)
+    free = usage.free // (1024**3)
+    return f"{free}G free / {total}G"
+
+
+def event_sysfs(event: str) -> str:
+    return f"/sys/class/input/{os.path.basename(event)}"
+
+
+def typing_keyboard(event: str) -> bool:
+    """True when the event node has udev's full-keyboard key mask."""
+    try:
+        with open(
+            f"{event_sysfs(event)}/device/capabilities/key",
+            "r",
+            encoding="utf-8",
+        ) as handle:
+            words = handle.read().split()
+    except OSError:
+        return False
+    # udev's input_id marks ID_INPUT_KEYBOARD when keycodes 1..31 (ESC, the
+    # number row and Q to D) are present; that is 0xfffffffe in the low word.
+    return bool(words) and words[-1].lower().endswith("fffffffe")
+
+
+def usb_keyboard_present_fallback() -> bool:
+    """Host fallback when cpz-keyboard-layout is not installed."""
+    internal_link = "/dev/input/cardputer-zero-internal"
+    internal_target = (
+        os.path.realpath(internal_link) if os.path.islink(internal_link) else ""
+    )
+    for event in glob.glob("/dev/input/event*"):
+        if internal_target and os.path.realpath(event) == internal_target:
+            continue
+        try:
+            with open(
+                f"{event_sysfs(event)}/device/id/bustype",
+                "r",
+                encoding="utf-8",
+            ) as handle:
+                bustype = handle.read().strip().lower()
+        except OSError:
+            continue
+        # BUS_I2C: the Cardputer's TCA8418 keyboard.
+        if bustype == "0018" or "/3f804000.i2c" in os.path.realpath(
+            f"{event_sysfs(event)}/device"
+        ):
+            continue
+        name = ""
+        try:
+            with open(
+                f"{event_sysfs(event)}/device/name",
+                "r",
+                encoding="utf-8",
+            ) as handle:
+                name = handle.read().strip().lower()
+        except OSError:
+            pass
+        if any(
+            word in name
+            for word in ("tca8418", "m5stack", "cardputerzero", "cardputer zero")
+        ):
+            continue
+        if not typing_keyboard(event):
+            continue
+        # BUS_USB, BUS_BLUETOOTH, BUS_I8042.
+        if bustype in ("0003", "0005", "0011"):
+            return True
+    return False
+
+
+def usb_keyboard_present() -> bool:
+    helper = "/usr/local/bin/cpz-keyboard-layout"
+    if os.path.exists(helper):
+        rc, out, _ = nm_run([helper, "--detect"], timeout=5)
+        if rc == 0:
+            return out.splitlines()[:1] == ["external"]
+    return usb_keyboard_present_fallback()
+
+
+def cpu_temperature() -> str:
+    for path in glob.glob("/sys/class/thermal/thermal_zone*/temp"):
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                value = int(handle.read().strip()) / 1000
+            return f"{value:.1f} C"
+        except (OSError, ValueError):
+            continue
+    return "n/a"
+
+
+def memory_info() -> str:
+    try:
+        values = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as handle:
+            for line in handle:
+                key, raw = line.split(":", 1)
+                values[key] = int(raw.split()[0])
+        total = values["MemTotal"] // 1024
+        available = values["MemAvailable"] // 1024
+        return f"{total - available}M used / {total}M"
+    except (OSError, KeyError, ValueError):
+        return "n/a"
+
+
+def uptime_info() -> str:
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as handle:
+            seconds = int(float(handle.read().split()[0]))
+    except (OSError, ValueError):
+        return "n/a"
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes = seconds // 60
+    if days:
+        return f"{days}d {hours}h {minutes}m"
+    return f"{hours}h {minutes}m"
+
+
+def load_info() -> str:
+    try:
+        with open("/proc/loadavg", "r", encoding="utf-8") as handle:
+            return " ".join(handle.read().split()[:3])
+    except OSError:
+        return "n/a"
+
+
+def help_lines() -> list:
+    return [
+        "CPZ keys",
+        "",
+        "Tabs",
+        "Alt+Left/Right    previous / next tab",
+        "Alt+1 .. 9        select tab",
+        "Alt+T             new tab",
+        "Alt+W             close tab (asks)",
+        "Ctrl-b n / p      next / previous tab",
+        "Ctrl-b 0 .. 9     select tab by number",
+        "Ctrl-b ,          rename tab",
+        "Ctrl-b &          close tab (asks)",
+        "Ctrl-b w          list tabs",
+        "",
+        "Panes",
+        "Ctrl-b %          split left / right",
+        'Ctrl-b "          split top / bottom',
+        "Ctrl-b o          next pane",
+        "Ctrl-b z          zoom pane",
+        "Ctrl-b x          close pane (asks)",
+        "Ctrl-b { / }      swap pane previous / next",
+        "",
+        "Scroll and copy",
+        "Ctrl-b [          scroll / copy (vi keys)",
+        "Space, Enter      select, then copy",
+        "q                 leave copy mode",
+        "Ctrl-b ]          paste tmux buffer",
+        "",
+        "Session and device",
+        "Ctrl-b d          detach",
+        "Ctrl-b ?          all tmux keys",
+        "Alt+S             Settings",
+        "Alt+H             key help",
+        "Alt+Space         switch input layout",
+        "Alt+D             CPZ panel / auto display",
+        "In Settings       Z/X/C/F move (Fn off)",
+    ]
+
+
+def system_info_lines(data: dict) -> list:
+    display = str(data.get("display", ""))
+    lines = [
+        "Device",
+        "",
+        f"Host: {platform.node() or 'unknown'}",
+        f"Kernel: {platform.release()}",
+        f"Uptime: {uptime_info()}",
+        f"CPU temp: {cpu_temperature()}",
+        f"Memory: {memory_info()}",
+        f"Load: {load_info()}",
+        f"Battery: {battery_info()}",
+        f"Keyboard: {keyboard_status(data)}",
+        f"Bluetooth: {bluetooth_summary()}",
+        f"Display: {DISPLAY_LABELS.get(display, display)} / HDMI {hdmi_status_text()}",
+        f"Output: {active_output_text(data)}",
+        f"HDMI EDID: {hdmi_edid_size()} bytes",
+        f"SSH: {ssh_status()}",
+        f"Autologin: {autologin_status()}",
+        "",
+        "Network",
+    ]
+    devices = nm_devices()
+    if not devices:
+        lines.append("  no NetworkManager devices")
+    for device in devices:
+        lines.append(
+            f"  {device['device']}: {device['type']} {device['state']}"
+            + (f" ({device['connection']})" if device["connection"] else "")
+        )
+        ip = nm_ip(device["device"])
+        if ip:
+            lines.append(f"    {ip}")
+    lines.extend(
+        [
+            "",
+            "Storage",
+            f"  /              {disk_info('/')}",
+            f"  /tmp           {disk_info('/tmp')}",
+            f"  /boot/firmware {disk_info('/boot/firmware')}",
+        ]
+    )
+    return lines
+
+
+def keyboard_status(data: dict) -> str:
+    mode = data.get("keyboard_layout", "auto")
+    layout = layout_label(active_layout(data))
+    if mode == "cpz":
+        return "CPZ internal (forced)"
+    if mode == "standard":
+        return f"Standard: {layout}"
+    return f"Standard: {layout}" if usb_keyboard_present() else "CPZ internal"
+
+
+def reload_keyboard_layout(screen) -> int:
+    # The helper is allowlisted in /etc/sudoers.d/50-cpz-layout, so this is
+    # normally passwordless; without the rule sudo prompts like other actions.
+    return run_privileged(screen, ["/usr/local/bin/cpz-layout-apply"])
+
+
+def keyboard_layout_change(data: dict, step: int, screen) -> None:
+    values = ("auto", "cpz", "standard")
+    current = data.get("keyboard_layout", "auto")
+    index = values.index(current) if current in values else 0
+    data["keyboard_layout"] = values[(index + step) % len(values)]
+    save_settings(data)
+    reload_keyboard_layout(screen)
+
+
+def draw_layouts(screen, data: dict, selected: int, notice: str) -> None:
+    screen.erase()
+    height, width = screen.getmaxyx()
+    put(screen, 0, 0, " Layouts", curses.A_BOLD)
+    put(screen, 1, 0, "-" * max(0, width - 1))
+
+    enabled = set(layout_codes(data))
+    active = active_layout(data)
+    top = 2
+    visible = max(1, height - 5)
+    first = 0
+    if selected >= visible:
+        first = selected - visible + 1
+    first = max(0, min(first, max(0, len(LAYOUTS) - visible)))
+
+    for offset, (code, label) in enumerate(LAYOUTS[first : first + visible]):
+        row = first + offset
+        mark = "[x]" if code in enabled else "[ ]"
+        suffix = "  Active" if code == active else ""
+        text = f"{'>' if row == selected else ' '} {mark} {label[:26]:<26}{suffix}"
+        attr = curses.A_REVERSE if row == selected else 0
+        put(screen, top + offset, 0, text.ljust(max(0, width - 1)), attr)
+
+    if first > 0:
+        put(screen, 1, width - 2, "^")
+    if first + visible < len(LAYOUTS):
+        put(screen, 1, width - 2, "v" if first == 0 else "*")
+
+    put(screen, height - 3, 0, " Up/Down move  PgUp/PgDn  Space toggle")
+    put(screen, height - 2, 0, " Alt+Space switches  q back")
+    if notice:
+        put(screen, height - 1, 0, f" {notice}")
+    screen.refresh()
+
+
+def layouts_screen(screen, data: dict) -> None:
+    active = active_layout(data)
+    selected = next(
+        (index for index, (code, _label) in enumerate(LAYOUTS) if code == active),
+        0,
+    )
+    notice = ""
+    changed = False
+
+    while True:
+        draw_layouts(screen, data, selected, notice)
+        key = screen.getch()
+        notice = ""
+
+        if key in (ord("q"), ord("Q"), 27):
+            if changed:
+                reload_keyboard_layout(screen)
+            return
+        if key in NAV_UP:
+            selected = (selected - 1) % len(LAYOUTS)
+            continue
+        if key in NAV_DOWN:
+            selected = (selected + 1) % len(LAYOUTS)
+            continue
+        page = max(1, screen.getmaxyx()[0] - 5)
+        if key in (curses.KEY_PPAGE,):
+            selected = max(0, selected - page)
+            continue
+        if key in (curses.KEY_NPAGE,):
+            selected = min(len(LAYOUTS) - 1, selected + page)
+            continue
+        if key in (curses.KEY_HOME, ord("g")):
+            selected = 0
+            continue
+        if key in (curses.KEY_END, ord("G")):
+            selected = len(LAYOUTS) - 1
+            continue
+        if key not in (ord(" "), 10, 13):
+            continue
+
+        code, label = LAYOUTS[selected]
+        enabled = layout_codes(data)
+        if code in enabled:
+            if len(enabled) == 1:
+                notice = "keep at least one layout"
+                continue
+            enabled.remove(code)
+        else:
+            enabled.append(code)
+        data["keyboard_layouts"] = ",".join(normalize_layouts(",".join(enabled)))
+        data["keyboard_layout_active"] = active_layout(data)
+        save_settings(data)
+        changed = True
+        notice = f"{label}: {'On' if code in enabled else 'Off'}"
+
+
+def layouts_action(screen, data) -> None:
+    layouts_screen(screen, data)
+
+
+def show_help(screen, _data) -> None:
+    # Use the same pager as Alt+H so the two help screens cannot drift.
+    helper = "/usr/local/bin/cpz-help"
+    if os.path.exists(helper):
+        run_interactive(screen, [helper])
+    else:
+        text_page(screen, "Key Bindings", help_lines())
+
+
+def show_system(screen, data) -> None:
+    text_page(screen, "About", system_info_lines(data))
+
+
+def show_resources(screen, _data) -> None:
+    # htop is part of the terminal tooling in stage3/01-session. It shows live
+    # CPU, memory, swap and load plus the process list, and needs no sudo.
+    run_interactive(screen, ["htop"])
+
+
+def applications_action(screen, _data) -> None:
+    if not confirm(screen, "Open Aptitude? Core packages can break CPZ."):
+        return
+    run_interactive(
+        screen,
+        ["sudo", "aptitude", "-o", "Aptitude::Delete-Unused=false"],
+    )
+
+
+def network_details_action(screen, _data) -> None:
+    text_page(screen, "Network details", network_details_lines())
+
+
+def ssh_toggle(screen, _data) -> str | None:
+    status = ssh_status()
+    active = status.split(",", 1)[0].strip() == "active"
+    command = (
+        ["systemctl", "disable", "--now", "ssh"]
+        if active
+        else ["systemctl", "enable", "--now", "ssh"]
+    )
+    rc = run_privileged(screen, command)
+    return None if rc == 0 else "SSH change failed"
+
+
+def ntp_toggle(screen, _data) -> str | None:
+    current = timedatectl_value("NTP").lower()
+    target = "false" if current == "yes" else "true"
+    rc = run_privileged(screen, ["timedatectl", "set-ntp", target])
+    return None if rc == 0 else "Time sync change failed"
+
+
+def timezone_action(zone: str):
+    def action(screen, _data) -> str | None:
+        rc = run_privileged(screen, ["timedatectl", "set-timezone", zone])
+        return "Time zone set" if rc == 0 else "Time zone change failed"
+
+    return action
+
+
+def power_action(action: str, question: str):
+    def run(screen, _data) -> None:
+        if not confirm(screen, question):
+            return
+        # logind allows the active local seat to reboot/power off/suspend
+        # without a password. Fall back to sudo only if polkit denies it.
+        if run_interactive(screen, ["systemctl", action]) != 0:
+            run_privileged(screen, ["systemctl", action])
+
+    return run
+
+
+def password_action(screen, _data) -> None:
+    run_interactive(screen, ["passwd"])
+
+
+def reset_settings_action(screen, data) -> str | None:
+    if not confirm(screen, "Reset all settings?"):
+        return None
+    data.clear()
+    data.update(DEFAULTS)
+    save_settings(data)
+    for name in data:
+        apply_live(data, name)
+    reload_keyboard_layout(screen)
+    return "Settings reset"
+
+
+def page_initial_index(page: str, data: dict) -> int:
+    """Start long lists on the value that is currently active."""
+    if page == "timezone":
+        current = timedatectl_value("Timezone")
+        try:
+            return TIMEZONES.index(current)
+        except ValueError:
+            return 0
+    return 0
+
+
+PAGE_TITLES = {
+    "main": "Settings",
+    "statusbar": "Status Bar",
+    "terminal": "Terminal",
+    "sound": "Sound",
+    "network": "Network",
+    "vpn": "VPN",
+    "datetime": "Date & Time",
+    "timezone": "Time Zone",
+    "display": "Display & Brightness",
+    "power": "Power",
+    "security": "Security",
+    "keyboard": "Keyboard",
+    "system": "System",
+}
+
+PAGE_HINTS = {
+    "statusbar": "Indicators hide while the interface is off",
+}
+
+
+def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
+    if name == "main":
+        return [
+            {
+                "label": "Network",
+                "kind": "submenu",
+                "page": "network",
+                "get": lambda _d: wifi_summary(),
+            },
+            {
+                "label": "Bluetooth",
+                "kind": "action",
+                "get": lambda _d: bluetooth_summary(),
+                "action": lambda s, _d: bluetooth_screen(s),
+            },
+            {
+                "label": "Display & Brightness",
+                "kind": "submenu",
+                "page": "display",
+            },
+            {"label": "Sound", "kind": "submenu", "page": "sound"},
+            {"label": "Keyboard", "kind": "submenu", "page": "keyboard"},
+            {"label": "Date & Time", "kind": "submenu", "page": "datetime"},
+            {"label": "Power", "kind": "submenu", "page": "power"},
+            {
+                "label": "Applications",
+                "kind": "action",
+                "action": applications_action,
+            },
+            {"label": "System", "kind": "submenu", "page": "system"},
+        ]
+    if name == "keyboard":
+        return [
+            {
+                "label": "Layout Mode",
+                "kind": "special",
+                "get": lambda d: value_text(d, "keyboard_layout"),
+                "change": keyboard_layout_change,
+            },
+            {
+                "label": "Layouts",
+                "kind": "action",
+                "get": layouts_text,
+                "action": layouts_action,
+            },
+            {
+                "label": "Active Layout",
+                "kind": "cycle",
+                "key": "keyboard_layout_active",
+                "values": lambda: layout_codes(data),
+                "labels": {code: label for code, label in LAYOUTS},
+            },
+            {
+                "label": "Key Bindings",
+                "kind": "action",
+                "action": show_help,
+            },
+        ]
+    if name == "display":
+        return [
+            {
+                "label": "Theme",
+                "kind": "cycle",
+                "key": "theme",
+                "values": available_themes,
+                "labels": theme_labels(),
+            },
+            {
+                "label": "Brightness",
+                "kind": "cycle",
+                "key": "brightness",
+                "values": tuple(range(10, 101, 5)),
+                "labels": {value: f"{value}%" for value in range(10, 101, 5)},
+            },
+            {
+                "label": "Screen Timeout",
+                "kind": "cycle",
+                "key": "screen_timeout",
+                "values": SCREEN_TIMEOUTS,
+                "labels": SCREEN_TIMEOUT_LABELS,
+            },
+            {
+                "label": "Output",
+                "kind": "cycle",
+                "key": "display",
+                "values": DISPLAY_MODES,
+                "labels": DISPLAY_LABELS,
+            },
+            {
+                "label": "Panel Text Size",
+                "kind": "cycle",
+                "key": "font_panel",
+                "values": FONT_PANEL_CHOICES,
+                "labels": FONT_PANEL_LABELS,
+            },
+            {
+                "label": "HDMI Text Size",
+                "kind": "cycle",
+                "key": "font_hdmi",
+                "values": FONT_HDMI_CHOICES,
+                "labels": FONT_HDMI_LABELS,
+            },
+            {"label": "Status Bar", "kind": "submenu", "page": "statusbar"},
+        ]
+    if name == "statusbar":
+        items: list[dict[str, Any]] = [
+            {"label": "Show Clock", "kind": "toggle", "key": "show_clock"},
+        ]
+        if data.get("show_clock"):
+            items.append(
+                {
+                    "label": "Time Format",
+                    "kind": "cycle",
+                    "key": "clock_24h",
+                    "values": (1, 0),
+                    "labels": {1: "24-hour", 0: "12-hour"},
+                }
+            )
+        items.append({"label": "Show Date", "kind": "toggle", "key": "show_date"})
+        if data.get("show_date"):
+            items.append(
+                {
+                    "label": "Date Format",
+                    "kind": "cycle",
+                    "key": "date_format",
+                    "values": DATE_FORMATS,
+                    "labels": DATE_FORMAT_LABELS,
+                }
+            )
+        items.extend(
+            [
+                {"label": "Battery Indicator", "kind": "toggle", "key": "show_battery"},
+                {"label": "Volume Indicator", "kind": "toggle", "key": "show_volume"},
+                {
+                    "label": "Brightness Indicator",
+                    "kind": "toggle",
+                    "key": "show_brightness",
+                },
+                {"label": "Network Indicator", "kind": "toggle", "key": "show_conn"},
+            ]
+        )
+        if data.get("show_conn"):
+            items.extend(
+                [
+                    {
+                        "label": "Ethernet Indicator",
+                        "kind": "toggle",
+                        "key": "show_eth",
+                    },
+                    {
+                        "label": "Wi-Fi Indicator",
+                        "kind": "toggle",
+                        "key": "show_wifi",
+                    },
+                    {
+                        "label": "Bluetooth Indicator",
+                        "kind": "toggle",
+                        "key": "show_bt",
+                    },
+                ]
+            )
+        items.append(
+            {"label": "Keyboard Indicator", "kind": "toggle", "key": "show_layout"}
+        )
+        return items
+    if name == "terminal":
+        return [
+            {"label": "Mouse Support", "kind": "toggle", "key": "mouse"},
+            {
+                "label": "Scrollback",
+                "kind": "cycle",
+                "key": "history_limit",
+                "values": HISTORY_CHOICES,
+                "labels": {
+                    value: f"{value:,} lines" for value in HISTORY_CHOICES
+                },
+            },
+            {
+                "label": "Copy Mode Keys",
+                "kind": "cycle",
+                "key": "mode_keys",
+                "values": MODE_KEYS,
+                "labels": {"vi": "Vi", "emacs": "Emacs"},
+            },
+            {
+                "label": "Refresh Rate",
+                "kind": "cycle",
+                "key": "status_interval",
+                "values": STATUS_INTERVALS,
+                "labels": {value: f"{value}s" for value in STATUS_INTERVALS},
+            },
+            {"label": "Clipboard Sharing", "kind": "toggle", "key": "set_clipboard"},
+            {"label": "Auto-Rename Tabs", "kind": "toggle", "key": "automatic_rename"},
+        ]
+    if name == "sound":
+        return [
+            {
+                "label": "Output Volume",
+                "kind": "special",
+                "get": lambda _d: sound_volume_text("sink"),
+                "change": lambda _d, step, _s: sound_volume_change("sink", step),
+            },
+            {
+                "label": "Output Mute",
+                "kind": "special",
+                "get": lambda _d: sound_mute_text("sink"),
+                "change": lambda _d, _step, _s: wpctl_toggle_mute("sink"),
+            },
+            {
+                "label": "Output Device",
+                "kind": "special",
+                "get": lambda _d: sound_device_text("sink"),
+                "change": lambda _d, step, _s: sound_device_change("sink", step),
+            },
+            {
+                "label": "Input Volume",
+                "kind": "special",
+                "get": lambda _d: sound_volume_text("source"),
+                "change": lambda _d, step, _s: sound_volume_change("source", step),
+            },
+            {
+                "label": "Input Mute",
+                "kind": "special",
+                "get": lambda _d: sound_mute_text("source"),
+                "change": lambda _d, _step, _s: wpctl_toggle_mute("source"),
+            },
+            {
+                "label": "Input Device",
+                "kind": "special",
+                "get": lambda _d: sound_device_text("source"),
+                "change": lambda _d, step, _s: sound_device_change("source", step),
+            },
+        ]
+    if name == "network":
+        items = [
+            {
+                "label": "Wi-Fi",
+                "kind": "action",
+                "get": lambda _d: wifi_info(),
+                "action": lambda _s, _d: open_network_tui(),
+            },
+            {"label": "Ethernet", "kind": "info", "get": lambda _d: ethernet_info()},
+        ]
+        if vpn_profiles():
+            items.append({"label": "VPN", "kind": "submenu", "page": "vpn"})
+        items.append(
+            {
+                "label": "Network Details",
+                "kind": "action",
+                "action": network_details_action,
+            }
+        )
+        return items
+    if name == "vpn":
+        profiles = vpn_profiles()
+        if not profiles:
+            return [
+                {"label": "No VPN Profiles", "kind": "info", "get": lambda _d: ""},
+            ]
+        items = []
+        for profile in profiles:
+            def toggle(screen, _data, profile=profile) -> str | None:
+                command = [
+                    "nmcli",
+                    "connection",
+                    "down" if profile["active"] else "up",
+                    profile["name"],
+                ]
+                rc, out, err = nm_run(command, timeout=60)
+                return None if rc == 0 else (error_line(err or out) or "VPN failed")
+
+            items.append(
+                {
+                    "label": profile["name"],
+                    "kind": "action",
+                    "get": lambda _d, p=profile: "active" if p["active"] else "inactive",
+                    "action": toggle,
+                }
+            )
+        return items
+    if name == "datetime":
+        return [
+            {
+                "label": "Set Date & Time",
+                "kind": "action",
+                "get": lambda _d: datetime_text(datetime_parts())[:16],
+                "action": set_datetime_action,
+            },
+            {
+                "label": "Time Zone",
+                "kind": "submenu",
+                "page": "timezone",
+                "get": lambda _d: timedatectl_value("Timezone"),
+            },
+            {
+                "label": "Set Automatically",
+                "kind": "action",
+                "get": lambda _d: ntp_status(),
+                "action": ntp_toggle,
+            },
+        ]
+    if name == "timezone":
+        current = timedatectl_value("Timezone")
+        items = []
+        for zone in TIMEZONES:
+            items.append(
+                {
+                    "label": zone + (" *" if zone == current else ""),
+                    "kind": "action",
+                    "action": timezone_action(zone),
+                }
+            )
+        return items
+    if name == "power":
+        return [
+            {"label": "Battery", "kind": "info", "get": lambda _d: battery_info()},
+            {
+                "label": "Reboot",
+                "kind": "action",
+                "action": power_action("reboot", "Reboot now?"),
+            },
+            {
+                "label": "Shut Down",
+                "kind": "action",
+                "action": power_action("poweroff", "Shut down now?"),
+            },
+            {
+                "label": "Suspend",
+                "kind": "action",
+                "action": power_action("suspend", "Suspend now?"),
+            },
+        ]
+    if name == "security":
+        return [
+            {
+                "label": "Change Password",
+                "kind": "action",
+                "action": password_action,
+            },
+            {
+                "label": "SSH",
+                "kind": "action",
+                "get": lambda _d: ssh_switch_text(),
+                "action": ssh_toggle,
+            },
+        ]
+    if name == "system":
+        return [
+            {"label": "About", "kind": "action", "action": show_system},
+            {
+                "label": "Resources",
+                "kind": "action",
+                "action": show_resources,
+            },
+            {"label": "Security", "kind": "submenu", "page": "security"},
+            {"label": "Terminal", "kind": "submenu", "page": "terminal"},
+            {
+                "label": "Reset Settings",
+                "kind": "action",
+                "action": reset_settings_action,
+            },
+        ]
+    return []
+
+
+def set_cycle_value(item: dict, data: dict, value, screen=None) -> None:
+    key = item.get("key")
+    if not key or data.get(key) == value:
+        return
+    data[key] = value
+    save_settings(data)
+    apply_live(data, key)
+    if key == "keyboard_layout_active" and screen is not None:
+        reload_keyboard_layout(screen)
+
+
+def select_popup(screen, item: dict, data: dict):
+    key = item.get("key")
+    if not key:
+        return None
+    values = item.get("values")
+    if callable(values):
+        values = values()
+    values = tuple(values or ())
+    if not values:
+        return None
+    labels = item.get("labels") or {}
+    current = data.get(key)
+    selected = values.index(current) if current in values else 0
+
+    height, width = screen.getmaxyx()
+    popup_height = min(max(len(values) + 4, 6), max(6, height - 2), 16)
+    longest = max(len(str(labels.get(value, value))) for value in values)
+    popup_width = min(
+        max(longest + 8, len(item.get("label", "Select")) + 4, 20),
+        max(20, width - 2),
+    )
+    top = max(0, (height - popup_height) // 2)
+    left = max(0, (width - popup_width) // 2)
+    try:
+        popup = curses.newwin(popup_height, popup_width, top, left)
+    except curses.error:
+        return None
+    popup.keypad(True)
+
+    visible = max(1, popup_height - 3)
+    first = 0
+    if selected >= visible:
+        first = selected - visible + 1
+    first = max(0, min(first, max(0, len(values) - visible)))
+
+    while True:
+        popup.erase()
+        popup.box()
+        put(popup, 0, 2, f" {item.get('label', 'Select')} ")
+        for offset, value in enumerate(values[first : first + visible]):
+            row = first + offset
+            label = str(labels.get(value, value))
+            text = f"{'>' if row == selected else ' '} {label}"
+            attr = curses.A_REVERSE if row == selected else 0
+            put(popup, 1 + offset, 1, text.ljust(max(0, popup_width - 2)), attr)
+        if first > 0:
+            put(popup, 0, popup_width - 2, "^")
+        if first + visible < len(values):
+            put(popup, popup_height - 1, popup_width - 2, "v")
+        popup.refresh()
+
+        key = popup.getch()
+        if key in (*NAV_LEFT, ord("q"), ord("Q"), 27):
+            del popup
+            return None
+        if key in NAV_UP:
+            selected = (selected - 1) % len(values)
+        elif key in NAV_DOWN:
+            selected = (selected + 1) % len(values)
+        elif key in (curses.KEY_PPAGE,):
+            selected = max(0, selected - visible)
+        elif key in (curses.KEY_NPAGE,):
+            selected = min(len(values) - 1, selected + visible)
+        elif key in (*NAV_RIGHT, ord(" "), 10, 13):
+            del popup
+            return values[selected]
+        else:
+            continue
+
+        if selected < first:
+            first = selected
+        elif selected >= first + visible:
+            first = selected - visible + 1
+        first = max(0, min(first, max(0, len(values) - visible)))
+
+
+def draw_page(screen, title: str, items: list, values: list, selected: int, data: dict, notice: str, issues: list[str], is_main: bool, hint: str = "") -> None:
+    screen.erase()
+    height, width = screen.getmaxyx()
+    put(screen, 0, 0, f" {title}", curses.A_BOLD)
+    if is_main and issues:
+        warning = "! " + " + ".join(issues)
+        put(
+            screen,
+            1,
+            0,
+            warning[: max(0, width - 1)].ljust(max(0, width - 1)),
+            curses.A_REVERSE | curses.A_BOLD,
+        )
+    else:
+        put(screen, 1, 0, "-" * max(0, width - 1))
+
+    top = 2
+    visible = max(1, (height - 3) - top)
+    first = 0
+    if selected >= visible:
+        first = selected - visible + 1
+    first = max(0, min(first, max(0, len(items) - visible)))
+
+    for offset, item in enumerate(items[first : first + visible]):
+        row = first + offset
+        y = top + offset
+        value = values[row] if row < len(values) else item_value(item, data)
+        label = item.get("label", "")
+        text = f"{'>' if row == selected else ' '} {label:<16} {value}"
+        attr = curses.A_REVERSE if row == selected else 0
+        put(screen, y, 0, text.ljust(max(0, width - 1)), attr)
+
+    if first > 0:
+        put(screen, 1, width - 2, "^")
+    if first + visible < len(items):
+        put(screen, 1, width - 2, "v" if first == 0 else "*")
+
+    put(screen, height - 3, 0, " Up/Down move  PgUp/PgDn  Left/Right change")
+    put(
+        screen,
+        height - 2,
+        0,
+        " Enter open/select  r refresh  q/Esc "
+        + ("close" if is_main else "back"),
+    )
+    if notice:
+        put(screen, height - 1, 0, f" {notice}")
+    elif hint:
+        put(screen, height - 1, 0, f" {hint}")
+    screen.refresh()
+
+
+def run(screen) -> None:
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    screen.keypad(True)
+
+    data = load_settings()
+    stack = [("main", 0)]
+    notice = ""
+    items = []
+    values = []
+    issues = []
+    dirty = True
+
+    while True:
+        page_name, selected = stack[-1]
+        if dirty:
+            items = page_items(page_name, data, screen)
+            if not items:
+                items = [{"label": "Empty", "kind": "info", "get": lambda _d: ""}]
+            # Getters can shell out (nmcli, bluetoothctl, wpctl). Resolve them
+            # once per page/change instead of on every keypress.
+            values = [item_value(item, data) for item in items]
+            issues = security_issues() if page_name == "main" else []
+            dirty = False
+        selected = max(0, min(selected, len(items) - 1))
+        stack[-1] = (page_name, selected)
+        title = PAGE_TITLES.get(page_name, page_name.title())
+        if len(stack) > 2:
+            parent = PAGE_TITLES.get(stack[-2][0], stack[-2][0].title())
+            title = f"{parent} > {title}"
+        draw_page(
+            screen,
+            title,
+            items,
+            values,
+            selected,
+            data,
+            notice,
+            issues,
+            page_name == "main",
+            PAGE_HINTS.get(page_name, ""),
+        )
+        key = screen.getch()
+        notice = ""
+
+        if key in (ord("q"), ord("Q"), 27):
+            if len(stack) > 1:
+                stack.pop()
+                data = load_settings()
+                dirty = True
+                continue
+            return
+        if key in (ord("r"), ord("R")):
+            data = load_settings()
+            dirty = True
+            notice = "Settings refreshed"
+            continue
+        if key in NAV_UP:
+            stack[-1] = (page_name, (selected - 1) % len(items))
+            continue
+        if key in NAV_DOWN:
+            stack[-1] = (page_name, (selected + 1) % len(items))
+            continue
+        if key in (curses.KEY_PPAGE, curses.KEY_NPAGE, curses.KEY_HOME, curses.KEY_END):
+            page = max(1, screen.getmaxyx()[0] - 5)
+            if key == curses.KEY_PPAGE:
+                selected = max(0, selected - page)
+            elif key == curses.KEY_NPAGE:
+                selected = min(len(items) - 1, selected + page)
+            elif key == curses.KEY_HOME:
+                selected = 0
+            else:
+                selected = len(items) - 1
+            stack[-1] = (page_name, selected)
+            continue
+
+        item = items[selected]
+        kind = item.get("kind")
+        if kind == "submenu":
+            if key in (*NAV_RIGHT, ord(" "), 10, 13):
+                data = load_settings()
+                stack.append(
+                    (item["page"], page_initial_index(item["page"], data))
+                )
+                dirty = True
+            continue
+        if kind == "action":
+            if key in (*NAV_RIGHT, ord(" "), 10, 13):
+                result = item["action"](screen, data)
+                if result:
+                    notice = result
+                dirty = True
+            continue
+        if kind == "info":
+            continue
+        if kind == "cycle":
+            if key in (10, 13, ord(" ")):
+                value = select_popup(screen, item, data)
+                if value is not None:
+                    set_cycle_value(item, data, value, screen)
+                    dirty = True
+            elif key in NAV_LEFT:
+                item_change(item, data, -1, screen)
+                dirty = True
+            elif key in NAV_RIGHT:
+                item_change(item, data, 1, screen)
+                dirty = True
+            continue
+        if key in NAV_LEFT:
+            item_change(item, data, -1, screen)
+            dirty = True
+            continue
+        if key in (*NAV_RIGHT, ord(" "), 10, 13):
+            item_change(item, data, 1, screen)
+            dirty = True
+            continue
+
+
+def check_pages() -> int:
+    """Structural self-test for the menu definitions (no TUI required)."""
+    data = dict(DEFAULTS)
+    errors = []
+
+    main_items = page_items("main", data, None)
+    if len(main_items) > 9:
+        errors.append(f"main: {len(main_items)} rows do not fit the panel")
+
+    for page in PAGE_TITLES:
+        try:
+            items = page_items(page, data, None)
+        except Exception as error:  # noqa: BLE001 - report any page failure
+            errors.append(f"{page}: {error}")
+            continue
+        if not items:
+            errors.append(f"{page}: no items")
+            continue
+        labels = [item.get("label", "") for item in items]
+        duplicates = sorted({label for label in labels if labels.count(label) > 1})
+        if duplicates:
+            errors.append(f"{page}: duplicate labels: {', '.join(duplicates)}")
+        for item in items:
+            target = item.get("page")
+            if target and target not in PAGE_TITLES:
+                errors.append(f"{page}: unknown submenu target {target}")
+
+    if errors:
+        for message in errors:
+            print(f"cpz-settings: {message}", file=sys.stderr)
+        return 1
+    print(f"cpz-settings: {len(PAGE_TITLES)} pages OK")
+    return 0
+
+
+def main() -> int:
+    if "--check-pages" in sys.argv:
+        return check_pages()
+    if not sys.stdout.isatty():
+        print("cpz-settings: this is a TUI; run it from the terminal.", file=sys.stderr)
+        return 1
+    try:
+        curses.wrapper(run)
+    except KeyboardInterrupt:
+        return 0
+    except curses.error as error:
+        print(f"cpz-settings: terminal error: {error}", file=sys.stderr)
+        print(f"cpz-settings: TERM={os.environ.get('TERM', '?')}", file=sys.stderr)
+        return 1
+    except OSError as error:
+        print(f"cpz-settings: cannot save settings: {error}", file=sys.stderr)
+        print(
+            "cpz-settings: ~/.config/cpz must be writable by the "
+            f"logged-in user (uid {os.getuid()}, HOME={os.environ.get('HOME', '?')})",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

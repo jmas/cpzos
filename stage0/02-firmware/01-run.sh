@@ -7,7 +7,7 @@ DOWNLOAD_DIR=$(mktemp -d "${ROOTFS_DIR}/var/tmp/cardputerzero-kernel.XXXXXX")
 trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
 MANIFEST="${PWD}/files/kernel-packages.sha256"
 
-while read -r checksum filename; do
+while read -r _ filename; do
     curl --fail --location --silent --show-error --retry 3 \
         --connect-timeout 30 --max-time 600 \
         "https://archive.raspberrypi.com/debian/pool/main/l/linux/${filename}" \

@@ -64,16 +64,16 @@ EOF
 			popd > /dev/null
 			log "End ${SUB_STAGE_DIR}/${i}-patches"
 		fi
-		if [ -x ${i}-run.sh ]; then
+		if [ -x "${i}-run.sh" ]; then
 			log "Begin ${SUB_STAGE_DIR}/${i}-run.sh"
-			./${i}-run.sh
+			"./${i}-run.sh"
 			log "End ${SUB_STAGE_DIR}/${i}-run.sh"
-		elif [ -f ${i}-run.sh ]; then
+		elif [ -f "${i}-run.sh" ]; then
 			log "Skip ${SUB_STAGE_DIR}/${i}-run.sh (not executable)"
 		fi
-		if [ -f ${i}-run-chroot.sh ]; then
+		if [ -f "${i}-run-chroot.sh" ]; then
 			log "Begin ${SUB_STAGE_DIR}/${i}-run-chroot.sh"
-			on_chroot < ${i}-run-chroot.sh
+			on_chroot < "${i}-run-chroot.sh"
 			log "End ${SUB_STAGE_DIR}/${i}-run-chroot.sh"
 		fi
 	done
@@ -155,9 +155,9 @@ fi
 
 export BASE_DIR
 
-if [ -f config ]; then
+if [ -f "${BASE_DIR}/config" ]; then
 	# shellcheck disable=SC1091
-	source config
+	source "${BASE_DIR}/config"
 fi
 
 while getopts "c:" flag
@@ -174,8 +174,8 @@ do
 done
 
 export PI_GEN=${PI_GEN:-pi-gen}
-export PI_GEN_REPO=${PI_GEN_REPO:-https://github.com/RPi-Distro/pi-gen}
-export PI_GEN_RELEASE=${PI_GEN_RELEASE:-Raspberry Pi reference}
+export PI_GEN_REPO=${PI_GEN_REPO:-https://github.com/CardputerZero/pi-gen}
+export PI_GEN_RELEASE=${PI_GEN_RELEASE:-CardputerZero CPZ}
 
 export ARCH=arm64
 export RELEASE=${RELEASE:-trixie} # Don't forget to update stage0/prerun.sh
@@ -243,6 +243,8 @@ export QUILT_NO_DIFF_TIMESTAMPS=1
 export QUILT_REFRESH_ARGS="-p ab"
 
 export CPZ_DEBUG_BOOT=${CPZ_DEBUG_BOOT:-0}
+export CPZ_HDMI_VIDEO=${CPZ_HDMI_VIDEO:-}
+export CPZ_DTOVERLAYS_REF=${CPZ_DTOVERLAYS_REF:-4f7aeee9fc103ebb03d22cac476bb191ecfb321e}
 
 # shellcheck source=scripts/common
 source "${SCRIPT_DIR}/common"
@@ -288,11 +290,6 @@ fi
 
 if [[ -n "${APT_PROXY}" ]] && ! curl --silent "${APT_PROXY}" >/dev/null ; then
 	echo "Could not reach APT_PROXY server: ${APT_PROXY}"
-	exit 1
-fi
-
-if [[ -n "${WPA_PASSWORD}" && ${#WPA_PASSWORD} -lt 8 || ${#WPA_PASSWORD} -gt 63  ]] ; then
-	echo "WPA_PASSWORD" must be between 8 and 63 characters
 	exit 1
 fi
 

@@ -1,0 +1,58 @@
+#!/bin/sh
+# Apply the selected theme's 16-colour palette to the Linux console (fbcon).
+#
+# The VT driver accepts the Linux OSC P sequence (ESC ] P nrrggbb) from the
+# tty owner, so this works without root. It changes the console background,
+# foreground and ANSI colours outside tmux as well as inside it.
+set -eu
+
+theme_dir=${CPZ_THEME_DIR:-/etc/cpz/themes}
+console=${CPZ_CONSOLE:-/dev/tty1}
+home=${HOME:-/root}
+user_settings=${XDG_CONFIG_HOME:-$home/.config}/cpz/settings.conf
+system_settings=/etc/cpz/settings.conf
+
+get() {
+	for file in "$user_settings" "$system_settings"; do
+		[ -r "$file" ] || continue
+		value=$(sed -n "s/^$1=//p" "$file" | tail -n 1)
+		[ -n "$value" ] && { printf '%s' "$value"; return 0; }
+	done
+	return 0
+}
+
+theme=$(get theme)
+case "$theme" in
+	'' | *[!a-zA-Z0-9_-]*) theme=cpz-tokyo-night ;;
+esac
+
+palette=$theme_dir/$theme.palette
+conf=$theme_dir/$theme.conf
+embedded=$(sed -n 's/^# palette //p' "$conf" 2>/dev/null || true)
+if [ -n "$embedded" ]; then
+	palette=$(mktemp)
+	trap 'rm -f "$palette"' EXIT
+	printf '%s\n' "$embedded" >"$palette"
+fi
+[ -r "$palette" ] || exit 0
+[ -w "$console" ] || exit 0
+
+{
+	while IFS='=' read -r index rgb; do
+		case "$index" in
+			'' | '#'*) continue ;;
+		esac
+		case "$index" in
+			*[!0-9]*) continue ;;
+		esac
+		case "$rgb" in
+			??????) ;;
+			*) continue ;;
+		esac
+		case "$rgb" in
+			*[!0-9a-fA-F]*) continue ;;
+		esac
+		[ "$index" -ge 0 ] && [ "$index" -le 15 ] || continue
+		printf '\033]P%X%s' "$index" "$rgb"
+	done <"$palette"
+} >"$console" 2>/dev/null || true

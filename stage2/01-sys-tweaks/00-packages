@@ -19,7 +19,8 @@ raspberrypi-sys-mods
 apt-listchanges
 usb-modeswitch
 libpam-chksshpwd
-rpi-update
+# rpi-update is deliberately absent: it would replace the kernel that the
+# out-of-tree CardputerZero display/keyboard modules were built against.
 libmtp-runtime
 rsync
 htop

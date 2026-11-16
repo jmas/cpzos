@@ -1,0 +1,126 @@
+#!/bin/sh
+# Update the CPZ status-bar connection indicators.
+#
+# Output is a compact string: E/E+ Ethernet present/connected, W/W+ Wi-Fi
+# enabled/connected, B/B+ Bluetooth powered/connected. Written to /run so the
+# per-second cpz-status command only has to read a file.
+set -eu
+
+out=""
+
+# --- Ethernet -------------------------------------------------------------
+eth_present=0
+eth_up=0
+for iface in /sys/class/net/*; do
+	[ -r "$iface/type" ] || continue
+	[ "$(cat "$iface/type" 2>/dev/null || echo 0)" = "1" ] || continue
+	# Wi-Fi interfaces are also ARPHRD_ETHER; skip those with a phy80211 link.
+	[ -e "$iface/phy80211" ] && continue
+	name=${iface##*/}
+	case "$name" in
+		lo | docker* | veth* | br-* | virbr* | tun* | tap* | wg* | tailscale* | zt*)
+			continue
+			;;
+	esac
+	eth_present=1
+	if [ "$(cat "$iface/carrier" 2>/dev/null || echo 0)" = "1" ]; then
+		eth_up=1
+	fi
+done
+if [ "$eth_present" = 1 ]; then
+	if [ "$eth_up" = 1 ]; then
+		out="E+"
+	else
+		out="E"
+	fi
+fi
+
+# --- Wi-Fi ----------------------------------------------------------------
+wifi_present=0
+wifi_up=0
+for iface in /sys/class/net/*; do
+	[ -e "$iface/phy80211" ] || continue
+	wifi_present=1
+	carrier=$(cat "$iface/carrier" 2>/dev/null || echo 0)
+	state=$(cat "$iface/operstate" 2>/dev/null || echo down)
+	if [ "$carrier" = "1" ] || [ "$state" = "up" ]; then
+		wifi_up=1
+	fi
+done
+
+wifi_on=0
+if [ "$wifi_present" = 1 ]; then
+	wifi_on=1
+	# rfkill can block the radio without removing the interface.
+	for rf in /sys/class/rfkill/rfkill*; do
+		[ -r "$rf/type" ] || continue
+		[ "$(cat "$rf/type" 2>/dev/null || true)" = "wlan" ] || continue
+		[ "$(cat "$rf/hard" 2>/dev/null || echo 0)" = "1" ] && wifi_on=0
+		[ "$(cat "$rf/soft" 2>/dev/null || echo 0)" = "1" ] && wifi_on=0
+	done
+	# NetworkManager's radio state is authoritative when available.
+	if command -v nmcli >/dev/null 2>&1; then
+		wifi_state=$(timeout 5 nmcli -t -f WIFI general 2>/dev/null | head -n 1 || true)
+		case "$wifi_state" in
+			WIFI:enabled) wifi_on=1 ;;
+			WIFI:disabled) wifi_on=0 ;;
+		esac
+		wifi_up=0
+		while IFS=: read -r _dev type state _conn; do
+			[ "$type" = "wifi" ] || continue
+			[ "$state" = "connected" ] && wifi_up=1
+		done <<EOF
+$(timeout 5 nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status 2>/dev/null || true)
+EOF
+	fi
+fi
+
+if [ "$wifi_present" = 1 ] && [ "$wifi_on" = 1 ]; then
+	if [ "$wifi_up" = 1 ]; then
+		out="${out}${out:+ }W+"
+	else
+		out="${out}${out:+ }W"
+	fi
+fi
+
+# --- Bluetooth ------------------------------------------------------------
+bt_present=0
+bt_on=0
+bt_up=0
+for hci in /sys/class/bluetooth/hci*; do
+	[ -e "$hci" ] && bt_present=1
+done
+if [ "$bt_present" = 1 ]; then
+	bt_on=1
+	for rf in /sys/class/rfkill/rfkill*; do
+		[ -r "$rf/type" ] || continue
+		[ "$(cat "$rf/type" 2>/dev/null || true)" = "bluetooth" ] || continue
+		[ "$(cat "$rf/hard" 2>/dev/null || echo 0)" = "1" ] && bt_on=0
+		[ "$(cat "$rf/soft" 2>/dev/null || echo 0)" = "1" ] && bt_on=0
+	done
+	if command -v bluetoothctl >/dev/null 2>&1; then
+		if timeout 5 bluetoothctl show 2>/dev/null | grep -q "Powered: yes"; then
+			bt_on=1
+		else
+			bt_on=0
+		fi
+		if [ -n "$(timeout 5 bluetoothctl devices Connected 2>/dev/null || true)" ]; then
+			bt_up=1
+		fi
+	fi
+fi
+
+if [ "$bt_present" = 1 ] && [ "$bt_on" = 1 ]; then
+	if [ "$bt_up" = 1 ]; then
+		out="${out}${out:+ }B+"
+	else
+		out="${out}${out:+ }B"
+	fi
+fi
+
+target=${CPZ_CONN_FILE:-/run/cpz-conn}
+tmp="${target}.$$"
+trap 'rm -f "$tmp"' EXIT
+printf '%s\n' "$out" >"$tmp"
+chmod 0644 "$tmp" 2>/dev/null || true
+mv "$tmp" "$target"

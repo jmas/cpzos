@@ -1,0 +1,6 @@
+[Unit]
+Description=Save the CPZ tmux session layout
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cpz-session-save-as-user

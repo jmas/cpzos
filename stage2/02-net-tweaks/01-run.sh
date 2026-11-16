@@ -11,7 +11,8 @@ for addr in 107d50c000.serial 3f215040.serial 20215040.serial fe215040.serial so
 	echo 0 > "${ROOTFS_DIR}/var/lib/systemd/rfkill/platform-${addr}:bluetooth"
 done
 
-if [ -v WPA_COUNTRY ]; then
+if [ -n "${WPA_COUNTRY:-}" ]; then
+	WPA_COUNTRY=$(printf '%s' "$WPA_COUNTRY" | tr '[:lower:]' '[:upper:]')
 	on_chroot <<- EOF
 		SUDO_USER="${FIRST_USER_NAME}" raspi-config nonint do_wifi_country "${WPA_COUNTRY}"
 	EOF

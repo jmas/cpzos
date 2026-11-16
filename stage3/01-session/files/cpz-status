@@ -1,0 +1,195 @@
+#!/bin/sh
+# Right-hand side of the CPZ status bar: optional audio volume, brightness,
+# battery and clock. Runs as a tmux #() command once per status-interval, so
+# keep it cheap:
+# the settings files are parsed in-process, without forking sed for every key.
+set -u
+
+home=${HOME:-/root}
+user_settings=${XDG_CONFIG_HOME:-$home/.config}/cpz/settings.conf
+system_settings=/etc/cpz/settings.conf
+
+show_battery=1
+show_volume=0
+show_brightness=0
+show_clock=1
+clock_24h=1
+show_date=0
+date_format=short
+show_conn=1
+show_eth=0
+show_wifi=1
+show_bt=1
+show_layout=1
+layout_active=us
+brightness=100
+
+load() {
+	[ -r "$1" ] || return 0
+	while IFS='=' read -r key value; do
+		value=${value%\"}
+		value=${value#\"}
+		case "$key" in
+			show_battery) show_battery=$value ;;
+			show_volume) show_volume=$value ;;
+			show_brightness) show_brightness=$value ;;
+			brightness) brightness=$value ;;
+			show_clock) show_clock=$value ;;
+			clock_24h) clock_24h=$value ;;
+			show_date) show_date=$value ;;
+			date_format) date_format=$value ;;
+			show_conn) show_conn=$value ;;
+			show_eth) show_eth=$value ;;
+			show_wifi) show_wifi=$value ;;
+			show_bt) show_bt=$value ;;
+			show_layout) show_layout=$value ;;
+			keyboard_layout_active) layout_active=$value ;;
+		esac
+	done <"$1"
+}
+
+# System defaults first, then the user file so it overrides them.
+load "$system_settings"
+load "$user_settings"
+
+out=
+
+# Current input language layout. cpz-keyboard-layout writes "cpz" to /run when
+# the internal map is loaded; the language selected in Settings still applies
+# (as the base for the internal overlay and for the next external keyboard), so
+# show that instead of a separate "CPZ" marker.
+if [ "$show_layout" = "1" ]; then
+	layout=$(head -n 1 "${CPZ_LAYOUT_FILE:-/run/cpz-layout.active}" 2>/dev/null || true)
+	case "$layout" in
+		cpz) layout=$layout_active ;;
+	esac
+	[ -n "$layout" ] || layout=$layout_active
+	case "$layout" in
+		'' | *[!a-zA-Z0-9_-]*) layout=us ;;
+	esac
+	layout=$(printf '%s' "$layout" | tr '[:lower:]' '[:upper:]')
+	case "$layout" in
+		CPZ) layout=US ;;
+	esac
+	out=$layout
+fi
+
+# Output volume as its own short token: V and one level digit from V0 to V4,
+# or VM when muted. It is kept apart from the battery percentage so the two
+# readings cannot be mixed up.
+if [ "$show_volume" = "1" ] && command -v wpctl >/dev/null 2>&1; then
+	vol=$(timeout 2 wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null | awk '
+		/MUTED/ { print "VM"; next }
+		$1 == "Volume:" {
+			level = int($2 * 100 + 0.5)
+			if (level <= 0) print "V0"
+			else if (level <= 25) print "V1"
+			else if (level <= 50) print "V2"
+			else if (level <= 75) print "V3"
+			else print "V4"
+		}
+	' 2>/dev/null || true)
+	[ -n "$vol" ] && out="${out}${out:+ }${vol}"
+fi
+
+# Panel brightness as B plus a level from B0 to B10. Prefer the live sysfs
+# value so the token follows the actual backlight and shows B0 when the panel
+# is off; fall back to the saved setting when no backlight is readable.
+if [ "$show_brightness" = "1" ]; then
+	percent=
+	for backlight in /sys/class/backlight/*; do
+		[ -r "$backlight/brightness" ] || continue
+		[ -r "$backlight/max_brightness" ] || continue
+		current=$(cat "$backlight/brightness" 2>/dev/null || true)
+		max=$(cat "$backlight/max_brightness" 2>/dev/null || true)
+		case "$current" in
+			'' | *[!0-9]*) continue ;;
+		esac
+		case "$max" in
+			'' | *[!0-9]* | 0) continue ;;
+		esac
+		percent=$((current * 100 / max))
+		break
+	done
+	case "$percent" in
+		'' | *[!0-9]*) percent=$brightness ;;
+	esac
+	case "$percent" in
+		'' | *[!0-9]*) percent=0 ;;
+	esac
+	[ "$percent" -ge 0 ] 2>/dev/null || percent=0
+	[ "$percent" -le 100 ] || percent=100
+	level=$(( (percent + 5) / 10 ))
+	[ "$level" -le 10 ] || level=10
+	out="${out}${out:+ }B${level}"
+fi
+
+if [ "$show_battery" = "1" ]; then
+	capacity=
+	status=
+	for supply in /sys/class/power_supply/*; do
+		[ -r "$supply/capacity" ] || continue
+		capacity=$(cat "$supply/capacity" 2>/dev/null) || continue
+		status=$(cat "$supply/status" 2>/dev/null || true)
+		break
+	done
+	if [ -n "$capacity" ]; then
+		case "$status" in
+			Charging) bat="${capacity}%+" ;;
+			*) bat="${capacity}%" ;;
+		esac
+		# Colour the level: theme colour while healthy, yellow when the
+		# pack is getting low, red when it is nearly flat. #[default]
+		# restores the bar's colour for the segments that follow.
+		case "$capacity" in
+			'' | *[!0-9]*) ;;
+			*)
+				if [ "$capacity" -le 20 ]; then
+					bat="#[fg=red]${bat}#[default]"
+				elif [ "$capacity" -le 40 ]; then
+					bat="#[fg=yellow]${bat}#[default]"
+				fi
+				;;
+		esac
+		out="${out}${out:+ }${bat}"
+	fi
+fi
+
+conn=""
+if [ "$show_conn" = "1" ]; then
+	# cpz-conn-status caches one "E/E+ W/W+ B/B+" string. Filter it here so
+	# each indicator can be shown or hidden on its own (Ethernet is off by
+	# default; the cached file is shared by every user).
+	cached=$(head -n 1 "${CPZ_CONN_FILE:-/run/cpz-conn}" 2>/dev/null || true)
+	for token in $cached; do
+		case "$token" in
+			E*) [ "$show_eth" = "1" ] || continue ;;
+			W*) [ "$show_wifi" = "1" ] || continue ;;
+			B*) [ "$show_bt" = "1" ] || continue ;;
+		esac
+		conn="${conn}${conn:+ }${token}"
+	done
+fi
+[ -n "$conn" ] && out="${out}${out:+ }${conn}"
+
+if [ "$show_date" = "1" ]; then
+	case "$date_format" in
+		iso) day=$(date +%Y-%m-%d) ;;
+		eu) day=$(date +%d.%m.%Y) ;;
+		us) day=$(date +%m/%d/%Y) ;;
+		*) day=$(date +%m-%d) ;;
+	esac
+	out="${out}${out:+ }${day}"
+fi
+
+if [ "$show_clock" = "1" ]; then
+	if [ "$clock_24h" = "1" ]; then
+		now=$(date +%H:%M)
+	else
+		now=$(date +%I:%M\ %p)
+		now=${now#0}
+	fi
+	out="${out}${out:+ }${now}"
+fi
+
+printf '%s' "$out"

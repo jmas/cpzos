@@ -1,0 +1,30 @@
+#!/bin/sh
+# Require a password change before the CPZ session starts while the factory
+# password is still in use.
+#
+# The build records /etc/shadow's mtime in /etc/cpz/shadow-mtime. Imager,
+# rpi-preseed, passwd, usermod and chage all update that mtime, so any real
+# password change clears the gate automatically.
+set -u
+
+stamp=/etc/cpz/shadow-mtime
+[ -r "$stamp" ] || exit 0
+[ -r /etc/shadow ] || exit 0
+command -v passwd >/dev/null 2>&1 || exit 0
+
+current=$(stat -c %Y /etc/shadow 2>/dev/null || true)
+[ -n "$current" ] || exit 0
+[ "$current" = "$(cat "$stamp" 2>/dev/null || true)" ] || exit 0
+
+clear
+printf 'CPZ: the factory password is still in use.\n\n'
+printf 'Set a new password for this account before the session starts.\n'
+while :; do
+	if passwd; then
+		clear
+		printf 'Password updated.\n'
+		exit 0
+	fi
+	printf '\nPassword not changed. Press Enter to try again, or Ctrl+C to log out.\n'
+	read -r _ || exit 1
+done

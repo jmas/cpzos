@@ -1,0 +1,7 @@
+[Unit]
+Description=Select CPZ or standard layout for internal and external keyboards
+After=systemd-udevd.service keyboard-setup.service console-setup.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cpz-keyboard-layout

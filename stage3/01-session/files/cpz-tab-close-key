@@ -1,0 +1,38 @@
+#!/bin/sh
+# Alt+W / Ctrl-b & entry point: check the protected tabs before prompting.
+#
+# confirm-before needs a client context; run-shell does not have one, so the
+# prompt is sent to an explicitly listed client.
+set -eu
+
+session=${1:-main}
+tmux has-session -t "=$session" 2>/dev/null || exit 0
+
+tab=$(printf '\t')
+windows=$(tmux list-windows -t "=$session" -F \
+	"#{window_id}${tab}#{window_index}${tab}#{window_name}${tab}#{window_active}${tab}#{?@cpz_main,1,0}${tab}#{?@cpz_settings,1,0}")
+
+current=$(printf '%s\n' "$windows" | awk -F "$tab" '$4 == 1 { print; exit }')
+[ -n "$current" ] || exit 0
+
+IFS=$tab read -r _window_id _index name _active is_main is_settings <<EOF
+$current
+EOF
+
+notice=
+if [ "$is_settings" = 1 ] || [ "$name" = settings ]; then
+	notice="Settings stays open"
+elif [ "$is_main" = 1 ]; then
+	notice="Tab 1 is the shell tab"
+fi
+
+client=$(tmux list-clients -t "=$session" -F '#{client_name}' | head -n 1)
+[ -n "$client" ] || exit 0
+
+if [ -n "$notice" ]; then
+	tmux display-message -c "$client" -d 3000 "$notice"
+	exit 0
+fi
+
+tmux confirm-before -t "$client" -p "Close tab? (y/n)" \
+	'run-shell -b /usr/local/bin/cpz-tab-close'

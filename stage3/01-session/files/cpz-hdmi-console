@@ -1,0 +1,974 @@
+#!/bin/sh
+# Reconcile the CPZ console (tty1) with the attached displays.
+#
+# This runs from a two-second timer and is intentionally idempotent. A matching
+# state file is not treated as proof that the console is still correct: every
+# tick measures the real console geometry (rows/columns from the VT, which
+# depend on both the framebuffer mode and the console font) and compares it
+# with the geometry the current framebuffer and selected font should have. The
+# HDMI font is sized (and scaled when needed) from the real framebuffer, so DRM
+# fallback modes still get a usable grid. Anything that resets the console
+# behind our back - a DRM modeset, fbcon falling back to 8x16, a VT switch - is
+# corrected on the next tick. That is what keeps the scale stable instead of
+# needing a manual fix.
+#
+# Policy:
+#   HDMI ready (connected + EDID, or a pinned video= mode) -> tty1 on HDMI
+#   HDMI absent or EDID unreadable and unpinned -> tty1 on the panel
+#   display=panel|hdmi in settings overrides the automatic choice
+#   --panel / --hdmi override settings for one run; --force re-applies
+#   --recover cycles HDMI DPMS off/on, then re-applies the console settings
+#   --status prints the current state without changing anything
+#
+# fbcon maps consoles to framebuffers and does not clone one console to both
+# outputs, so moving the active console is still the way to switch outputs.
+set -eu
+
+force=0
+status_mode=0
+recover=0
+override=""
+override_source=""
+for arg in "$@"; do
+	case "$arg" in
+		--force) force=1 ;;
+		--status) status_mode=1 ;;
+		--recover)
+			recover=1
+			force=1
+			;;
+		--panel)
+			override=panel
+			override_source=cli
+			force=1
+			;;
+		--hdmi)
+			override=hdmi
+			override_source=cli
+			force=1
+			;;
+	esac
+done
+
+con=1
+panel_font=/usr/share/consolefonts/Lat15-Terminus12x6.psf.gz
+panel_font_large=/usr/share/consolefonts/Lat15-Terminus16.psf.gz
+# HDMI base fonts, largest to smallest. Auto mode aims for about 25 rows: that
+# is close to a classic 80x24 terminal and keeps the status bar and the
+# Settings TUI comfortable on a TV or a monitor viewed from across a desk. The
+# packaged Terminus family stops at 16x32, which is already too small on a
+# 1080p+ screen, so auto also scales a base font up at runtime with
+# cpz-font-scale. The font is still derived from the real framebuffer height,
+# so a DRM fallback mode gets the same readable row count instead of inheriting
+# the 1080p cell size. font_hdmi in settings can pin a cell size instead.
+hdmi_font_32=/usr/share/consolefonts/Lat15-Terminus32x16.psf.gz
+hdmi_font_28=/usr/share/consolefonts/Lat15-Terminus28x14.psf.gz
+hdmi_font_24=/usr/share/consolefonts/Lat15-Terminus24x12.psf.gz
+hdmi_font_22=/usr/share/consolefonts/Lat15-Terminus22x11.psf.gz
+hdmi_font_20=/usr/share/consolefonts/Lat15-Terminus20x10.psf.gz
+hdmi_font_18=/usr/share/consolefonts/Lat15-Terminus18x10.psf.gz
+# Auto target. The chooser picks the cell size (including integer-scaled
+# Terminus sizes) whose grid is closest to this many rows.
+hdmi_target_rows=25
+font_scale=/usr/local/sbin/cpz-font-scale
+font_cache=/run/cpz-console-fonts
+# Cell size of the Terminus fonts (width x height). The console geometry is
+# derived from the active framebuffer size and these values.
+panel_cell_w=6
+panel_cell_h=12
+state_file=/run/cpz-hdmi-console.state
+pending_file=/run/cpz-hdmi-console.pending
+settle_file=/run/cpz-hdmi-console.settle
+edid_warn_file=/run/cpz-hdmi-console.edid-empty
+fallback_file=/run/cpz-hdmi-console.fallback
+panel_off_file=/run/cpz-hdmi-console.panel-off
+panel_init_file=/run/cpz-hdmi-console.panel-init
+blank_state_file=/run/cpz-hdmi-console.blank
+# Samples needed before moving the session *to* HDMI. A monitor can pulse HPD
+# while it powers up or renegotiates its mode, so that direction is debounced.
+# Returning to the panel is never debounced: the panel is always usable and its
+# backlight is off while HDMI is active, so a delay looks like a dead machine.
+hdmi_debounce=2
+
+first_home=$(getent passwd 1000 2>/dev/null | cut -d: -f6 || true)
+[ -n "$first_home" ] || first_home=/root
+
+log() {
+	command -v logger >/dev/null 2>&1 && logger -t cpz-hdmi-console "$*" || true
+}
+
+get_setting() {
+	for file in "$first_home/.config/cpz/settings.conf" /etc/cpz/settings.conf; do
+		[ -r "$file" ] || continue
+		value=$(sed -n "s/^$1=//p" "$file" | tail -n 1)
+		[ -n "$value" ] && { printf '%s' "$value"; return 0; }
+	done
+	return 0
+}
+
+fb_size() {
+	size=$(cat "/sys/class/graphics/fb$1/virtual_size" 2>/dev/null || true)
+	case "$size" in
+		[0-9]*,[0-9]*) printf '%s' "$size" ;;
+	esac
+}
+
+fb_width() {
+	size=$(fb_size "$1")
+	printf '%s' "${size%%,*}"
+}
+
+fb_height() {
+	size=$(fb_size "$1")
+	printf '%s' "${size##*,}"
+}
+
+fb_blank_level() {
+	level=$(cat "/sys/class/graphics/fb$1/blank" 2>/dev/null || echo 0)
+	case "$level" in
+		'' | *[!0-9]*) level=0 ;;
+	esac
+	printf '%s' "$level"
+}
+
+# stty prints "rows cols" for the given terminal.
+console_geometry() {
+	stty -F "/dev/tty$con" size 2>/dev/null || true
+}
+
+expected_geometry() {
+	# $1 = framebuffer, $2 = cell width, $3 = cell height
+	w=$(fb_width "$1")
+	h=$(fb_height "$1")
+	[ -n "$w" ] && [ -n "$h" ] || return 0
+	printf '%s %s' "$((h / $3))" "$((w / $2))"
+}
+
+choose_font() {
+	# $1 = font path, $2 = cell width, $3 = cell height
+	[ -f "$1" ] || return 1
+	font=$1
+	cell_w=$2
+	cell_h=$3
+}
+
+make_scaled_font() {
+	# $1 = base font, $2/$3 = base cell w/h, $4/$5 = bigger target cell w/h.
+	# The result is cached in /run for the rest of the boot; /run is cleared
+	# on reboot, so an updated base font or helper cannot leave a stale copy
+	# behind. A missing helper or a failed conversion makes the caller fall
+	# back to the packaged font instead of leaving the console without one.
+	[ -f "$1" ] && [ -x "$font_scale" ] || return 1
+	name=${1##*/}
+	name=${name%.psf.gz}
+	target="${4}x${5}"
+	out=$font_cache/$name-$target.psf.gz
+	if [ ! -s "$out" ]; then
+		mkdir -p "$font_cache" 2>/dev/null || return 1
+		"$font_scale" "$1" "$target" "$out" >/dev/null 2>&1 || {
+			rm -f "$out"
+			return 1
+		}
+	fi
+	[ -s "$out" ] || return 1
+	font=$out
+	cell_w=$4
+	cell_h=$5
+}
+
+# Each preference falls back to the next smaller packaged size if a font is
+# missing. This also keeps a botched font package from leaving tty1 with no
+# usable console font.
+use_font_32() { choose_font "$hdmi_font_32" 16 32 || use_font_28; }
+use_font_28() { choose_font "$hdmi_font_28" 14 28 || use_font_24; }
+use_font_24() { choose_font "$hdmi_font_24" 12 24 || use_font_22; }
+use_font_22() { choose_font "$hdmi_font_22" 11 22 || use_font_20; }
+use_font_20() { choose_font "$hdmi_font_20" 10 20 || use_font_18; }
+use_font_18() { choose_font "$hdmi_font_18" 10 18 || use_font_12; }
+use_font_12() {
+	choose_font "$panel_font" 6 12 ||
+		{ font=$panel_font; cell_w=6; cell_h=12; }
+}
+use_panel_normal() {
+	choose_font "$panel_font" "$panel_cell_w" "$panel_cell_h" ||
+		{ font=$panel_font; cell_w=6; cell_h=12; }
+}
+use_panel_large() {
+	choose_font "$panel_font_large" 8 16 || use_panel_normal
+}
+
+# Fixed scaled sizes exposed in Settings -> HDMI Text Size. The base font is
+# the Terminus size they are derived from; a missing helper falls back to that
+# smaller packaged font.
+use_font_20x40() { make_scaled_font "$hdmi_font_20" 10 20 20 40 || use_font_20; }
+use_font_24x48() { make_scaled_font "$hdmi_font_24" 12 24 24 48 || use_font_24; }
+use_font_28x56() { make_scaled_font "$hdmi_font_28" 14 28 28 56 || use_font_28; }
+use_font_32x64() { make_scaled_font "$hdmi_font_32" 16 32 32 64 || use_font_32; }
+
+# Native-size fallback for auto mode when cpz-font-scale is unavailable. The
+# boundaries are the midpoints between the packaged PSF2 Terminus cell heights
+# (12, 18, 20, 22, 24, 28, 32) multiplied by the old ~33-row target. The PSF1
+# 8x14/8x16 fonts are deliberately absent: cpz-font-blocks cannot patch them.
+select_native_hdmi_font() {
+	height=$(fb_height "$target")
+	case "$height" in
+		'' | *[!0-9]*) height=0 ;;
+	esac
+	if [ "$height" -le 0 ]; then
+		# Geometry is not available yet. Prefer a small font so a transient
+		# fallback mode cannot produce a nearly unusable 40-column console.
+		use_font_18
+	elif [ "$height" -le 495 ]; then
+		use_font_12
+	elif [ "$height" -le 627 ]; then
+		use_font_18
+	elif [ "$height" -le 693 ]; then
+		use_font_20
+	elif [ "$height" -le 759 ]; then
+		use_font_22
+	elif [ "$height" -le 858 ]; then
+		use_font_24
+	elif [ "$height" -le 990 ]; then
+		use_font_28
+	else
+		use_font_32
+	fi
+}
+
+select_auto_hdmi_font() {
+	# Pick the cell size whose grid is closest to hdmi_target_rows. Only
+	# integer scale factors are considered: duplicating whole pixels keeps
+	# Terminus crisp, while a fractional scale would make some stems wider
+	# than others. Factor 1 is a normal packaged font and needs no helper.
+	height=$(fb_height "$target")
+	width=$(fb_width "$target")
+	case "$height" in
+		'' | *[!0-9]*) height=0 ;;
+	esac
+	case "$width" in
+		'' | *[!0-9]*) width=0 ;;
+	esac
+	if [ "$height" -le 0 ] || [ "$width" -le 0 ]; then
+		# Geometry is not available yet. Prefer a small font so a transient
+		# fallback mode cannot produce a nearly unusable 40-column console.
+		use_font_18
+		return 0
+	fi
+
+	best_base=""
+	best_diff=999
+	best_cols=0
+	for spec in \
+		"$hdmi_font_32 16 32" \
+		"$hdmi_font_28 14 28" \
+		"$hdmi_font_24 12 24" \
+		"$hdmi_font_22 11 22" \
+		"$hdmi_font_20 10 20" \
+		"$hdmi_font_18 10 18" \
+		"$panel_font 6 12"; do
+		# shellcheck disable=SC2086  # split the "<path> <w> <h>" spec on purpose
+		set -- $spec
+		base=$1
+		base_w=$2
+		base_h=$3
+		[ -f "$base" ] || continue
+		factor=1
+		while [ "$factor" -le 4 ]; do
+			cw=$((base_w * factor))
+			ch=$((base_h * factor))
+			[ "$ch" -le "$height" ] || break
+			rows=$((height / ch))
+			cols=$((width / cw))
+			[ "$rows" -ge 1 ] && [ "$cols" -ge 1 ] || break
+			if [ "$rows" -ge "$hdmi_target_rows" ]; then
+				diff=$((rows - hdmi_target_rows))
+			else
+				diff=$((hdmi_target_rows - rows))
+			fi
+			if [ -z "$best_base" ] || [ "$diff" -lt "$best_diff" ] ||
+				{ [ "$diff" -eq "$best_diff" ] &&
+					[ "$cols" -gt "$best_cols" ]; }; then
+				best_base=$base
+				best_src_w=$base_w
+				best_src_h=$base_h
+				best_w=$cw
+				best_h=$ch
+				best_diff=$diff
+				best_cols=$cols
+			fi
+			factor=$((factor + 1))
+		done
+	done
+
+	if [ -n "$best_base" ]; then
+		if [ "$best_w" = "$best_src_w" ] &&
+			[ "$best_h" = "$best_src_h" ]; then
+			font=$best_base
+			cell_w=$best_src_w
+			cell_h=$best_src_h
+			return 0
+		fi
+		make_scaled_font "$best_base" "$best_src_w" "$best_src_h" \
+			"$best_w" "$best_h" && return 0
+	fi
+	# Scaling is unavailable or every candidate failed. Keep the old
+	# packaged-size behaviour rather than leaving the console with no font.
+	select_native_hdmi_font
+}
+
+select_console_font() {
+	if [ "$target" != "$hdmi_fb" ]; then
+		case "$(get_setting font_panel)" in
+			8x16) use_panel_large ;;
+			*) use_panel_normal ;;
+		esac
+		return 0
+	fi
+
+	# An explicit size in Settings pins the font. Scaled sizes live above the
+	# packaged Terminus range; a failed conversion falls back to the base
+	# packaged size. Odd values fall through to automatic selection.
+	case "$(get_setting font_hdmi)" in
+		32x64) use_font_32x64; return 0 ;;
+		28x56) use_font_28x56; return 0 ;;
+		24x48) use_font_24x48; return 0 ;;
+		20x40) use_font_20x40; return 0 ;;
+		16x32) use_font_32; return 0 ;;
+		14x28) use_font_28; return 0 ;;
+		12x24) use_font_24; return 0 ;;
+		11x22) use_font_22; return 0 ;;
+		10x20) use_font_20; return 0 ;;
+		10x18) use_font_18; return 0 ;;
+		6x12) use_font_12; return 0 ;;
+	esac
+
+	select_auto_hdmi_font
+}
+
+hdmi_connected() {
+	for file in /sys/class/drm/card*-HDMI-A-*/status; do
+		[ -r "$file" ] || continue
+		[ "$(cat "$file" 2>/dev/null || true)" = "connected" ] && return 0
+	done
+	return 1
+}
+
+# Dell monitors often keep HPD asserted in standby while DDC/EDID is not
+# readable. Switching to such a connector would blank the console on a dead
+# screen, so auto mode requires a real EDID unless the kernel command line pins
+# a mode. An explicit display=hdmi still overrides this.
+hdmi_edid_size() {
+	for status_file in /sys/class/drm/card*-HDMI-A-*/status; do
+		[ -r "$status_file" ] || continue
+		[ "$(cat "$status_file" 2>/dev/null || true)" = "connected" ] ||
+			continue
+		edid=${status_file%/status}/edid
+		[ -r "$edid" ] || continue
+		size=$(wc -c <"$edid" 2>/dev/null | tr -d '[:space:]')
+		case "$size" in
+			'' | *[!0-9]*) size=0 ;;
+		esac
+		[ "$size" -ge 128 ] && { printf '%s' "$size"; return 0; }
+	done
+	return 0
+}
+
+hdmi_edid_ok() {
+	size=$(hdmi_edid_size)
+	case "$size" in
+		'' | *[!0-9]*) return 1 ;;
+	esac
+	[ "$size" -ge 128 ]
+}
+
+# First video= token on a connected HDMI connector that pins a real mode. A
+# build-time pin (CPZ_HDMI_VIDEO) is an explicit decision to stop depending on
+# the monitor's EDID: without this, a Dell that drops DDC after boot would keep
+# being pushed back to the panel, and a reboot with an empty EDID would land on
+# the 1024x768 fallback. :D / :d force HPD instead of a mode and do not count.
+hdmi_pinned_token() {
+	cmdline=$(cat /proc/cmdline 2>/dev/null || true)
+	[ -n "$cmdline" ] || return 0
+	for status_file in /sys/class/drm/card*-HDMI-A-*/status; do
+		[ -r "$status_file" ] || continue
+		[ "$(cat "$status_file" 2>/dev/null || true)" = "connected" ] ||
+			continue
+		connector=${status_file%/status}
+		connector=${connector##*/}
+		connector=${connector#*-}
+		for token in $cmdline; do
+			case "$token" in
+				"video=$connector:"*) ;;
+				*) continue ;;
+			esac
+			spec=${token#"video=$connector:"}
+			case "$spec" in
+				[0-9]*x[0-9]*)
+					printf '%s' "$token"
+					return 0
+					;;
+			esac
+		done
+	done
+	return 0
+}
+
+hdmi_mode_pinned() {
+	[ -n "$(hdmi_pinned_token)" ]
+}
+
+hdmi_ready() {
+	hdmi_edid_ok && return 0
+	hdmi_mode_pinned
+}
+
+# Output policy, kept pure so the tests can exercise every branch without a
+# framebuffer:
+#   decide_target <override> <connected 0|1> <ready 0|1> <hdmi-fb> <panel-fb>
+# Prints "hdmi" or "panel".
+#
+# The default follows a monitor only when its EDID is readable (or a mode is
+# pinned); display=panel forces the panel, display=hdmi falls back to the panel
+# while no monitor is connected instead of blanking the console.
+decide_target() {
+	dt_override=$1
+	dt_connected=$2
+	dt_ready=$3
+	dt_hdmi=$4
+	dt_panel=$5
+	if [ "$dt_ready" = 1 ] && [ "$dt_hdmi" != "$dt_panel" ]; then
+		dt_target=hdmi
+	else
+		dt_target=panel
+	fi
+	case "$dt_override" in
+		panel) dt_target=panel ;;
+		hdmi)
+			if [ "$dt_connected" = 1 ] && [ "$dt_hdmi" != "$dt_panel" ]; then
+				dt_target=hdmi
+			else
+				dt_target=panel
+			fi
+			;;
+	esac
+	printf '%s' "$dt_target"
+}
+
+# Why the automatic choice picked its target, for --status. Kept separate from
+# hdmi_ready() so the reason is visible without changing the decision.
+auto_reason() {
+	if [ "$hdmi_fb" = "$panel_fb" ]; then
+		printf 'no separate HDMI framebuffer'
+	elif ! hdmi_connected; then
+		printf 'HDMI disconnected'
+	elif hdmi_edid_ok; then
+		printf 'EDID readable'
+	elif hdmi_mode_pinned; then
+		printf 'pinned video= mode'
+	else
+		printf 'HDMI connected, EDID unreadable'
+	fi
+}
+
+# First mode advertised by a connected HDMI connector. The kernel lists the
+# preferred mode first for a monitor with a valid EDID.
+hdmi_preferred_mode() {
+	for status_file in /sys/class/drm/card*-HDMI-A-*/status; do
+		[ -r "$status_file" ] || continue
+		[ "$(cat "$status_file" 2>/dev/null || true)" = "connected" ] ||
+			continue
+		modes=${status_file%/status}/modes
+		[ -r "$modes" ] || continue
+		first=$(head -n 1 "$modes" 2>/dev/null || true)
+		case "$first" in
+			[0-9]*x[0-9]*)
+				printf '%s' "$first"
+				return 0
+				;;
+		esac
+	done
+	return 0
+}
+
+set_fb_blank() {
+	path="/sys/class/graphics/fb$1/blank"
+	[ -w "$path" ] || return 0
+	current=$(cat "$path" 2>/dev/null || true)
+	[ "$current" = "$2" ] || printf '%s' "$2" >"$path" 2>/dev/null || true
+}
+
+unblank_fb() {
+	set_fb_blank "$1" 0
+}
+
+clear_fb() {
+	# Paint the framebuffer black without changing its blank/DPMS state.
+	stride=$(cat "/sys/class/graphics/fb$1/stride" 2>/dev/null || true)
+	height=$(fb_height "$1")
+	case "$stride$height" in
+		'' | *[!0-9]*) return 0 ;;
+	esac
+	bytes=$((stride * height))
+	[ "$bytes" -gt 0 ] && [ "$bytes" -le $((32 * 1024 * 1024)) ] || return 0
+	dd if=/dev/zero of="/dev/fb$1" bs="$bytes" count=1 2>/dev/null || true
+}
+
+set_panel_brightness() {
+	# $1 = percent (1-100), or 0 to switch the backlight off.
+	percent=$1
+	for backlight in /sys/class/backlight/*; do
+		[ -w "$backlight/brightness" ] || continue
+		max=$(cat "$backlight/max_brightness" 2>/dev/null || echo 0)
+		[ "$max" -gt 0 ] 2>/dev/null || continue
+		if [ "$percent" -le 0 ]; then
+			value=0
+		else
+			value=$((percent * max / 100))
+			[ "$value" -ge 1 ] || value=1
+		fi
+		current=$(cat "$backlight/brightness" 2>/dev/null || true)
+		[ "$current" = "$value" ] || printf '%s' "$value" \
+			>"$backlight/brightness" 2>/dev/null || true
+	done
+}
+
+set_panel_power() {
+	# 0 = on, 4 = off (FB_BLANK_POWERDOWN). Not every driver exposes it.
+	for backlight in /sys/class/backlight/*; do
+		[ -w "$backlight/bl_power" ] || continue
+		current=$(cat "$backlight/bl_power" 2>/dev/null || true)
+		[ "$current" = "$1" ] || printf '%s' "$1" \
+			>"$backlight/bl_power" 2>/dev/null || true
+	done
+}
+
+panel_display_on() {
+	unblank_fb "$panel_fb"
+	set_panel_power 0
+	percent=$(get_setting brightness)
+	case "$percent" in
+		'' | *[!0-9]*) percent=100 ;;
+	esac
+	[ "$percent" -ge 1 ] || percent=1
+	[ "$percent" -le 100 ] || percent=100
+	set_panel_brightness "$percent"
+	rm -f "$panel_off_file"
+	touch "$panel_init_file" 2>/dev/null || true
+}
+
+panel_display_off() {
+	# Clear the stale image only when the panel was actually lit; this is the
+	# first tick after switching to HDMI, not every two seconds.
+	was_on=0
+	for backlight in /sys/class/backlight/*; do
+		[ -r "$backlight/brightness" ] || continue
+		[ "$(cat "$backlight/brightness" 2>/dev/null || true)" = 0 ] ||
+			was_on=1
+	done
+	[ "$was_on" = 0 ] || clear_fb "$panel_fb"
+	set_panel_brightness 0
+	set_panel_power 4
+	touch "$panel_off_file" 2>/dev/null || true
+}
+
+# Ask tmux to re-fit every window to the current console size. The console
+# can change size without tmux re-reading it after a mode switch.
+refresh_tmux() {
+	[ -n "$first_home" ] || return 0
+	command -v runuser >/dev/null 2>&1 || return 0
+	user=$(getent passwd 1000 2>/dev/null | cut -d: -f1 || true)
+	[ -n "$user" ] || return 0
+	# shellcheck disable=SC2016  # $window is expanded inside the target shell
+	runuser -u "$user" -- env HOME="$first_home" sh -c '
+		for window in $(tmux list-windows -t =main -F "#{window_id}" 2>/dev/null); do
+			tmux resize-window -A -t "$window" 2>/dev/null || true
+		done
+		tmux refresh-client -S 2>/dev/null || true
+	' 2>/dev/null || true
+}
+
+# Tests source the file with CPZ_HDMI_CONSOLE_LIB=1 to exercise the helpers
+# above without touching the live console. Everything below only runs when the
+# timer or a udev rule executes the script.
+if [ "${CPZ_HDMI_CONSOLE_LIB:-0}" = 1 ]; then
+	return 0
+fi
+
+# Identify the panel and HDMI framebuffers by driver name. Fall back to the
+# mapping used by fbcon=map:10 on this board: HDMI=fb0, panel=fb1.
+hdmi_fb=""
+panel_fb=""
+for fb in /sys/class/graphics/fb[0-9]*; do
+	[ -r "$fb/name" ] || continue
+	number=${fb##*fb}
+	name=$(cat "$fb/name" 2>/dev/null || true)
+	case "$name" in
+		*vc4* | *drm* | *HDMI* | *hdmi*) hdmi_fb=$number ;;
+		*) panel_fb=$number ;;
+	esac
+done
+[ -n "$hdmi_fb" ] || hdmi_fb=0
+[ -n "$panel_fb" ] || panel_fb=1
+
+# A Dell monitor in standby can keep HPD high while its EDID is unreadable.
+# Auto mode stays on the panel in that case; display=hdmi/--hdmi still forces
+# the switch for a monitor that really is usable but does not expose EDID.
+connected=0
+hdmi_connected && connected=1
+ready=0
+hdmi_ready && ready=1
+if [ "$connected" = 1 ] && [ "$ready" = 0 ]; then
+	if [ ! -e "$edid_warn_file" ]; then
+		log "HDMI is connected but EDID is empty; auto keeps the panel (pin video=HDMI-A-1:<mode> or set display=hdmi)"
+		touch "$edid_warn_file" 2>/dev/null || true
+	fi
+else
+	rm -f "$edid_warn_file"
+fi
+
+# Settings can force Auto/Panel/HDMI; CLI --panel/--hdmi still wins. A user
+# choice is applied immediately instead of waiting for the hotplug debounce.
+if [ -z "$override" ]; then
+	display=$(get_setting display)
+	case "$display" in
+		panel | hdmi)
+			override=$display
+			override_source=settings
+			;;
+	esac
+fi
+
+target_name=$(decide_target "$override" "$connected" "$ready" \
+	"$hdmi_fb" "$panel_fb")
+if [ "$target_name" = hdmi ]; then
+	target=$hdmi_fb
+else
+	target=$panel_fb
+fi
+
+# Manual recovery for a monitor that came back from standby with a blank or
+# stale link. Cycling DPMS on the connector forces a CRTC re-enable; the usual
+# mapping/font reconciliation below then runs.
+if [ "$recover" = 1 ]; then
+	if [ "$target" = "$hdmi_fb" ]; then
+		for dpms in /sys/class/drm/card*-HDMI-A-*/dpms; do
+			[ -w "$dpms" ] || continue
+			printf 'Off' >"$dpms" 2>/dev/null || true
+		done
+		sleep 1
+		for dpms in /sys/class/drm/card*-HDMI-A-*/dpms; do
+			[ -w "$dpms" ] || continue
+			printf 'On' >"$dpms" 2>/dev/null || true
+		done
+		sleep 1
+		log "cycled HDMI DPMS on fb$target"
+	else
+		log "recover requested but HDMI is not the active target"
+	fi
+fi
+
+# State: "<fb> <fb-size> <rows> <cols> <attempts>". The recorded console
+# geometry lets us detect a mapping/font reset without assuming how fbcon
+# rounds the size.
+last_target=""
+last_size=""
+last_rows=""
+last_cols=""
+last_attempts=0
+if [ -r "$state_file" ]; then
+	read -r last_target last_size last_rows last_cols last_attempts \
+		<"$state_file" || true
+fi
+case "$last_target" in
+	'' | *[!0-9]*) last_target="" ;;
+esac
+
+target_size=$(fb_size "$target")
+select_console_font
+candidate="$target:$target_size"
+
+# A small fallback mode looks like a scale problem even with the right font.
+# Log it once per size and point at the build-time mode pin.
+if [ "$target" = "$hdmi_fb" ] && [ -n "$target_size" ]; then
+	preferred=$(hdmi_preferred_mode)
+	cur_w=${target_size%%,*}
+	cur_h=${target_size##*,}
+	pref_w=${preferred%%x*}
+	pref_h=${preferred#*x}
+	pref_h=${pref_h%%[!0-9]*}
+	case "$cur_w$cur_h$pref_w$pref_h" in
+		'' | *[!0-9]*) ;;
+		*)
+			if [ $((cur_w * cur_h)) -le $((1024 * 768)) ] &&
+				[ $((pref_w * pref_h)) -ge $((1024 * 768)) ]; then
+				if [ "$(cat "$fallback_file" 2>/dev/null || true)" != \
+					"${cur_w}x${cur_h}" ]; then
+					log "HDMI is ${cur_w}x${cur_h}, monitor prefers ${preferred}; using ${font##*/}; pin CPZ_HDMI_VIDEO/video="
+					printf '%s\n' "${cur_w}x${cur_h}" \
+						>"$fallback_file" 2>/dev/null || true
+				fi
+			else
+				rm -f "$fallback_file"
+			fi
+			;;
+	esac
+fi
+
+if [ "$status_mode" = 1 ]; then
+	display=$(get_setting display)
+	[ -n "$display" ] || display=auto
+	printf 'settings display : %s\n' "$display"
+	font_panel=$(get_setting font_panel)
+	font_hdmi=$(get_setting font_hdmi)
+	[ -n "$font_panel" ] || font_panel=6x12
+	[ -n "$font_hdmi" ] || font_hdmi=auto
+	printf 'settings font    : panel=%s hdmi=%s\n' "$font_panel" "$font_hdmi"
+	if hdmi_connected; then
+		printf 'HDMI             : connected\n'
+	else
+		printf 'HDMI             : disconnected\n'
+	fi
+	edid_size=$(hdmi_edid_size)
+	[ -n "$edid_size" ] || edid_size=0
+	printf 'HDMI EDID        : %s bytes\n' "$edid_size"
+	modes=$(cat /sys/class/drm/card*-HDMI-A-*/modes 2>/dev/null |
+		head -n 4 | tr '\n' ' ')
+	printf 'HDMI modes       : %s\n' "${modes:-none}"
+	preferred=$(hdmi_preferred_mode)
+	[ -n "$preferred" ] || preferred=none
+	printf 'HDMI preferred   : %s\n' "$preferred"
+	pinned=$(hdmi_pinned_token)
+	printf 'HDMI pin         : %s\n' "${pinned:-none}"
+	for fb in /sys/class/graphics/fb[0-9]*; do
+		[ -r "$fb/name" ] || continue
+		number=${fb##*fb}
+		printf 'framebuffer fb%s  : %s %s stride=%s blank=%s\n' "$number" \
+			"$(cat "$fb/name" 2>/dev/null || true)" \
+			"$(fb_size "$number")" \
+			"$(cat "$fb/stride" 2>/dev/null || true)" \
+			"$(cat "$fb/blank" 2>/dev/null || true)"
+	done
+	if [ "$target" = "$hdmi_fb" ]; then
+		target_name=HDMI
+	else
+		target_name=panel
+	fi
+	if [ -n "$override" ]; then
+		printf 'output override  : %s (%s)\n' "$override" "$override_source"
+	else
+		printf 'auto decision    : %s (%s)\n' "$target_name" "$(auto_reason)"
+	fi
+	printf 'target           : fb%s (%s) font=%s\n' "$target" \
+		"$target_name" "${font##*/}"
+	if [ -r "$pending_file" ]; then
+		read -r pending_candidate pending_count <"$pending_file" || true
+		case "${pending_count:-}" in
+			'' | *[!0-9]*) pending_count=0 ;;
+		esac
+		if [ -n "${pending_candidate:-}" ]; then
+			pending_fb=${pending_candidate%%:*}
+			printf 'pending switch   : fb%s %s (samples %s/%s)\n' \
+				"$pending_fb" "${pending_candidate#*:}" \
+				"$pending_count" "$hdmi_debounce"
+		fi
+	fi
+	printf 'console tty%s    : %s (expected %s)\n' "$con" \
+		"$(console_geometry)" \
+		"$(expected_geometry "$target" "$cell_w" "$cell_h")"
+	printf 'console blank    : %s\n' "$(fb_blank_level "$target")"
+	for backlight in /sys/class/backlight/*; do
+		[ -r "$backlight/brightness" ] || continue
+		printf 'panel backlight  : %s brightness=%s/%s bl_power=%s\n' \
+			"${backlight##*/}" \
+			"$(cat "$backlight/brightness" 2>/dev/null || true)" \
+			"$(cat "$backlight/max_brightness" 2>/dev/null || true)" \
+			"$(cat "$backlight/bl_power" 2>/dev/null || true)"
+	done
+	printf 'state            : %s\n' \
+		"$(cat "$state_file" 2>/dev/null || echo none)"
+	if command -v vcgencmd >/dev/null 2>&1; then
+		printf 'throttled        : %s\n' \
+			"$(vcgencmd get_throttled 2>/dev/null || true)"
+	fi
+	exit 0
+fi
+
+# Console blanking: leave the console alone while it is intentionally blanked,
+# and force a full re-apply when it wakes. This catches an fbcon font reset or
+# a stale tmux grid after the monitor's own power save or the console timer.
+current_blank=$(fb_blank_level "$target")
+previous_blank=$(cat "$blank_state_file" 2>/dev/null || true)
+case "$previous_blank" in
+	'' | *[!0-9]*) previous_blank="" ;;
+esac
+if [ -n "$previous_blank" ] && [ "$target" = "$last_target" ] &&
+	[ "$previous_blank" != 0 ] && [ "$current_blank" = 0 ]; then
+	force=1
+	log "fb$target woke from blank; re-applying console"
+fi
+printf '%s\n' "$current_blank" >"$blank_state_file" 2>/dev/null || true
+if [ "$current_blank" != 0 ] && [ "$target" = "$last_target" ] &&
+	[ "$force" = 0 ] && [ "$recover" = 0 ]; then
+	exit 0
+fi
+
+# Debounce only the switch *to* HDMI. A monitor can pulse HPD or renegotiate
+# its mode while it powers up; reacting to the first sample would move the
+# session to a screen that is not ready yet. Going back to the panel is
+# immediate: the panel is always usable, and waiting here leaves both screens
+# dark for seconds after the cable is pulled. If a HPD pulse turns out to be
+# transient, the HDMI debounce keeps the result to one quick panel flash
+# instead of a switch loop. User/CLI overrides and --force skip this.
+if [ "$force" = 0 ] && [ -z "$override_source" ] &&
+	[ -n "$last_target" ] && [ "$target" != "$last_target" ] &&
+	[ "$target" != "$panel_fb" ]; then
+	prev_candidate=""
+	prev_count=0
+	if [ -r "$pending_file" ]; then
+		read -r prev_candidate prev_count <"$pending_file" || true
+	fi
+	case "$prev_count" in
+		'' | *[!0-9]*) prev_count=0 ;;
+	esac
+	if [ "$candidate" = "$prev_candidate" ]; then
+		count=$((prev_count + 1))
+	else
+		count=1
+	fi
+	printf '%s %s\n' "$candidate" "$count" >"$pending_file"
+	[ "$count" -ge "$hdmi_debounce" ] || exit 0
+fi
+rm -f "$pending_file"
+
+# Compare the real console geometry with the geometry the selected
+# framebuffer and font should produce. A font fallback, a mapping reset or a
+# DRM mode change changes the VT size, so this catches drift even when the
+# framebuffer size in the state file did not change.
+#
+# Retries are bounded: if the VT never reaches the computed size (for example
+# because a driver reports a padded virtual size), accept the stable geometry
+# instead of moving the console every two seconds.
+actual=$(console_geometry)
+actual_rows=""
+actual_cols=""
+if [ -n "$actual" ]; then
+	actual_rows=${actual%% *}
+	actual_cols=${actual##* }
+fi
+expected=$(expected_geometry "$target" "$cell_w" "$cell_h")
+case "$last_attempts" in
+	'' | *[!0-9]*) last_attempts=0 ;;
+esac
+attempts=$last_attempts
+
+need_mapping=0
+need_font=0
+if [ "$force" = 1 ] || [ "$target" != "$last_target" ] ||
+	[ "$target_size" != "$last_size" ]; then
+	need_mapping=1
+	need_font=1
+	attempts=0
+elif [ -n "$expected" ] && [ -n "$actual" ]; then
+	if [ "$actual" != "$expected" ]; then
+		if [ "$attempts" -ge 2 ] &&
+			[ "$target_size" = "$last_size" ] &&
+			[ "$actual_rows" = "$last_rows" ] &&
+			[ "$actual_cols" = "$last_cols" ]; then
+			# Already re-applied twice and the VT settled on this size.
+			# Keep it rather than flipping the console every two seconds.
+			if [ "$attempts" -lt 4 ]; then
+				log "fb$target stays ${actual} (expected ${expected}); accepting stable geometry"
+				attempts=4
+				printf '%s %s %s %s %s\n' "$target" "$target_size" \
+					"$actual_rows" "$actual_cols" "$attempts" \
+					>"$state_file" 2>/dev/null || true
+			fi
+		else
+			need_mapping=1
+			need_font=1
+			attempts=$((attempts + 1))
+		fi
+	fi
+else
+	# No readable VT size or no framebuffer geometry. Output and size changes
+	# were handled above; nothing else can be verified here.
+	:
+fi
+
+if [ "$need_mapping" = 1 ]; then
+	if ! command -v con2fbmap >/dev/null 2>&1; then
+		log "con2fbmap is not installed"
+		exit 0
+	fi
+	unblank_fb "$target"
+	if ! con2fbmap "$con" "$target"; then
+		# The target framebuffer may not exist yet (HDMI connected but vc4
+		# has not registered fb0). Leave the state alone so the timer retries.
+		log "con2fbmap tty$con fb$target failed (fb size ${target_size:-unknown})"
+		exit 0
+	fi
+fi
+
+if [ "$need_font" = 1 ]; then
+	if ! command -v setfont >/dev/null 2>&1; then
+		log "setfont is not installed"
+	elif [ ! -f "$font" ]; then
+		log "console font $font is missing"
+	elif ! setfont -C "/dev/tty$con" "$font" 2>/dev/null; then
+		log "setfont ${font##*/} on tty$con failed"
+	fi
+	unblank_fb "$target"
+fi
+
+if [ "$need_mapping" = 1 ] || [ "$need_font" = 1 ]; then
+	settled=$(console_geometry)
+	settled_rows=${settled%% *}
+	settled_cols=${settled##* }
+	log "apply fb$target size=${target_size:-?} font=${font##*/} before=${actual:-?} expected=${expected:-?} after=${settled:-?} attempt=$attempts"
+	if [ -n "$expected" ] && [ -n "$settled" ] &&
+		[ "$settled" != "$expected" ]; then
+		log "fb$target still ${settled}, expected ${expected}"
+		attempts=$((attempts + 1))
+	else
+		attempts=0
+	fi
+	printf '%s %s %s %s %s\n' "$target" "$target_size" \
+		"$settled_rows" "$settled_cols" "$attempts" \
+		>"$state_file" 2>/dev/null || true
+elif [ -n "$expected" ] && [ -n "$actual" ] && [ "$actual" = "$expected" ] &&
+	{ [ "$last_attempts" != 0 ] || [ -z "$last_rows" ]; }; then
+	# Geometry is good; reset the retry counter and upgrade state files
+	# written before the geometry was recorded.
+	actual_rows=${actual%% *}
+	actual_cols=${actual##* }
+	printf '%s %s %s %s 0\n' "$target" "$target_size" \
+		"$actual_rows" "$actual_cols" >"$state_file" 2>/dev/null || true
+fi
+
+# While the session runs on HDMI the internal panel is not needed: clear it
+# and switch its backlight off. The panel is only restored if we were the ones
+# who switched it off; this keeps the user's screen-timeout/brightness working
+# on both outputs. The HDMI framebuffer is left alone when the panel is
+# selected, because tty2/tty3 recovery consoles also use fb0.
+if [ "$hdmi_fb" != "$panel_fb" ] && [ "$target" = "$hdmi_fb" ]; then
+	panel_display_off
+elif [ -e "$panel_off_file" ] || [ ! -e "$panel_init_file" ]; then
+	# Restore after HDMI, or initialize brightness once after boot. After
+	# that we leave blanking/brightness alone so screen timeout still works.
+	panel_display_on
+fi
+
+if [ "$need_mapping" = 1 ] || [ "$need_font" = 1 ]; then
+	# Let fbcon finish resizing the VT before asking tmux to re-fit;
+	# otherwise tmux remembers the pre-mode-change client size.
+	sleep 1
+	refresh_tmux
+	# A monitor can still renegotiate its mode after the first apply. The
+	# next tick validates the geometry again; refresh tmux once more when the
+	# console settles.
+	touch "$settle_file"
+elif [ -e "$settle_file" ]; then
+	sleep 1
+	refresh_tmux
+	rm -f "$settle_file"
+fi

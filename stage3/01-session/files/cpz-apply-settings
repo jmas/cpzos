@@ -1,0 +1,168 @@
+#!/bin/sh
+# Apply settings that need tmux commands: theme, mouse and history size.
+# Called once per config load from tmux.conf and with --theme when the theme
+# changes in cpz-settings.
+set -u
+
+theme_only=0
+case "${1:-}" in
+	--theme) theme_only=1 ;;
+	'') ;;
+	*)
+		printf 'usage: %s [--theme]\n' "${0##*/}" >&2
+		exit 2
+		;;
+esac
+
+home=${HOME:-/root}
+user_settings=${XDG_CONFIG_HOME:-$home/.config}/cpz/settings.conf
+system_settings=/etc/cpz/settings.conf
+theme_dir=${CPZ_THEME_DIR:-/etc/cpz/themes}
+
+get() {
+	# User overrides first, then the system defaults.
+	for file in "$user_settings" "$system_settings"; do
+		[ -r "$file" ] || continue
+		value=$(sed -n "s/^$1=//p" "$file" | tail -n 1)
+		[ -n "$value" ] && { printf '%s' "$value"; return 0; }
+	done
+	return 0
+}
+
+apply_palette() {
+	# Keep tmux's ANSI palette in sync with the console palette. Without this
+	# tmux keeps its old colours after a theme change even though the Linux
+	# console palette has already been updated.
+	while IFS='=' read -r index rgb; do
+		case "$index" in
+			'' | '#'*) continue ;;
+		esac
+		case "$index" in
+			*[!0-9]*) continue ;;
+		esac
+		case "$rgb" in
+			??????) ;;
+			*) continue ;;
+		esac
+		case "$rgb" in
+			*[!0-9a-fA-F]*) continue ;;
+		esac
+		[ "$index" -ge 0 ] && [ "$index" -le 15 ] || continue
+		tmux set -g "pane-colours[$index]" "#$rgb" 2>/dev/null || true
+	done
+}
+
+theme=$(get theme)
+case "$theme" in
+	'' | *[!a-zA-Z0-9_-]*) theme=cpz-tokyo-night ;;
+esac
+[ -f "$theme_dir/$theme.conf" ] || theme=cpz-tokyo-night
+conf=$theme_dir/$theme.conf
+
+# Apply status bar, borders, messages and global pane defaults.
+tmux source-file "$conf" 2>/dev/null || true
+
+# tmux can keep a local window-style on existing windows. Set the body style
+# explicitly on every window so a theme change updates the shell as well as the
+# Settings TUI, and so switching themes cannot leave a stale dark pane behind.
+style=$(sed -n 's/^set -g window-style "\(.*\)"$/\1/p' "$conf" | head -n 1)
+active_style=$(sed -n 's/^set -g window-active-style "\(.*\)"$/\1/p' "$conf" | head -n 1)
+if [ -n "$style" ] && [ -n "$active_style" ]; then
+	tmux list-windows -a -F '#{window_id}' 2>/dev/null | while IFS= read -r window; do
+		[ -n "$window" ] || continue
+		tmux set-option -w -t "$window" window-style "$style" 2>/dev/null || true
+		tmux set-option -w -t "$window" window-active-style "$active_style" 2>/dev/null || true
+	done
+fi
+
+# Match tmux's 16-colour palette and the console palette to the theme.
+embedded=$(sed -n 's/^# palette //p' "$conf" 2>/dev/null || true)
+if [ -n "$embedded" ]; then
+	printf '%s\n' "$embedded" | apply_palette
+elif [ -r "$theme_dir/$theme.palette" ]; then
+	apply_palette <"$theme_dir/$theme.palette"
+fi
+/usr/local/bin/cpz-console-theme 2>/dev/null || true
+
+refresh_clients() {
+	# A bare `tmux refresh-client` has no current client when this helper is
+	# called from a pane process such as cpz-settings, so the command is a
+	# no-op there: the new window style only appears after tmux happens to
+	# redraw (for example when switching tabs). Ask for every attached client
+	# explicitly instead. A plain refresh repaints the panes as well as the
+	# status line.
+	clients=$(tmux list-clients -F '#{client_name}' 2>/dev/null || true)
+	if [ -n "$clients" ]; then
+		printf '%s\n' "$clients" | while IFS= read -r client; do
+			[ -n "$client" ] || continue
+			tmux refresh-client -t "$client" 2>/dev/null || true
+		done
+	else
+		tmux refresh-client 2>/dev/null || true
+	fi
+}
+
+refresh_clients
+
+if [ "$theme_only" = 1 ]; then
+	exit 0
+fi
+
+case "$(get mouse)" in
+	1 | on | true | yes) tmux set -g mouse on ;;
+	*) tmux set -g mouse off ;;
+esac
+
+history=$(get history_limit)
+case "$history" in
+	'' | *[!0-9]*) ;;
+	*) tmux set -g history-limit "$history" ;;
+esac
+
+# The right side has to grow when a full date, the layout code, the volume
+# token or the brightness token is shown.
+show_date=$(get show_date)
+date_format=$(get date_format)
+show_layout=$(get show_layout)
+show_volume=$(get show_volume)
+show_brightness=$(get show_brightness)
+right_length=30
+case "$show_layout" in
+	0 | off | false | no) ;;
+	*) right_length=$((right_length + 3)) ;;
+esac
+case "$show_volume" in
+	0 | off | false | no) ;;
+	*) right_length=$((right_length + 3)) ;;
+esac
+case "$show_brightness" in
+	0 | off | false | no) ;;
+	*) right_length=$((right_length + 4)) ;;
+esac
+if [ "$show_date" = "1" ]; then
+	case "$date_format" in
+		'' | short) right_length=$((right_length + 4)) ;;
+		*) right_length=$((right_length + 10)) ;;
+	esac
+fi
+tmux set -g status-right-length "$right_length"
+
+# Basic tmux options exposed in Settings.
+case "$(get mode_keys)" in
+	vi | emacs) tmux set -g mode-keys "$(get mode_keys)" ;;
+esac
+case "$(get status_interval)" in
+	1 | 2 | 5) tmux set -g status-interval "$(get status_interval)" ;;
+esac
+case "$(get set_clipboard)" in
+	1 | on | true | yes) tmux set -g set-clipboard on ;;
+	*) tmux set -g set-clipboard off ;;
+esac
+case "$(get automatic_rename)" in
+	0 | off | false | no) tmux set -g automatic-rename off ;;
+	*) tmux set -g automatic-rename on ;;
+esac
+
+# Restore brightness and console blanking from the user settings.
+/usr/local/bin/cpz-brightness 2>/dev/null || true
+/usr/local/bin/cpz-screen-timeout 2>/dev/null || true

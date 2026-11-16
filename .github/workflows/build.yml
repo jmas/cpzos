@@ -19,8 +19,8 @@ permissions:
   actions: read
 
 jobs:
-  build-kmscon:
-    name: Build CPZ kmscon image (arm64)
+  build-image:
+    name: Build CPZ fbcon image (arm64)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
 
@@ -52,7 +52,7 @@ jobs:
           TARGET_HOSTNAME=cardputerzero
           FIRST_USER_NAME=pi
           FIRST_USER_PASS=raspberry
-          ENABLE_SSH=1
+          ENABLE_SSH=0
           LOCALE_DEFAULT=en_US.UTF-8
           KEYBOARD_KEYMAP=us
           KEYBOARD_LAYOUT="English (US)"
@@ -62,7 +62,7 @@ jobs:
           sed -i 's/^          //' config
 
       - name: Verify CPZ stage structure
-        run: ./tools/verify-kmscon-stage.sh
+        run: ./tools/verify-stage.sh
 
       - name: Build image
         run: sudo XZ_DEFAULTS="-T0" ./build.sh
@@ -118,7 +118,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cardputerzero-kmscon
+          name: cardputerzero-image
           path: ${{ steps.image.outputs.path }}
 
       - name: Collect component versions
@@ -126,16 +126,6 @@ jobs:
         run: |
           set -euo pipefail
           VERIFY_LOG="deploy/full-image-verification.log"
-          KMSCON_VER=$(awk '
-            /kmscon package installed \(v/ {
-              value = $0
-              sub(/^.*\(v/, "", value)
-              sub(/\).*$/, "", value)
-              print value
-              exit
-            }
-          ' "$VERIFY_LOG")
-          [ -n "$KMSCON_VER" ] || { echo "kmscon version missing from verification log"; exit 1; }
 
           KERNEL_VER=$(awk '$2 == "linux-image-rpi-v8" { print $3; exit }' \
             "${{ steps.image.outputs.info }}")
@@ -156,10 +146,9 @@ jobs:
           }
           DRIVER_COMMIT="${DRIVER_COMMIT:0:7}"
 
-          echo "kmscon_version=$KMSCON_VER" >> "$GITHUB_OUTPUT"
           echo "kernel_version=$KERNEL_VER" >> "$GITHUB_OUTPUT"
           echo "driver_commit=$DRIVER_COMMIT" >> "$GITHUB_OUTPUT"
-          echo "Components: kmscon=$KMSCON_VER kernel=$KERNEL_VER driver=$DRIVER_COMMIT"
+          echo "Components: kernel=$KERNEL_VER driver=$DRIVER_COMMIT"
 
       - name: Create release
         id: release
@@ -176,8 +165,7 @@ jobs:
             --notes "Built from pi-gen commit ${GITHUB_SHA}
 
           **Components:**
-          - UI: CPZ kmscon + tmux
-          - kmscon: ${{ steps.components.outputs.kmscon_version }}
+          - UI: CPZ fbcon + tmux
           - Kernel: ${{ steps.components.outputs.kernel_version }}
           - Driver overlay: m5stack/m5stack-linux-dtoverlays @ ${{ steps.components.outputs.driver_commit }}
           - CONFIG_CARDPUTERO_V0_5: y (enabled)" \
@@ -191,8 +179,7 @@ jobs:
           cat > /tmp/build-info.json <<EOF
           {
             "pigen_commit": "${GITHUB_SHA}",
-            "ui": "cpz-kmscon-tmux",
-            "kmscon_version": "${{ steps.components.outputs.kmscon_version }}",
+            "ui": "cpz-fbcon-tmux",
             "kernel_version": "${{ steps.components.outputs.kernel_version }}",
             "driver_commit": "${{ steps.components.outputs.driver_commit }}",
             "config_cardputero_v0_5": true
@@ -217,8 +204,7 @@ jobs:
           NOTES="Built from pi-gen commit ${GITHUB_SHA}
 
           **Components:**
-          - UI: CPZ kmscon + tmux
-          - kmscon: ${{ steps.components.outputs.kmscon_version }}
+          - UI: CPZ fbcon + tmux
           - Kernel: ${{ steps.components.outputs.kernel_version }}
           - Driver overlay: m5stack/m5stack-linux-dtoverlays @ ${{ steps.components.outputs.driver_commit }}
           - CONFIG_CARDPUTERO_V0_5: y (enabled)

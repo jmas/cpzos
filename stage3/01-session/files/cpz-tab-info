@@ -1,0 +1,30 @@
+#!/bin/sh
+# Publish the tab counters used by the status bar.
+#
+# Settings is an always-present maintenance window, not a user tab, so it must
+# not inflate "current / total". While Settings is focused, the current token
+# is "S"; the total counts only shell/working tabs.
+set -eu
+
+session=${1:-main}
+tmux has-session -t "=$session" 2>/dev/null || exit 0
+
+tab=$(printf '\t')
+windows=$(tmux list-windows -t "=$session" -F \
+	"#{window_index}${tab}#{window_active}${tab}#{?@cpz_settings,1,0}${tab}#{window_name}")
+
+total=0
+current=
+
+while IFS=$tab read -r index active settings name; do
+	[ "$settings" = 1 ] && continue
+	[ "$name" = settings ] && continue
+	total=$((total + 1))
+	[ "$active" = 1 ] && current=$index
+done <<EOF
+$windows
+EOF
+
+[ -n "$current" ] || current=S
+tmux set-option -t "=$session" @cpz_tab_current "$current" 2>/dev/null || true
+tmux set-option -t "=$session" @cpz_tab_total "$total" 2>/dev/null || true

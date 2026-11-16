@@ -24,7 +24,7 @@ sed -i \
 # fb_load comes from the m5stack driver's "make install". It draws the splash
 # on the SPI panel and then waits for APPLaunch/LaunchWizard to start - but CPZ
 # OS has no launcher, so it never exits and keeps DRM master on the panel card.
-# kmscon then cannot take over /dev/dri/card1 and renders on HDMI only.
+# fbcon then cannot take over /dev/dri/card1 and renders on HDMI only.
 # The firmware splash (custom start.elf + CardputerZero_splash_custom.bin)
 # already covers the pre-terminal screen, so drop the unit entirely.
 on_chroot << CHROOT
@@ -61,15 +61,44 @@ FIRST_HOME=$(awk -F: '$3 == 1000 { print $6; exit }' \
     "${ROOTFS_DIR}/etc/passwd" 2>/dev/null || true)
 FIRST_HOME=${FIRST_HOME:-/home/pi}
 FIRST_HOME=${FIRST_HOME#/}
+
+# install -d only applies -o/-g to the final directory. Create the parent
+# directories explicitly and chown the whole chain, otherwise ~/.config is
+# root-owned and the user cannot create ~/.config/cpz later.
+user_config="${ROOTFS_DIR}/${FIRST_HOME}/.config"
+install -d -m 0755 "$user_config" "$user_config/systemd" "$user_config/systemd/user"
+chown 1000:1000 "$user_config" "$user_config/systemd" "$user_config/systemd/user"
+
 for audio_service in pipewire pipewire-pulse filter-chain; do
-    service_dropin="${ROOTFS_DIR}/${FIRST_HOME}/.config/systemd/user/${audio_service}.service.d"
+    service_dropin="${user_config}/systemd/user/${audio_service}.service.d"
     install -d -m 755 -o 1000 -g 1000 "$service_dropin"
     install -m 644 -o 1000 -g 1000 files/20-audio-rlimits.conf \
         "$service_dropin/20-audio-rlimits.conf"
 done
 
+install -d "${ROOTFS_DIR}/etc/sysctl.d"
+install -m 0644 files/99-cpz-hardening.conf \
+    "${ROOTFS_DIR}/etc/sysctl.d/99-cpz-hardening.conf"
+
+# The firmware can leave the PM watchdog armed; disarm it before sysinit even
+# if the initramfs hook did not run.
+install -m 0644 files/cardputerzero-watchdog.service \
+    "${ROOTFS_DIR}/etc/systemd/system/cardputerzero-watchdog.service"
+
+# The image ships out-of-tree CPZ modules built against this exact kernel.
+# rpi-update would replace the kernel and leave the panel and keyboard without
+# drivers until the modules are rebuilt, so keep it out of the image even if a
+# dependency or a later layer pulls it in. The apt pin also keeps it from being
+# installed again later.
+install -d "${ROOTFS_DIR}/etc/apt/preferences.d"
+install -m 0644 files/99-cpz-no-rpi-update.pref \
+    "${ROOTFS_DIR}/etc/apt/preferences.d/99-cpz-no-rpi-update.pref"
+
 on_chroot << 'CHROOT'
 systemctl enable rtkit-daemon.service
+systemctl enable cardputerzero-watchdog.service
+
+apt-get purge -y rpi-update >/dev/null 2>&1 || true
 CHROOT
 
 # Kernel cmdline and boot policy belong to stage3 (the CPZ session stage).
@@ -77,6 +106,9 @@ CHROOT
 # Module load config
 cat > "${ROOTFS_DIR}/etc/modules-load.d/cardputerzero.conf" << 'EOF'
 i2c-dev
+m5ioe1
+pwm_bl_m5stack
+panel-mipi-dbi-m
 EOF
 
 # Disable systemd-backlight auto-start for backlight devices.

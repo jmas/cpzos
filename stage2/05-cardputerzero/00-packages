@@ -1,7 +1,6 @@
 # CardputerZero hardware stage runtime packages.
 #
 # The regular CPZ image is a terminal system: no desktop, launcher, GTK or
-# PulseAudio packages belong here. The kmscon session stage installs its own
+# PulseAudio packages belong here. The CPZ session stage installs its own
 # console tooling.
 rtkit
-fonts-noto-cjk
