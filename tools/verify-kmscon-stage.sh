@@ -60,6 +60,7 @@ for file in \
 	stage2/SKIP_IMAGES \
 	stage2/04-cloud-init/SKIP \
 	config.cpz.example \
+	config.debug.example \
 	docs/M5-IMAGER.md \
 	tools/make-m5stack-entry.py; do
 	have "$file"

@@ -53,6 +53,29 @@ apt-daily.timer, apt-daily-upgrade.timer, man-db.timer
 unattended-upgrades.service
 ```
 
+## Debug image
+
+Build a verbose image when the normal kmscon session produces a black screen:
+
+```sh
+cp config.debug.example config
+sudo ./build.sh
+# or:
+./build-docker.sh -c config.debug.example
+```
+
+The debug image:
+
+- removes the firmware splash
+- removes `quiet`, `fbcon=map:off` and `loglevel=3`
+- adds `console=tty1 console=serial0,115200 loglevel=8`
+- masks `kmsconvt@tty1`/`tty2`
+- enables `getty@tty1`/`tty2`
+- prevents the CPZ tmux session via `/etc/cpz-debug-boot`
+
+It should show kernel/systemd logs on the panel/HDMI and a login prompt on
+tty1/tty2. If it shows nothing, the failure is before the CPZ UI.
+
 ## Hardware checks
 
 Run these on a real CM0 before adding the CPZ bar/settings layer:
