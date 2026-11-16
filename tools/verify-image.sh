@@ -232,12 +232,14 @@ for file in usr/local/bin/cpz-first-login \
     etc/systemd/system/cpz-bt-agent.service \
     etc/profile.d/cpz-session.sh etc/tmux.conf \
     etc/cpz/settings.conf etc/cpz/shadow-mtime etc/default/console-setup \
-    etc/cpz/themes/cpz-tokyo-night.palette \
-    etc/cpz/themes/cpz-catppuccin-mocha.palette \
-    etc/cpz/themes/cpz-gruvbox-dark.palette \
-    etc/cpz/themes/cpz-nord.palette \
-    etc/cpz/themes/cpz-kanagawa.palette \
-    etc/cpz/themes/cpz-github-light.palette \
+    etc/cpz/themes/cpz-campbell.palette \
+    etc/cpz/themes/cpz-homebrew.palette \
+    etc/cpz/themes/cpz-ocean.palette \
+    etc/cpz/themes/cpz-red-sands.palette \
+    etc/cpz/themes/cpz-terminal-basic.palette \
+    etc/cpz/themes/cpz-man-page.palette \
+    etc/cpz/themes/cpz-novel.palette \
+    etc/cpz/themes/cpz-papercolor-light.palette \
     etc/cpz/themes/cpz-mono.palette \
     etc/cpz/themes/cpz-light-high-contrast.palette; do
     if debugfs -R "stat $file" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then

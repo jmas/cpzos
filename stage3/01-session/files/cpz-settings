@@ -220,7 +220,7 @@ DEFAULTS: dict[str, Any] = {
     "keyboard_layout": "auto",
     "keyboard_layouts": "us",
     "keyboard_layout_active": "us",
-    "theme": "cpz-tokyo-night",
+    "theme": "cpz-campbell",
     "show_clock": 1,
     "clock_24h": 1,
     "show_date": 0,
@@ -267,23 +267,27 @@ SCREEN_TIMEOUT_LABELS = {
 }
 
 THEME_ORDER = (
-    "cpz-tokyo-night",
-    "cpz-catppuccin-mocha",
-    "cpz-gruvbox-dark",
-    "cpz-nord",
-    "cpz-kanagawa",
-    "cpz-github-light",
+    "cpz-campbell",
+    "cpz-homebrew",
+    "cpz-ocean",
+    "cpz-red-sands",
+    "cpz-terminal-basic",
+    "cpz-man-page",
+    "cpz-novel",
+    "cpz-papercolor-light",
     "cpz-mono",
     "cpz-light-high-contrast",
 )
 
 THEME_LABELS = {
-    "cpz-tokyo-night": "Tokyo Night",
-    "cpz-catppuccin-mocha": "Catppuccin Mocha",
-    "cpz-gruvbox-dark": "Gruvbox Dark",
-    "cpz-nord": "Nord",
-    "cpz-kanagawa": "Kanagawa",
-    "cpz-github-light": "GitHub Light",
+    "cpz-campbell": "Campbell",
+    "cpz-homebrew": "Homebrew",
+    "cpz-ocean": "Ocean",
+    "cpz-red-sands": "Red Sands",
+    "cpz-terminal-basic": "Terminal Basic",
+    "cpz-man-page": "Man Page",
+    "cpz-novel": "Novel",
+    "cpz-papercolor-light": "PaperColor Light",
     "cpz-mono": "Mono",
     "cpz-light-high-contrast": "Light High Contrast",
 }

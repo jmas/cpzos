@@ -26,7 +26,9 @@ is a maintenance window and is not counted as a tab. Text is rendered by
 kmscon from the Terminus OTB font; the panel uses a 12px cell (53x14) by
 default and 16px (40x10) is selectable in Settings. kmscon keeps the panel
 grid and scales the font up on HDMI, so the same layout fits both screens.
-Themes are switchable from Settings.
+Themes are switchable from Settings: Campbell (default), Homebrew, Ocean, Red
+Sands, Terminal Basic, Man Page, Novel and PaperColor Light, plus Mono and
+Light High Contrast for accessibility.
 
 There is exactly one working output at a time. When a usable HDMI monitor is
 attached the session is drawn there and the internal panel backlight is

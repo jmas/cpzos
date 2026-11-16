@@ -70,7 +70,7 @@ class SettingsTUI(unittest.TestCase):
         self.system.parent.mkdir(parents=True)
         self.themes = root / "etc" / "cpz" / "themes"
         self.themes.mkdir(parents=True)
-        labels = {"cpz-tokyo-night": "Tokyo Night", "cpz-nord": "Nord"}
+        labels = {"cpz-campbell": "Campbell", "cpz-homebrew": "Homebrew"}
         for name, label in labels.items():
             (self.themes / (name + ".conf")).write_text(
                 "# name: " + label + "\n", encoding="utf-8"
@@ -96,23 +96,23 @@ class SettingsTUI(unittest.TestCase):
 
     def test_defaults_are_usable(self):
         data = self.mod.load_settings()
-        self.assertEqual(data["theme"], "cpz-tokyo-night")
+        self.assertEqual(data["theme"], "cpz-campbell")
         self.assertEqual(data["brightness"], 100)
         self.assertEqual(data["display"], "auto")
         self.assertEqual(data["font_panel"], "6x12")
         self.assertEqual(data["font_hdmi"], "auto")
         self.assertEqual(data["keyboard_layouts"], "us")
         self.assertEqual(data["keyboard_layout_active"], "us")
-        self.assertEqual(self.mod.theme_label("cpz-nord"), "Nord")
+        self.assertEqual(self.mod.theme_label("cpz-homebrew"), "Homebrew")
 
     def test_user_file_overrides_system_file(self):
         self.system.write_text(
-            'theme="cpz-nord"\nshow_clock=1\nbrightness=40\n', encoding="utf-8"
+            'theme="cpz-homebrew"\nshow_clock=1\nbrightness=40\n', encoding="utf-8"
         )
         self.write_user("show_clock=0\nbrightness=1000\n")
 
         data = self.mod.load_settings()
-        self.assertEqual(data["theme"], "cpz-nord")
+        self.assertEqual(data["theme"], "cpz-homebrew")
         self.assertEqual(data["show_clock"], 0)
         # Values are clamped, not rejected.
         self.assertEqual(data["brightness"], 100)
@@ -142,15 +142,15 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(data["keyboard_layout"], "auto")
 
     def test_unknown_keys_are_ignored(self):
-        self.write_user("unknown_key=42\ntheme=cpz-nord\n")
+        self.write_user("unknown_key=42\ntheme=cpz-homebrew\n")
         data = self.mod.load_settings()
-        self.assertEqual(data["theme"], "cpz-nord")
+        self.assertEqual(data["theme"], "cpz-homebrew")
         self.assertNotIn("unknown_key", data)
 
     def test_save_and_load_round_trip(self):
         data = self.mod.load_settings()
         data.update(
-            theme="cpz-nord",
+            theme="cpz-homebrew",
             show_clock=0,
             date_format="iso",
             display="hdmi",

@@ -71,10 +71,10 @@ palette_name() {
 
 theme=$(get_setting theme)
 case "$theme" in
-	'' | *[!a-zA-Z0-9_-]*) theme=cpz-tokyo-night ;;
+	'' | *[!a-zA-Z0-9_-]*) theme=cpz-campbell ;;
 esac
 theme_conf=$theme_dir/$theme.conf
-[ -r "$theme_conf" ] || theme_conf=$theme_dir/cpz-tokyo-night.conf
+[ -r "$theme_conf" ] || theme_conf=$theme_dir/cpz-campbell.conf
 
 # The tmux window style carries the theme's real body colours, which is what
 # the console shows outside tmux as well. Fall back to the palette entries.

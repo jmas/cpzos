@@ -113,6 +113,29 @@ decision changes.
 `TERM=kmscon`, and tmux refuses to attach to an unknown terminal. libtsm is
 xterm-compatible, so the ncurses entry from `ncurses-base` is the safe value.
 
+## Themes
+
+`/etc/cpz/themes` ships ten themes. Eight are terminal-first palettes ported
+from the macOS Terminal.app profiles and Windows Terminal's Campbell default;
+`Mono` and `Light High Contrast` stay as accessibility options.
+
+| Theme | Mode | Source |
+| --- | --- | --- |
+| Campbell (default) | dark | Windows Terminal |
+| Homebrew | dark | macOS Terminal |
+| Ocean | dark | macOS Terminal |
+| Red Sands | dark | macOS Terminal |
+| Terminal Basic | light | macOS Terminal |
+| Man Page | light | macOS Terminal |
+| Novel | light | macOS Terminal |
+| PaperColor Light | light | PaperColor |
+| Mono | dark | CPZ |
+| Light High Contrast | light | CPZ |
+
+Each theme is a `.conf` (tmux styles plus `# palette 0..15`) and a matching
+`.palette`. The terminal-first palettes were tuned where necessary so every
+ANSI colour keeps at least 4.5:1 contrast against the theme background.
+
 ## Restart semantics
 
 A restart replaces the kmscon process and the login shell inside it. tmux is

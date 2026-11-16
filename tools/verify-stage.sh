@@ -177,7 +177,7 @@ for file in \
 	stage3/01-session/files/settings.conf \
 	stage3/01-session/files/50-cpz-networkmanager.rules \
 	stage3/01-session/files/cpz-bt-agent.service \
-	stage3/01-session/files/themes/cpz-tokyo-night.conf \
+	stage3/01-session/files/themes/cpz-campbell.conf \
 	stage3/01-session/files/cancel-rename \
 	config.cpz.example \
 	config.debug.example \
@@ -364,7 +364,7 @@ contains stage3/01-session/files/cmdline.append 'consoleblank=0'
 contains stage3/01-session/02-run.sh "enable getty@tty2.service getty@tty3.service"
 contains stage3/01-session/02-run.sh 'mask tmp.mount'
 contains stage3/01-session/01-run.sh 'install -d -m 1777'
-contains stage3/01-session/files/settings.conf 'theme=cpz-tokyo-night'
+contains stage3/01-session/files/settings.conf 'theme=cpz-campbell'
 contains stage3/01-session/files/settings.conf 'show_date=0'
 contains stage3/01-session/files/settings.conf 'date_format=short'
 contains stage3/01-session/files/settings.conf 'show_conn=1'
