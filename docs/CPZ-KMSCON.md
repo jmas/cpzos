@@ -53,6 +53,18 @@ apt-daily.timer, apt-daily-upgrade.timer, man-db.timer
 unattended-upgrades.service
 ```
 
+## fb_load / DRM ownership
+
+The m5stack `st7789v` driver installs `fb_load.service`, which runs
+`/usr/sbin/fb_load --keep-open` early in boot. It displays the static splash
+and waits for `APPLaunch`/`LaunchWizard` before exiting. CPZ has no launcher,
+so the original service never releases DRM master on the internal panel and
+kmscon cannot take over it.
+
+`stage2/05-cardputerzero/02-run.sh` now disables and removes
+`fb_load.service` and its `sysinit.target.wants` symlink. The firmware splash
+still covers the pre-terminal screen.
+
 ## Debug image
 
 Build a verbose image when the normal kmscon session produces a black screen:
