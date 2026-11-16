@@ -81,3 +81,6 @@ unproven console layer.
 - No images/video/GUI apps.
 - kmscon palette is static; CPZ theme integration comes in phase 1/2.
 - `rpi-preseed` and SSH are installed, but first-boot testing is part of phase 5.
+
+See [M5-IMAGER.md](M5-IMAGER.md) before publishing an OS-list entry: M5 Imager
+does not accept `rpi-preseed` and needs `init_format: "systemd"`.

@@ -59,7 +59,9 @@ for file in \
 	stage-cpz/01-session/files/cancel-rename \
 	stage2/SKIP_IMAGES \
 	stage2/04-cloud-init/SKIP \
-	config.cpz.example; do
+	config.cpz.example \
+	docs/M5-IMAGER.md \
+	tools/make-m5stack-entry.py; do
 	have "$file"
 done
 
@@ -71,7 +73,8 @@ for script in \
 	stage-cpz/01-session/files/cpz-kmscon \
 	stage-cpz/01-session/files/cpz-login \
 	stage-cpz/01-session/files/cpz-session.sh \
-	tools/verify-kmscon-stage.sh; do
+	tools/verify-kmscon-stage.sh \
+	tools/make-m5stack-entry.py; do
 	if [ -x "$ROOT/$script" ]; then ok; else bad "$script is not executable"; fi
 done
 
