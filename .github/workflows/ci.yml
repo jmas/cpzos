@@ -35,5 +35,8 @@ jobs:
       - name: Unit tests
         run: ./tests/run.sh
 
+      - name: Check site
+        run: python3 site/check.py
+
       - name: Static checks
         run: ./tests/lint.sh

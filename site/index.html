@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CPZ — CardputerZero OS</title>
+<meta name="description" content="CPZ is a console-first Raspberry Pi OS for CardputerZero: boots straight into a terminal and tmux, runs with minimal memory, installs from a ready-to-flash release image and is driven entirely from the keyboard.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%230c0c0c'/%3E%3Ctext x='32' y='42' font-family='monospace' font-size='26' fill='%239ece6a' text-anchor='middle'%3ECPZ%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="a11y.skip">Skip to content</a>
+
+<header class="top">
+  <div class="top-inner">
+    <a class="brand" href="#top"><span class="brand-mark">CPZ</span><span class="brand-sub">CardputerZero OS</span></a>
+    <nav class="sections" aria-label="Sections">
+      <a href="#philosophy" data-i18n="nav.philosophy">Philosophy</a>
+      <a href="#install" data-i18n="nav.install">Install</a>
+      <a href="#keys" data-i18n="nav.keys">Keys</a>
+      <a href="#settings" data-i18n="nav.settings">Settings</a>
+      <a class="sections-release" href="https://github.com/jmas/cpzos/releases/latest" data-i18n="nav.releases">Releases</a>
+    </nav>
+    <label class="lang">
+      <span class="sr-only" data-i18n="nav.language">Language</span>
+      <select id="lang-select" autocomplete="off">
+        <option value="en">English</option>
+        <option value="uk">Українська</option>
+        <option value="pl">Polski</option>
+        <option value="de">Deutsch</option>
+        <option value="fr">Français</option>
+        <option value="es">Español</option>
+        <option value="it">Italiano</option>
+        <option value="pt">Português (BR)</option>
+        <option value="tr">Türkçe</option>
+        <option value="ja">日本語</option>
+        <option value="zh">中文</option>
+      </select>
+    </label>
+  </div>
+</header>
+
+<main id="main">
+
+<section class="hero" id="top">
+  <p class="kicker" data-i18n="hero.kicker">CardputerZero · Raspberry Pi OS Trixie</p>
+  <h1>CPZ</h1>
+  <p class="lead" data-i18n="hero.lead">A console-first Linux for the CardputerZero handheld. It boots straight into a fast terminal with a persistent tmux session — no desktop, compositor or background services.</p>
+  <p class="note" data-i18n="hero.note">Minimal memory footprint. Simple to install from a release image. Simple to use from the keyboard.</p>
+  <div class="actions">
+    <a class="button" href="https://github.com/jmas/cpzos/releases/latest" data-i18n="hero.cta.download">Download latest release</a>
+    <a class="button ghost" href="#install" data-i18n="nav.install">Install</a>
+    <a class="button ghost" href="#keys" data-i18n="hero.cta.keys">Key reference</a>
+  </div>
+</section>
+
+<section id="philosophy">
+  <div class="section-head">
+    <p class="num">01</p>
+    <div>
+      <h2 data-i18n="philosophy.title">Philosophy</h2>
+      <p class="intro" data-i18n="philosophy.intro">CPZ is built around a small set of rules. They decide what goes into the image, what a key does, and what the system refuses to do in the background.</p>
+    </div>
+  </div>
+  <ol class="principles">
+    <li><h3 data-i18n="p1.t">The terminal is the interface</h3><p data-i18n="p1.d">There is no desktop, compositor, launcher or first-boot wizard. kmscon draws the console on tty1, tmux organizes the work, and every other tool is a command.</p></li>
+    <li><h3 data-i18n="p2.t">Minimal memory</h3><p data-i18n="p2.d">No desktop environment, no search index and no maintenance daemons. Everything that is not in use is not running, so RAM and CPU stay free for the work at hand.</p></li>
+    <li><h3 data-i18n="p3.t">Simple to install</h3><p data-i18n="p3.d">Download the latest release image, write it to a microSD card with Raspberry Pi Imager, balenaEtcher or dd, insert it and boot. No manual package setup is required.</p></li>
+    <li><h3 data-i18n="p4.t">Simple to use</h3><p data-i18n="p4.d">The keyboard drives everything. Alt shortcuts open tabs, panes, search and Settings, and the Settings TUI manages Wi-Fi, display, sound, power and applications without config files.</p></li>
+    <li><h3 data-i18n="p5.t">State survives</h3><p data-i18n="p5.d">tmux runs detached. Theme, font and output changes may restart kmscon while tabs, pane directories and running programs stay alive.</p></li>
+  </ol>
+</section>
+
+<section id="install">
+  <div class="section-head">
+    <p class="num">02</p>
+    <div>
+      <h2 data-i18n="install.title">Install</h2>
+      <p class="intro" data-i18n="install.intro">CPZ ships as a ready-to-flash Raspberry Pi OS image. Every release includes the image, its checksums and metadata.</p>
+    </div>
+  </div>
+  <div class="install-grid">
+    <ol class="steps">
+      <li data-i18n="install.s1">Download the latest image from the Releases page.</li>
+      <li data-i18n="install.s2">Write it to a microSD card with Raspberry Pi Imager, balenaEtcher or dd.</li>
+      <li data-i18n="install.s3">Insert the card and power on. CPZ boots straight into the console with no setup wizard.</li>
+    </ol>
+    <aside class="download">
+      <p data-i18n="install.note">Images are built from a published GitHub release and verified before upload.</p>
+      <div class="actions">
+        <a class="button" href="https://github.com/jmas/cpzos/releases/latest" data-i18n="install.latest">Latest release</a>
+        <a class="button ghost" href="https://github.com/jmas/cpzos/releases" data-i18n="install.all">All releases</a>
+      </div>
+    </aside>
+  </div>
+</section>
+
+<section id="keys">
+  <div class="section-head">
+    <p class="num">03</p>
+    <div>
+      <h2 data-i18n="keys.title">Key reference</h2>
+      <p class="intro" data-i18n="keys.intro">Every binding below works directly: press Alt with the listed key. No tmux prefix is needed. On the internal keyboard, plus and minus are Sym+T and Sym+R.</p>
+    </div>
+  </div>
+  <article class="panel keys-panel">
+    <table class="keys wide">
+      <tbody>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd></td><td data-i18n="k.tabs.prev">Previous / next tab</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>T</kbd></td><td data-i18n="k.tabs.new">New tab, inserted before Settings</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>W</kbd></td><td data-i18n="k.tabs.close">Close tab (asks first)</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>V</kbd></td><td data-i18n="k.panes.splitv">Split left / right</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>B</kbd></td><td data-i18n="k.panes.splith">Split top / bottom</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>O</kbd></td><td data-i18n="k.session.search">Search everything</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>S</kbd></td><td data-i18n="k.session.settings">Open Settings</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>H</kbd></td><td data-i18n="k.session.help">Open this key reference</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>D</kbd></td><td data-i18n="k.session.display">Toggle auto / panel display</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>+</kbd> / <kbd>−</kbd></td><td data-i18n="k.session.font">Larger / smaller font, saved in Settings</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>Q</kbd></td><td data-i18n="k.session.detach">Detach from tmux</td></tr>
+      </tbody>
+    </table>
+  </article>
+</section>
+
+<section id="settings">
+  <div class="section-head">
+    <p class="num">04</p>
+    <div>
+      <h2 data-i18n="settings.title">Settings</h2>
+      <p class="intro" data-i18n="settings.intro">Alt+S opens a full-screen TUI. It is always the last tab and cannot be closed; the shell is always the first. Values are stored per user and reapplied at boot.</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="grid">
+      <thead><tr><th data-i18n="settings.h.page">Page</th><th data-i18n="settings.h.controls">Controls</th></tr></thead>
+      <tbody>
+        <tr><td><code>Network</code></td><td data-i18n="settings.network">Wi-Fi (NetworkManager TUI), Ethernet status, VPN profiles, addresses</td></tr>
+        <tr><td><code>Bluetooth</code></td><td data-i18n="settings.bluetooth">Pair and connect Bluetooth devices</td></tr>
+        <tr><td><code>Display &amp; Brightness</code></td><td data-i18n="settings.display">Theme, brightness, screen timeout, output mode, font size, status bar</td></tr>
+        <tr><td><code>Sound</code></td><td data-i18n="settings.sound">Output and input volume, mute and device selection (PipeWire)</td></tr>
+        <tr><td><code>Keyboard</code></td><td data-i18n="settings.keyboard">Layout mode, enabled layouts, active layout, key reference</td></tr>
+        <tr><td><code>Date &amp; Time</code></td><td data-i18n="settings.datetime">Date, time, time zone, automatic NTP</td></tr>
+        <tr><td><code>Power</code></td><td data-i18n="settings.power">Battery status, reboot, shut down, suspend</td></tr>
+        <tr><td><code>Applications</code></td><td data-i18n="settings.apps">Terminal Trove catalog; install and remove apt packages</td></tr>
+        <tr><td><code>System</code></td><td data-i18n="settings.system">About, resources, security (password, SSH), terminal options, reset</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <p class="footer-brand">CPZ</p>
+    <nav class="footer-links">
+      <a href="https://github.com/jmas/cpzos" data-i18n="footer.source">Source</a>
+      <a href="https://github.com/jmas/cpzos/tree/master/docs" data-i18n="footer.docs">Documentation</a>
+      <a href="https://github.com/jmas/cpzos/releases" data-i18n="footer.releases">Releases</a>
+      <a href="https://github.com/jmas/cpzos/releases/latest" data-i18n="install.latest">Latest release</a>
+    </nav>
+    <p class="footer-note" data-i18n="footer.based">Based on Raspberry Pi OS and pi-gen. Terminal session: kmscon + tmux.</p>
+  </div>
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
