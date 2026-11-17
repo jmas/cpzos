@@ -9,12 +9,16 @@
 #     fbset cannot do anything;
 #   * the remaining entries duplicate a package that stays installed
 #     (7zip vs p7zip-full, vim vs vim-tiny, iproute2 vs net-tools, iw vs
-#     wireless-tools, bluetoothctl vs bluez-tools, grep vs ack).
+#     wireless-tools, grep vs ack).
+#
+# bluez-tools stays: cpz-bt-agent runs /usr/bin/bt-agent from it, and
+# bluetoothctl comes from the main bluez package anyway.
 #
 # Every purge is simulated on its own first. If apt would also remove a
 # package outside this list (a changed dependency, a metapackage that still
 # pulls the tool in), the package is kept and the build continues, so a future
-# archive update cannot silently break the session.
+# archive update cannot silently break the session. In particular ack and
+# net-tools are kept while rpi-swap/raspinfo depend on them.
 
 on_chroot << 'CHROOT'
 set -e
@@ -26,7 +30,6 @@ PACKAGES="
 	ack
 	net-tools
 	wireless-tools
-	bluez-tools
 	lua5.1
 	luajit
 	manpages-dev

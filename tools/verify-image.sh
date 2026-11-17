@@ -977,6 +977,13 @@ else
     fail "7zip NOT installed"
 fi
 
+# cpz-bt-agent runs /usr/bin/bt-agent, which ships in bluez-tools.
+if grep -q "^Package: bluez-tools$" "$TMPDIR/dpkg_status"; then
+    pass "bluez-tools installed (bt-agent)"
+else
+    fail "bluez-tools MISSING (cpz-bt-agent needs bt-agent)"
+fi
+
 # Regular CPZ image: desktop/full-stage packages must not be present.
 for pkg in fastfetch cmatrix adbd pulseaudio-utils python3-cairo python3-gi-cairo; do
     if grep -q "^Package: ${pkg}$" "$TMPDIR/dpkg_status"; then
@@ -988,8 +995,9 @@ done
 
 # stage3/03-cleanup removes build-only and duplicate packages. Only assert the
 # entries that have no reverse dependencies; the cleanup keeps anything apt
-# would have to take another package with.
-for pkg in p7zip-full vim-tiny ed ack net-tools wireless-tools bluez-tools \
+# would have to take another package with. ack/net-tools are kept while
+# rpi-swap/raspinfo depend on them, and bluez-tools must stay for bt-agent.
+for pkg in p7zip-full vim-tiny ed wireless-tools \
     lua5.1 luajit manpages-dev fbset dmidecode ueberzug debconf-utils \
     build-essential gdb strace; do
     if grep -q "^Package: ${pkg}$" "$TMPDIR/dpkg_status"; then
