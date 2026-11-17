@@ -1,5 +1,7 @@
 name: Sync Latest Release to OSS
 
+run-name: Sync ${{ inputs.tag || 'latest release' }} to OSS
+
 on:
   workflow_dispatch:
     inputs:

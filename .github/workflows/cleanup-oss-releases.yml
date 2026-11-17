@@ -1,5 +1,7 @@
 name: Cleanup OSS Releases
 
+run-name: Cleanup ${{ inputs.tags }}
+
 on:
   workflow_dispatch:
     inputs:

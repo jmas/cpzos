@@ -3,7 +3,7 @@ name: Lint and unit tests
 on:
   pull_request:
   push:
-    branches: [cpz, arm64]
+    branches: [master, cpz, arm64]
   workflow_dispatch:
 
 permissions:
