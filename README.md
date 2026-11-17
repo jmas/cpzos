@@ -135,6 +135,19 @@ from a published release. Manual rebuilds derive it from the tag: a tag with a
 prerelease suffix (`v0.2.0-beta.1`) is treated as a prerelease. To rebuild an
 existing tag, run the workflow manually (`workflow_dispatch`) and pass the tag.
 
+## Website
+
+`site/` is the static feature reference. It has no build step and ships the
+English page plus translations in `site/i18n/` (Ukrainian, Polish, German,
+French, Spanish, Italian, Portuguese, Turkish, Japanese and Simplified
+Chinese). `.github/workflows/pages.yml` validates the translations and deploys
+the folder with GitHub Pages. Enable Pages once in *Settings → Pages → Source:
+GitHub Actions*, then push a change under `site/`. Preview it locally:
+
+```bash
+python3 -m http.server 8000 --directory site
+```
+
 ## Configuration
 
 `build.sh` sources `config` from the repository root. The important settings:
