@@ -174,7 +174,7 @@ probe.
 
 Restarts only happen for:
 
-- a changed generated configuration (font size, theme, screen timeout, layout,
+- a changed generated configuration (font size, theme, screen timeout,
   `display=panel` ↔ auto/HDMI);
 - `--force` / `--recover`;
 - a hotplug kmscon missed even after the card nudge: HDMI is connected and
@@ -190,41 +190,76 @@ cannot bounce the session.
 
 ## Generated kmscon config
 
-kmscon reads its configuration once at startup and has no runtime API. Values
-the Settings TUI can change are rendered into
-`/run/cpz-kmscon/kmscon.conf` by `cpz-kmscon-config`; the static half is
-`/etc/kmscon/kmscon.conf`.
+kmscon reads most of its configuration once at startup and has no runtime API
+for fonts, palettes or timeouts. Values the Settings TUI can change are
+rendered into `/run/cpz-kmscon/kmscon.conf` by `cpz-kmscon-config`; the static
+half is `/etc/kmscon/kmscon.conf`.
+
+The keyboard layout is the exception. kmscon follows `systemd-localed` through
+its Locale1 D-Bus listener and swaps the live keymap in place. No `xkb-layout`
+is written into the generated file, so a layout change does not restart the
+session or renegotiate the HDMI link.
 
 | Setting | kmscon option |
 | --- | --- |
 | `display=panel` | `multi-monitor=clone` |
 | any other display mode | `multi-monitor=largest` |
-| `font_panel=6x12` | `font-size=12` |
-| `font_panel=8x16` | `font-size=16` |
+| `font_size=10..64` | `font-size=<pixels>` |
 | `screen_timeout=5/10/30` | `dpms-timeout=300/600/1800` (0 = never) |
-| internal keyboard active | `xkb-layout=cpz` |
-| external keyboard active | `xkb-layout=<keyboard_layout_active>` |
 | `theme` | `palette=custom` + the theme's 16 colours, background and foreground |
+
+### Themes
+
+A theme is a plain tmux configuration file in `/etc/cpz/themes`. Settings
+lists every `*.conf` whose name is `[A-Za-z0-9_-]+` and reads the human name
+from `# name:`. The same file carries the data the renderers need:
+
+```text
+# name: Campbell
+# alert=ff4b5c          semantic colour for critical battery
+# warn=c19c00           semantic colour for low battery
+# palette 0=0c0c0c      ANSI colours 0..15
+...
+```
+
+`cpz-kmscon-config` renders the background, foreground and 16 palette entries
+into kmscon; `cpz-apply-settings` sources the same file for the live tmux
+session and keeps `pane-colours` in sync. `cpz-status` reads `alert` and
+`warn` so the battery warning is legible on the status bar instead of relying
+on ANSI red/yellow, which may be a pale tint in some palettes. Keep the
+`.palette` file in sync: it mirrors the embedded list for host-side checks
+and external tooling.
+
+The checks in `tools/verify-stage.sh` reject a theme with text below 4.5:1,
+pane borders below 3:1, a missing `alert`/`warn` colour, or a palette that
+does not match its `.palette` file. A theme file is trusted input because
+tmux sources it, so do not install one from an untrusted source.
 
 `cpz-keyboard-layout` writes `/run/cpz-layout.active` (`cpz` or the standard
 layout code). It detects a full USB/Bluetooth/PS2 keyboard from sysfs and
-switches both the console keymaps and `xkb-layout`. Plugging or unplugging a
-keyboard therefore restarts kmscon once; tmux and its panes stay alive.
+applies the matching layout to both the console keymaps and `localectl`. The
+localed change reaches kmscon at runtime, so plugging or unplugging a keyboard
+does not restart the session.
 
-The CPZ layout maps the TCA8418 Sym layer to punctuation (`Sym+B` is `.`),
-while an external keyboard keeps the selected national layout. The two cannot
-be active at the same time because kmscon has one XKB keymap per session.
+The CPZ layout maps the TCA8418 Sym layer to punctuation (`Sym+B` is `.`).
+For the internal keyboard `cpz-keyboard-layout` generates a language-specific
+overlay (`cpz_us`, `cpz_ua`, ...) from `symbols/cpz` and the selected standard
+layout, so switching between US, Ukrainian, Russian and the other enabled
+layouts works on the internal keyboard as well. An external keyboard uses the
+plain standard layout. kmscon has one keymap, so the overlay is active only
+while the internal keyboard is selected.
 
 The font size is shared by both screens, so HDMI gets more columns at the same
-cell size. `Alt+Plus` / `Alt+Minus` change the terminal font size at runtime
-(the internal keyboard emits them as Sym+T / Sym+R); `Ctrl+Plus` /
-`Ctrl+Minus` are kmscon's defaults. This zoom is runtime-only: a session
-restart (theme, layout, display change) returns to the configured
-`font_panel` size.
+cell size. `Alt+Plus` / `Alt+Minus` (and `Ctrl+Plus` / `Ctrl+Minus`) run
+`cpz-font`, which writes `font_size` to the CPZ settings; the internal keyboard
+emits them as Sym+T / Sym+R. Settings → Display & Brightness → Font Size edits
+the same value and offers the full 10–64 px range. The size survives layout
+changes, theme restarts and reboots. A font change still needs a kmscon restart
+because kmscon has no runtime font API.
 
-`font_hdmi` is unused on this branch. `cpz-kmscon-config` prints `changed` or
-`same`; `cpz-kmscon-output` restarts the session only when the rendered file
-differs, the display mode moves to/from `clone`, or a hotplug was missed.
+`cpz-kmscon-config` prints `changed` or `same`; `cpz-kmscon-output` restarts
+the session only when the rendered file differs, the display mode moves
+to/from `clone`, or a hotplug was missed.
 
 `term=xterm-256color` is deliberate: kmscon does not ship a terminfo entry for
 `TERM=kmscon`, and tmux refuses to attach to an unknown terminal. libtsm is
@@ -254,14 +289,18 @@ image stay plain shells.
 /usr/local/bin/cpz-login                    # uid 1000 autologin + pty marker
 /usr/local/bin/cpz-hint                     # one-line key hint on attach
 /usr/local/bin/cpz-help                     # Alt+H key reference
+/usr/local/bin/cpz-search                   # Alt+O omnisearch popup
 /usr/local/bin/cpz-tab-info                 # status bar tab counters
+/usr/local/bin/cpz-font                     # Alt+Plus/Alt+Minus, persists font_size
 /etc/systemd/system/kmsconvt@.service.d/10-cpz.conf
 /etc/systemd/system/cpz-kmscon-output.service
 /etc/systemd/system/cpz-kmscon-output.timer
 /etc/udev/rules.d/99-cpz-kmscon-output.rules
 /etc/udev/rules.d/99-cpz-kmscon-nudge.rules
 /etc/udev/rules.d/99-cpz-display.rules       # panel DRM card stays on seat0
-/usr/share/X11/xkb/symbols/cpz              # CPZ Sym/Fn layer for kmscon
+/usr/share/X11/xkb/symbols/cpz              # CPZ Sym/Fn template for kmscon
+/usr/share/X11/xkb/symbols/cpz_<lang>       # generated per-language overlay
+/usr/local/share/cpz/xkb/cpz.template       # source for the generated overlays
 /etc/systemd/system-sleep/cpz-kmscon
 /etc/profile.d/cpz-session.sh
 /etc/tmux.conf
@@ -270,6 +309,22 @@ image stay plain shells.
 The image adds `<ZENK> = 93;` to `/usr/share/X11/xkb/keycodes/evdev`: xkb-data
 leaves the keycode used by Sym+N (`>`) unnamed. Automatic `xkb-data` upgrades
 are masked; a manual package upgrade would need that line re-applied.
+
+Daily tmux actions are direct two-key `Alt+letter` bindings: `Alt+T` / `Alt+W`
+for tabs, `Alt+V` / `Alt+B` for splits, `Alt+N` / `Alt+P` for panes, `Alt+Z`
+for pane zoom, and so on. No tmux prefix is needed for the main UI. `C-a`
+remains only as an advanced fallback; the default `C-b` is hard to chord on
+the small CPZ keyboard.
+
+`Alt+O` opens `cpz-search`, a tmux popup with PATH commands, daily CPZ actions,
+Settings pages and files in one fzf list. `/` switches to file search, `=` to
+the calculator, `@` to the local Terminal Trove catalog and `$` to tmux paste
+buffers. Installed Trove tools launch in a new tab; other tools open the
+Applications details screen at that tool, so `i` can install them with the
+existing apt policy. `Ctrl+Y` copies the selection to the tmux buffer and
+`Ctrl+O` opens its directory in `lf` (or the Trove details). Settings entries
+use `cpz-settings --page <page>`, which is also available outside the popup.
+The search is on demand: no daemon or index runs between invocations.
 
 The tmux helpers avoid two tmux 3.5 behaviours: literal tabs in `-F` output are
 replaced with `_`, and `set-option` no longer accepts the `=session` exact-match
@@ -315,10 +370,10 @@ If it shows nothing, the failure is before kmscon.
 - **The CPZ Sym/Fn overlay is an XKB layout for kmscon.** The TCA8418 driver
   emits otherwise unused keycodes for the Sym layer; the console keymap
   (`loadkeys`) maps them to punctuation for VTs, but kmscon uses libxkbcommon
-  and never reads the VT keymap. `symbols/cpz` maps the same keycodes, and
-  `cpz-kmscon-config` selects it while `cpz-keyboard-layout` reports the
-  internal keyboard. An external USB/Bluetooth keyboard switches the session
-  back to the configured standard XKB layout, so the internal overlay and an
+  and never reads the VT keymap. `cpz-keyboard-layout` generates
+  `symbols/cpz_<language>` from the static template so the overlay sits on top
+  of the selected language. An external USB/Bluetooth keyboard switches the
+  session to the plain standard XKB layout, so the internal overlay and an
   external keyboard cannot use different layouts at the same time.
 - **Screen timeout is DPMS, not blank-only.** kmscon's `dpms-timeout` powers
   the output down. A monitor that renegotiates on wake may change the mode;
