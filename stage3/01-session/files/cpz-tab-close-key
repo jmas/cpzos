@@ -1,5 +1,5 @@
 #!/bin/sh
-# Alt+W / Ctrl-b & entry point: check the protected tabs before prompting.
+# Alt+W (and prefix + & fallback) entry point: check the protected tabs before prompting.
 #
 # confirm-before needs a client context; run-shell does not have one, so the
 # prompt is sent to an explicitly listed client.

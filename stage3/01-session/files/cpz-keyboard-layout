@@ -30,6 +30,14 @@
 # (keyboard_layout_active) come from cpz-settings. The effective state is
 # published in /run/cpz-layout.active ("cpz" or a layout code) so cpz-status can
 # show it in the status bar.
+#
+# kmscon uses libxkbcommon and does not read the console keymap. It follows
+# systemd-localed through its Locale1 D-Bus listener, so this script also
+# updates the X11 layout with localectl. kmscon swaps its keymap in place: no
+# session restart, no DRM master drop and no monitor renegotiation. For the
+# internal keyboard the CPZ overlay is generated on top of the selected
+# language, with one layout name per language (cpz_us, cpz_ua, ...) so a
+# language change is visible to localed even though the prefix stays "cpz".
 set -eu
 
 tty_list="/dev/tty1 /dev/tty2 /dev/tty3"
@@ -37,6 +45,9 @@ state_file=/run/cpz-layout.active
 log_file=/run/cpz-keyboard-layout.log
 cached_keymap=/etc/console-setup/cached_UTF-8_del.kmap.gz
 cpz_map=/usr/share/keymaps/tca8418_keypad_m5stack_keymap.map
+xkb_dir=/usr/share/X11/xkb/symbols
+cpz_xkb_template=/usr/local/share/cpz/xkb/cpz.template
+cpz_xkb_layout=
 internal_link=/dev/input/cardputer-zero-internal
 internal_path=3f804000.i2c
 internal_bustype=0018
@@ -213,6 +224,11 @@ if [ -r /etc/default/keyboard ]; then
 	value=$(sed -n 's/^XKBLAYOUT="\([^"]*\)".*/\1/p' /etc/default/keyboard 2>/dev/null |
 		head -n 1)
 	value=${value%%,*}
+	# /etc/default/keyboard now carries the generated internal layout name;
+	# the build-time cached console keymap is a plain standard layout.
+	case "$value" in
+		cpz_*) value=us ;;
+	esac
 	[ -n "$value" ] && cached_layout=$value
 fi
 
@@ -235,6 +251,78 @@ publish() {
 	{ printf '%s\n' "$1" >"$tmp"; } 2>/dev/null || return 0
 	chmod 0644 "$tmp" 2>/dev/null || true
 	mv "$tmp" "$state_file" 2>/dev/null || rm -f "$tmp"
+}
+
+# The XKB name for one of the enabled standard layouts. Most layouts provide a
+# "basic" map; use the file's default map when they do not.
+xkb_include() {
+	code=$1
+	if [ -r "$xkb_dir/$code" ] &&
+		! grep -q 'xkb_symbols "basic"' "$xkb_dir/$code"; then
+		printf '%s' "$code"
+	else
+		printf '%s(basic)' "$code"
+	fi
+}
+
+# Generate the CPZ overlay for the selected language. The template is the
+# static symbols/cpz file; only the base include and the group name change.
+# A distinct layout name per language makes localed notify kmscon when the
+# language changes (cpz_ua -> cpz_ru), while still keeping one overlay.
+write_cpz_xkb() {
+	code=$1
+	[ -r "$cpz_xkb_template" ] || return 1
+	case "$code" in
+		'' | *[!a-z0-9_-]*) return 1 ;;
+	esac
+	safe_code=$(printf '%s' "$code" | tr '-' '_')
+	if [ -r "$xkb_dir/$code" ]; then
+		include=$(xkb_include "$code")
+	else
+		include="us(basic)"
+	fi
+	dest=$xkb_dir/cpz_$safe_code
+	tmp=$(mktemp "$xkb_dir/.cpz_$safe_code.XXXXXX" 2>/dev/null) || return 1
+	if sed \
+		-e "s|include \"us(basic)\"|include \"$include\"|" \
+		-e "s|name\[Group1\] = \"CardputerZero internal\"|name[Group1] = \"CardputerZero internal ($code)\"|" \
+		"$cpz_xkb_template" >"$tmp" 2>/dev/null; then
+		chmod 0644 "$tmp" 2>/dev/null || true
+		if mv "$tmp" "$dest" 2>/dev/null; then
+			cpz_xkb_layout=cpz_$safe_code
+			return 0
+		fi
+	fi
+	rm -f "$tmp"
+	return 1
+}
+
+# Push the layout to systemd-localed. kmscon listens to Locale1 and replaces
+# the live keymap in place, so the session, DRM master and HDMI link stay
+# untouched. An unchanged value is skipped so keyboard plug/unplug events do
+# not needlessly reset the XKB state.
+publish_xkb() {
+	code=$1
+	case "$code" in
+		'' | *[!a-zA-Z0-9_-]*) return 1 ;;
+	esac
+	current=
+	if [ -r /etc/default/keyboard ]; then
+		current=$(sed -n 's/^XKBLAYOUT="\([^"]*\)".*/\1/p' \
+			/etc/default/keyboard 2>/dev/null | head -n 1)
+	fi
+	[ "$current" = "$code" ] && return 0
+	if command -v localectl >/dev/null 2>&1; then
+		if timeout 5 localectl --no-convert set-x11-keymap "$code" \
+			>/dev/null 2>&1; then
+			log "xkb layout: $code"
+			return 0
+		fi
+		log "localectl failed for xkb layout $code"
+		return 1
+	fi
+	log "localectl is not available; xkb layout $code not applied"
+	return 1
 }
 
 # Apply a keymap file to every console. Returns success if at least one console
@@ -290,9 +378,10 @@ load_standard() {
 }
 
 load_internal() {
-	# Start from a clean US base: the vendor overlay is partial, so anything
-	# left from a previously selected national layout would leak through.
-	if ! load_standard us; then
+	# Load the selected language first, then the vendor Sym/Fn overlay. The
+	# base map is complete, so nothing from a previous layout leaks through;
+	# the overlay is partial and only replaces the dedicated Sym keycodes.
+	if ! load_standard "$layout"; then
 		log "no usable base keymap before the CPZ overlay"
 	fi
 	if [ -r "$cpz_map" ]; then
@@ -305,18 +394,27 @@ load_internal() {
 apply_external() {
 	if load_standard "$layout"; then
 		publish "$applied_layout"
+		publish_xkb "$applied_layout" || true
 		log "external keyboard: $applied_layout"
 	else
 		# Never leave the internal overlay on an external keyboard.
 		log "external keyboard: no standard layout could be applied"
 		publish "$layout"
+		publish_xkb us || true
 	fi
 }
 
 apply_internal() {
 	load_internal
+	if write_cpz_xkb "$layout"; then
+		publish_xkb "$cpz_xkb_layout" || true
+	else
+		log "cannot generate CPZ XKB layout for $layout"
+		# The static layout is a US-based fallback installed by the image.
+		publish_xkb cpz || true
+	fi
 	publish cpz
-	log "internal keyboard: cpz"
+	log "internal keyboard: cpz ($layout)"
 }
 
 # The layout may change while ckbcomp/loadkeys are running (for example the

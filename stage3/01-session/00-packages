@@ -23,6 +23,7 @@ fonts-terminus-otb
 nano
 vim
 less
+mc
 lf
 file
 util-linux

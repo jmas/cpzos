@@ -3,7 +3,8 @@
 #
 # The enabled layouts live in keyboard_layouts; this updates
 # keyboard_layout_active in the user's settings and asks cpz-layout-apply (via
-# a narrow sudoers rule) to reload the console keymap.
+# a narrow sudoers rule) to apply the layout. kmscon follows systemd-localed,
+# so the keymap changes in place without restarting the session.
 set -u
 
 home=${HOME:-/root}

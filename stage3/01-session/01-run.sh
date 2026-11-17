@@ -25,10 +25,11 @@ install -m 0755 \
 	files/cpz-settings-open \
 	files/cpz-settings files/cpz-settings-shell files/cpz-status \
 	files/cpz-apply-settings files/cpz-help files/cpz-hint \
+	files/cpz-search \
 	files/cpz-first-login \
 	files/cpz-session-save files/cpz-session-restore \
 	files/cpz-session-save-as-user files/cpz-conn-status \
-	files/cpz-brightness \
+	files/cpz-brightness files/cpz-font \
 	files/cpz-keyboard-layout \
 	files/cpz-layout-next files/cpz-layout-apply files/cpz-display-toggle \
 	"${ROOTFS_DIR}/usr/local/bin/"
@@ -46,6 +47,15 @@ install -m 0644 files/cpz-keyboard-layout.service \
 install -d -m 0755 "${ROOTFS_DIR}/usr/share/X11/xkb/symbols"
 install -m 0644 files/xkb/symbols/cpz \
 	"${ROOTFS_DIR}/usr/share/X11/xkb/symbols/cpz"
+# cpz-keyboard-layout generates one CPZ layout per selected language
+# (cpz_us, cpz_ua, ...) from this template so systemd-localed can change the
+# live kmscon keymap without restarting the session. cpz_us is also installed
+# as a first-boot fallback before the helper has run.
+install -m 0644 files/xkb/symbols/cpz \
+	"${ROOTFS_DIR}/usr/share/X11/xkb/symbols/cpz_us"
+install -d -m 0755 "${ROOTFS_DIR}/usr/local/share/cpz/xkb"
+install -m 0644 files/xkb/symbols/cpz \
+	"${ROOTFS_DIR}/usr/local/share/cpz/xkb/cpz.template"
 
 # xkb-data does not name the keycode the Sym layer uses for ">" (Linux
 # KEY_ZENKAKUHANKAKU, XKB keycode 93). Name it so symbols/cpz can map it. The
@@ -68,6 +78,32 @@ install -m 0644 files/settings.conf "${ROOTFS_DIR}/etc/cpz/settings.conf"
 stat -c %Y "${ROOTFS_DIR}/etc/shadow" >"${ROOTFS_DIR}/etc/cpz/shadow-mtime"
 install -m 0644 files/themes/*.conf files/themes/*.palette \
 	"${ROOTFS_DIR}/etc/cpz/themes/"
+
+# Terminal Trove catalog snapshot. Applications reads this local index, so
+# discovery works without the network. Settings can refresh it later. The
+# index is built by the separate terminal-trove-index project.
+trove_url="${CPZ_TROVE_INDEX_URL:-https://raw.githubusercontent.com/jmas/terminal-trove-index/main/index/trove.json.gz}"
+install -d -m 0755 "${ROOTFS_DIR}/etc/cpz" "${ROOTFS_DIR}/usr/share/cpz"
+printf '%s\n' "$trove_url" >"${ROOTFS_DIR}/etc/cpz/trove-index.url"
+if [ -n "$trove_url" ]; then
+	trove_tmp="$(mktemp)"
+	if curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+		--max-filesize 20971520 "$trove_url" -o "$trove_tmp"; then
+		if gzip -t "$trove_tmp" 2>/dev/null; then
+			gzip -dc "$trove_tmp" >"${ROOTFS_DIR}/usr/share/cpz/trove-index.json"
+		else
+			cp "$trove_tmp" "${ROOTFS_DIR}/usr/share/cpz/trove-index.json"
+		fi
+		chmod 0644 "${ROOTFS_DIR}/usr/share/cpz/trove-index.json"
+		if ! grep -q '"tools"' "${ROOTFS_DIR}/usr/share/cpz/trove-index.json"; then
+			echo "stage3: invalid Terminal Trove index; removing snapshot" >&2
+			rm -f "${ROOTFS_DIR}/usr/share/cpz/trove-index.json"
+		fi
+	else
+		echo "stage3: warning: cannot download Terminal Trove index from $trove_url" >&2
+	fi
+	rm -f "$trove_tmp"
+fi
 install -m 0644 files/cpz-session-save.service files/cpz-session-save.timer \
 	files/cpz-conn-status.service files/cpz-conn-status.timer \
 	"${ROOTFS_DIR}/etc/systemd/system/"

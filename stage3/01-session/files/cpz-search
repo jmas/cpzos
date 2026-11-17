@@ -1,0 +1,813 @@
+#!/usr/bin/python3
+"""CPZ omnisearch: one fzf popup for commands, CPZ actions, Settings, files,
+Terminal Trove tools and tmux buffers.
+
+Started by Alt+O from /etc/tmux.conf. The default list is intentionally small:
+the commands in PATH, the daily CPZ tmux actions and one entry per Settings
+page. A leading prefix switches the provider, in the same spirit as Walker in
+Omarchy:
+    /   files under $HOME and the small system configuration roots
+    =   calculator
+    @   Terminal Trove tools
+    $   tmux paste buffers
+
+There is no daemon, index or new package. fzf, find, file, tmux and python3 are
+already part of the image; the search runs only while the popup is open.
+
+The item format is "kind<US>payload<US>display<US>extra". Only the display
+field is shown (--with-nth=3); fzf matches against that visible field, which is
+why file paths are absolute (a leading "/" selects and matches them) and the
+calculator line starts with the original expression. The hidden extra field
+holds the command to run for a Terminal Trove tool.
+"""
+
+from __future__ import annotations
+
+import ast
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+
+UNIT = "\x1f"
+APP_NAME = "cpz-search"
+HOME = os.path.expanduser("~")
+DEFAULT_ROOTS = (HOME, "/etc", "/usr/local", "/opt", "/srv", "/media", "/mnt")
+# Directories that are large, generated or private. They are pruned by name
+# because find(1) does not know about project layouts.
+PRUNE_NAMES = (
+    ".git",
+    ".hg",
+    ".svn",
+    ".cache",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".ruff_cache",
+    "site-packages",
+    "dist-packages",
+    "Trash",
+)
+ACTIONS = (
+    ("new-tab", "New tab"),
+    ("split-right", "Split right"),
+    ("split-down", "Split down"),
+    ("layout-next", "Next keyboard layout"),
+    ("display-toggle", "Toggle panel / HDMI"),
+    ("font-up", "Larger font"),
+    ("font-down", "Smaller font"),
+    ("settings", "Open Settings"),
+    ("save-session", "Save session"),
+)
+CALC_LIMIT = 80
+CALC_EXPONENT_LIMIT = 64
+
+
+def self_path() -> str:
+    """Return an absolute path for reload() even when argv[0] came from PATH."""
+    argument = sys.argv[0]
+    if os.sep in argument and os.path.isfile(argument):
+        return os.path.abspath(argument)
+    found = shutil.which(argument)
+    if found:
+        return os.path.abspath(found)
+    source = globals().get("__file__")
+    if isinstance(source, str) and source:
+        return os.path.abspath(source)
+    return os.path.abspath(argument)
+
+
+def script_dir() -> str:
+    """Directory that contains the helpers, also when imported by the tests."""
+    source = globals().get("__file__")
+    if isinstance(source, str) and source:
+        return os.path.dirname(os.path.abspath(source))
+    return os.path.dirname(self_path())
+
+
+def helper(name: str) -> str:
+    sibling = os.path.join(script_dir(), name)
+    if os.access(sibling, os.X_OK):
+        return sibling
+    return shutil.which(name) or os.path.join("/usr/local/bin", name)
+
+
+def settings_path() -> str | None:
+    override = os.environ.get("CPZ_SETTINGS", "").strip()
+    candidates = (
+        override,
+        os.path.join(script_dir(), "cpz-settings"),
+        "/usr/local/bin/cpz-settings",
+        shutil.which("cpz-settings") or "",
+    )
+    for candidate in candidates:
+        if candidate and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def clean_field(text: str) -> str:
+    return "".join(" " if ord(char) < 32 or char == UNIT else char for char in text)
+
+
+def usable_text(text: str) -> bool:
+    return not any(
+        ord(char) < 32 or char == UNIT or 0xD800 <= ord(char) <= 0xDFFF
+        for char in text
+    )
+
+
+def make_item(kind: str, payload: str, display: str, extra: str = "") -> str:
+    return UNIT.join(
+        (kind, clean_field(payload), clean_field(display), clean_field(extra))
+    )
+
+
+def parse_item(line: str) -> tuple[str, str, str, str] | None:
+    fields = line.split(UNIT, 3)
+    if len(fields) == 3:
+        fields.append("")
+    if len(fields) != 4:
+        return None
+    return fields[0], fields[1], fields[2], fields[3]
+
+
+def list_settings_pages(path: str | None = None) -> list[tuple[str, str]]:
+    executable = path or settings_path()
+    if not executable:
+        return []
+    try:
+        result = subprocess.run(
+            [executable, "--list-pages"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    pages = []
+    for line in result.stdout.splitlines():
+        page, separator, title = line.partition("\t")
+        if separator and page and title:
+            pages.append((page, title))
+    return pages
+
+
+def scan_apps() -> list[str]:
+    """Return executable names from PATH, preserving the first occurrence."""
+    seen = set()
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        try:
+            entries = os.scandir(directory)
+        except OSError:
+            continue
+        with entries:
+            for entry in entries:
+                name = entry.name
+                if name in seen or name == APP_NAME or not usable_text(name):
+                    continue
+                try:
+                    if entry.is_file() and os.access(entry.path, os.X_OK):
+                        seen.add(name)
+                except OSError:
+                    continue
+    return sorted(seen)
+
+
+def default_items() -> list[str]:
+    items = []
+    for action_id, label in ACTIONS:
+        items.append(make_item("action", action_id, f"{label}  [act]"))
+    for page, title in list_settings_pages():
+        items.append(make_item("settings", page, f"{title}  [set]"))
+    for name in scan_apps():
+        items.append(make_item("app", name, f"{name}  [app]"))
+    return items
+
+
+def search_roots() -> list[str]:
+    override = os.environ.get("CPZ_SEARCH_ROOTS", "").strip()
+    candidates = override.split(os.pathsep) if override else list(DEFAULT_ROOTS)
+    roots = []
+    for candidate in candidates:
+        root = os.path.abspath(os.path.expanduser(candidate.strip()))
+        if root and root not in roots and os.path.isdir(root):
+            roots.append(root)
+    return roots
+
+
+def file_items() -> list[str]:
+    roots = search_roots()
+    if not roots:
+        return []
+
+    prune = []
+    for index, name in enumerate(PRUNE_NAMES):
+        if index:
+            prune.append("-o")
+        prune.extend(("-name", name))
+    command = [
+        "find",
+        *roots,
+        "(",
+        *prune,
+        ")",
+        "-prune",
+        "-o",
+        "(",
+        "-type",
+        "f",
+        "-o",
+        "-type",
+        "d",
+        ")",
+        "-print0",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+    root_set = set(roots)
+    items = []
+    for raw in result.stdout.split(b"\0"):
+        if not raw:
+            continue
+        path = os.fsdecode(raw)
+        if path in root_set or not usable_text(path):
+            continue
+        is_dir = os.path.isdir(path)
+        tag = "dir" if is_dir else "file"
+        suffix = "/" if is_dir else ""
+        items.append(make_item("file", path, f"{path}{suffix}  [{tag}]"))
+    return items
+
+
+def parse_trove_payload(text: str) -> list[str]:
+    """Turn `cpz-settings --list-tools` JSON into fzf items."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    tools = data.get("tools") if isinstance(data, dict) else data
+    if not isinstance(tools, list):
+        return []
+    items = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        slug = str(tool.get("slug", "")).strip()
+        if not slug or not usable_text(slug):
+            continue
+        name = str(tool.get("name", "")).strip() or slug
+        command = str(tool.get("command", "")).strip()
+        if command and not usable_text(command):
+            command = ""
+        summary = str(tool.get("summary", "")).strip()
+        categories = tool.get("categories")
+        if not summary and isinstance(categories, list):
+            summary = ", ".join(str(item) for item in categories if item)
+        tag = "run" if command else "tool"
+        display = f"@{name}  [{tag}]"
+        if summary:
+            display = f"{display}  {summary}"
+        items.append(make_item("tool", slug, display, command))
+    return items
+
+
+def trove_items() -> list[str]:
+    executable = settings_path()
+    if not executable:
+        return []
+    try:
+        result = subprocess.run(
+            [executable, "--list-tools"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    return parse_trove_payload(result.stdout)
+
+
+def buffer_items() -> list[str]:
+    if not (os.environ.get("TMUX") and shutil.which("tmux")):
+        return []
+    try:
+        result = subprocess.run(
+            ["tmux", "list-buffers", "-F", "#{buffer_name}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    items = []
+    for name in result.stdout.splitlines():
+        if not name or not usable_text(name):
+            continue
+        try:
+            content = subprocess.run(
+                ["tmux", "show-buffer", "-b", name],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        preview = " ".join(content.stdout.split())[:80] or "(empty)"
+        items.append(make_item("buffer", name, f"${name}  [buf]  {preview}"))
+    return items
+
+
+def _eval_node(node: ast.AST):
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+            raise ValueError("unsupported constant")
+        return node.value
+    if isinstance(node, ast.UnaryOp):
+        value = _eval_node(node.operand)
+        if isinstance(node.op, ast.UAdd):
+            return +value
+        if isinstance(node.op, ast.USub):
+            return -value
+        raise ValueError("unsupported unary operator")
+    if isinstance(node, ast.BinOp):
+        left = _eval_node(node.left)
+        right = _eval_node(node.right)
+        if isinstance(node.op, ast.Add):
+            return left + right
+        if isinstance(node.op, ast.Sub):
+            return left - right
+        if isinstance(node.op, ast.Mult):
+            return left * right
+        if isinstance(node.op, ast.Div):
+            return left / right
+        if isinstance(node.op, ast.FloorDiv):
+            return left // right
+        if isinstance(node.op, ast.Mod):
+            return left % right
+        if isinstance(node.op, ast.Pow):
+            if abs(right) > CALC_EXPONENT_LIMIT:
+                raise ValueError("exponent too large")
+            return left**right
+        raise ValueError("unsupported operator")
+    raise ValueError("unsupported expression")
+
+
+def safe_eval(expression: str):
+    if not expression or len(expression) > CALC_LIMIT:
+        raise ValueError("expression too long")
+    tree = ast.parse(expression, mode="eval")
+    value = _eval_node(tree.body)
+    if isinstance(value, complex):
+        raise ValueError("complex result")
+    return value
+
+
+def format_number(value: int | float) -> str:
+    if isinstance(value, int):
+        return str(value)
+    if value != value or value in (float("inf"), float("-inf")):
+        raise ValueError("not a finite number")
+    return f"{value:.10g}"
+
+
+def calc_item(expression: str) -> str:
+    raw = expression[1:].strip() if expression.startswith("=") else expression.strip()
+    if not raw:
+        return make_item("calc", "", "=  type an expression  [calc]")
+    try:
+        result = format_number(safe_eval(raw))
+    except (ArithmeticError, SyntaxError, ValueError):
+        return make_item("calc", "", f"{expression}  [calc] invalid")
+    return make_item("calc", result, f"{expression} = {result}  [calc]")
+
+
+def pane_cwd() -> str:
+    if os.environ.get("TMUX") and shutil.which("tmux"):
+        try:
+            result = subprocess.run(
+                ["tmux", "display-message", "-p", "#{pane_current_path}"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            path = result.stdout.strip()
+            if path and os.path.isdir(path):
+                return path
+        except (OSError, subprocess.SubprocessError):
+            pass
+    current = os.getcwd()
+    return current if os.path.isdir(current) else HOME
+
+
+def notify(message: str) -> None:
+    message = message.replace("#", "##")
+    if os.environ.get("TMUX") and shutil.which("tmux"):
+        try:
+            subprocess.run(
+                ["tmux", "display-message", "-d", "2000", message],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+                check=False,
+            )
+            return
+        except (OSError, subprocess.SubprocessError):
+            pass
+    print(message, file=sys.stderr)
+
+
+def run_hidden(command: list[str]) -> bool:
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0
+
+
+def copy_payload(payload: str) -> None:
+    if not payload:
+        notify("cpz-search: nothing to copy")
+        return
+    if os.environ.get("TMUX") and shutil.which("tmux"):
+        if run_hidden(["tmux", "set-buffer", "--", payload]):
+            notify(f"Copied: {payload}")
+        else:
+            notify("cpz-search: cannot set the tmux buffer")
+        return
+    print(payload)
+
+
+def launch(command: list[str], cwd: str | None = None) -> None:
+    if not command:
+        return
+    directory = cwd or pane_cwd()
+    if os.environ.get("TMUX") and shutil.which("tmux"):
+        if not run_hidden(["tmux", "new-window", "-c", directory, "--", *command]):
+            notify(f"cpz-search: cannot launch {command[0]}")
+        return
+    try:
+        os.chdir(directory)
+        os.execvp(command[0], command)
+    except OSError as error:
+        notify(f"cpz-search: {error}")
+
+
+def mime_type(path: str) -> str:
+    try:
+        result = subprocess.run(
+            ["file", "--mime-type", "-b", "--", path],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip()
+
+
+def open_file(path: str) -> None:
+    if os.path.isdir(path):
+        launch(["lf"], path)
+        return
+    mime = mime_type(path)
+    is_text = (
+        mime.startswith("text/")
+        or mime in {"application/json", "application/xml", "application/x-empty"}
+        or "script" in mime
+    )
+    directory = os.path.dirname(path) or HOME
+    if is_text:
+        launch(["vim", path], directory)
+    else:
+        launch(["less", path], directory)
+
+
+def open_directory(path: str) -> None:
+    directory = path if os.path.isdir(path) else os.path.dirname(path)
+    launch(["lf"], directory or HOME)
+
+
+def run_action(action: str, cwd: str) -> None:
+    if action == "new-tab":
+        run_hidden([helper("cpz-tab-new"), "main"])
+    elif action == "split-right":
+        run_hidden(["tmux", "split-window", "-h", "-c", cwd])
+    elif action == "split-down":
+        run_hidden(["tmux", "split-window", "-v", "-c", cwd])
+    elif action == "layout-next":
+        run_hidden([helper("cpz-layout-next")])
+    elif action == "display-toggle":
+        run_hidden([helper("cpz-display-toggle")])
+    elif action == "font-up":
+        run_hidden([helper("cpz-font"), "up"])
+    elif action == "font-down":
+        run_hidden([helper("cpz-font"), "down"])
+    elif action == "settings":
+        run_hidden([helper("cpz-settings-open"), "main"])
+    elif action == "save-session":
+        run_hidden([helper("cpz-session-save")])
+    else:
+        notify(f"cpz-search: unknown action {action}")
+
+
+def exec_settings(*arguments: str) -> None:
+    executable = settings_path()
+    if not executable:
+        notify("cpz-search: cpz-settings is not installed")
+        return
+    try:
+        os.execv(executable, [executable, *arguments])
+    except OSError as error:
+        notify(f"cpz-search: {error}")
+
+
+def paste_buffer(name: str) -> None:
+    if not (os.environ.get("TMUX") and shutil.which("tmux")):
+        notify("cpz-search: not inside tmux")
+        return
+    if not run_hidden(["tmux", "paste-buffer", "-b", name, "-p"]):
+        notify(f"cpz-search: cannot paste buffer {name}")
+
+
+def dispatch(kind: str, payload: str, key: str, cwd: str, extra: str = "") -> None:
+    if key == "ctrl-y":
+        if kind == "tool" and extra:
+            copy_payload(extra)
+        else:
+            copy_payload(payload)
+        return
+    if key == "ctrl-o":
+        if kind == "file":
+            open_directory(payload)
+        elif kind == "app":
+            open_directory(cwd)
+        elif kind == "tool":
+            exec_settings("--tool", payload)
+        return
+    if kind == "app":
+        launch([payload], cwd)
+    elif kind == "file":
+        open_file(payload)
+    elif kind == "settings":
+        exec_settings("--page", payload)
+    elif kind == "tool":
+        if extra:
+            launch([extra], cwd)
+        else:
+            exec_settings("--tool", payload)
+    elif kind == "buffer":
+        paste_buffer(payload)
+    elif kind == "action":
+        run_action(payload, cwd)
+    elif kind == "calc":
+        copy_payload(payload)
+
+
+def mode_bind(temp_directory: str) -> str:
+    """Return the change:transform binding that switches providers.
+
+    The state file keeps file search from re-running find(1) on every key.
+    Calculator mode reloads on every key because the result changes with the
+    expression. $FZF_QUERY is used instead of {q} so quoting is not a concern.
+    """
+    executable = shlex.quote(self_path())
+    state = shlex.quote(os.path.join(temp_directory, "mode"))
+    query = shlex.quote(os.path.join(temp_directory, "query"))
+    # Keep the snippet to if/elif: it stays a single POSIX line and avoids
+    # case-statement syntax in a string parsed by both fzf and the login shell.
+    code = (
+        "q=$FZF_QUERY; "
+        'first=$(printf %.1s "$q"); '
+        'if [ "$first" = "/" ]; then m=files; '
+        'elif [ "$first" = "=" ]; then m=calc; '
+        'elif [ "$first" = "@" ]; then m=trove; '
+        "elif [ \"$first\" = '$' ]; then m=buffers; "
+        "else m=default; fi; "
+        'if [ "$m" = calc ]; then '
+        f'printf %s "$m" > {state}; '
+        f'printf %s "$q" > {query}; '
+        f"printf 'reload-sync(%s --calc-file %s)\\n' {executable} {query}; "
+        "exit 0; fi; "
+        f'if [ "$(cat {state} 2>/dev/null)" = "$m" ]; then exit 0; fi; '
+        f'printf %s "$m" > {state}; '
+        'if [ "$m" = files ]; then '
+        f"printf 'reload(%s --files)\\n' {executable}; "
+        'elif [ "$m" = trove ]; then '
+        f"printf 'reload-sync(%s --trove)\\n' {executable}; "
+        'elif [ "$m" = buffers ]; then '
+        f"printf 'reload-sync(%s --buffers)\\n' {executable}; "
+        "else "
+        f"printf 'reload-sync(%s --default)\\n' {executable}; "
+        "fi"
+    )
+    return f"change:transform:{code}"
+
+
+def fzf_args(temp_directory: str) -> list[str]:
+    return [
+        "--layout=reverse",
+        "--no-border",
+        "--no-separator",
+        "--no-scrollbar",
+        "--no-bold",
+        "--no-color",
+        "--no-unicode",
+        "--no-mouse",
+        "--cycle",
+        "--sync",
+        "--info=inline",
+        "--prompt=> ",
+        "--pointer=>",
+        "--marker=*",
+        f"--delimiter={UNIT}",
+        "--with-nth=3",
+        "--expect=ctrl-y,ctrl-o",
+        "--header= / files  = calc  @ tools  $ bufs  ^Y copy",
+        "--bind",
+        'enter:transform:[ -z "$FZF_QUERY" ] && echo ignore || echo accept',
+        "--bind",
+        mode_bind(temp_directory),
+    ]
+
+
+def emit(items: list[str]) -> None:
+    if items:
+        sys.stdout.write("\n".join(items) + "\n")
+
+
+def run_tui() -> int:
+    fzf = shutil.which("fzf")
+    if not fzf:
+        notify("cpz-search: fzf is not installed")
+        return 1
+
+    cwd = pane_cwd()
+    temp_directory = tempfile.mkdtemp(prefix="cpz-search-")
+    try:
+        with open(
+            os.path.join(temp_directory, "mode"), "w", encoding="utf-8"
+        ) as handle:
+            handle.write("default")
+
+        environment = os.environ.copy()
+        environment.pop("FZF_DEFAULT_OPTS", None)
+        environment.pop("FZF_DEFAULT_OPTS_FILE", None)
+        environment["FZF_DEFAULT_OPTS_FILE"] = os.devnull
+
+        result = subprocess.run(
+            [fzf, *fzf_args(temp_directory)],
+            input="\n".join(default_items()) + "\n",
+            text=True,
+            stdout=subprocess.PIPE,
+            env=environment,
+            check=False,
+        )
+        if result.returncode != 0 or not result.stdout:
+            return 0
+
+        lines = result.stdout.splitlines()
+        key = lines[0] if lines else ""
+        selected = lines[1] if len(lines) > 1 else ""
+        parsed = parse_item(selected)
+        if parsed is None:
+            return 0
+        kind, payload, _display, extra = parsed
+        # dispatch() may exec the selected app or cpz-settings, which skips
+        # the finally block; remove the provider state first.
+        shutil.rmtree(temp_directory, ignore_errors=True)
+        dispatch(kind, payload, key, cwd, extra)
+        return 0
+    finally:
+        shutil.rmtree(temp_directory, ignore_errors=True)
+
+
+def check() -> int:
+    errors = []
+    items = default_items()
+    kinds = set()
+    for line in items:
+        parsed = parse_item(line)
+        if parsed is None:
+            errors.append("default item is malformed")
+            continue
+        kinds.add(parsed[0])
+    for kind in ("action", "settings", "app"):
+        if kind not in kinds:
+            errors.append(f"missing {kind} items")
+
+    cases = (("=2+2", "4"), ("=10/4", "2.5"), ("=2**10", "1024"))
+    for expression, expected in cases:
+        parsed = parse_item(calc_item(expression))
+        if parsed is None or parsed[1] != expected:
+            errors.append(f"calc {expression}: expected {expected}")
+
+    for expression in ("=__import__('os')", "=2**999"):
+        parsed = parse_item(calc_item(expression))
+        if parsed is None or parsed[1]:
+            errors.append(f"calc {expression}: unsafe expression accepted")
+
+    trove = parse_trove_payload(
+        json.dumps(
+            {
+                "tools": [
+                    {
+                        "slug": "tmux",
+                        "name": "tmux",
+                        "summary": "terminal multiplexer",
+                        "command": "tmux",
+                    }
+                ]
+            }
+        )
+    )
+    parsed = parse_item(trove[0]) if trove else None
+    if parsed != ("tool", "tmux", "@tmux  [run]  terminal multiplexer", "tmux"):
+        errors.append("trove provider is malformed")
+
+    if errors:
+        for message in errors:
+            print(f"cpz-search: {message}", file=sys.stderr)
+        return 1
+    print(f"cpz-search: {len(items)} items, calculator and Trove OK")
+    return 0
+
+
+def main() -> int:
+    arguments = sys.argv[1:]
+    if "--check" in arguments:
+        return check()
+    if "--default" in arguments:
+        emit(default_items())
+        return 0
+    if "--files" in arguments:
+        emit(file_items())
+        return 0
+    if "--trove" in arguments:
+        emit(trove_items())
+        return 0
+    if "--buffers" in arguments:
+        emit(buffer_items())
+        return 0
+    if "--calc" in arguments:
+        index = arguments.index("--calc")
+        if index + 1 >= len(arguments):
+            print("cpz-search: --calc needs an expression", file=sys.stderr)
+            return 2
+        emit([calc_item(arguments[index + 1])])
+        return 0
+    if "--calc-file" in arguments:
+        index = arguments.index("--calc-file")
+        if index + 1 >= len(arguments):
+            print("cpz-search: --calc-file needs a path", file=sys.stderr)
+            return 2
+        try:
+            with open(arguments[index + 1], "r", encoding="utf-8") as handle:
+                expression = handle.read().strip()
+        except OSError:
+            return 0
+        emit([calc_item(expression)])
+        return 0
+
+    if not sys.stdout.isatty():
+        print("cpz-search: this is a TUI; run it from the terminal.", file=sys.stderr)
+        return 1
+    return run_tui()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

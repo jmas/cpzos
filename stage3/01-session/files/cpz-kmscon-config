@@ -1,10 +1,11 @@
 #!/bin/sh
 # Render the kmscon configuration used by cpz-kmscon.
 #
-# kmscon reads its configuration only once, at startup, and exposes no runtime
-# API for fonts, palettes or timeouts. Everything that the Settings TUI can
-# change is therefore rendered into /run/cpz-kmscon/kmscon.conf from the static
-# template /etc/kmscon/kmscon.conf plus the current settings.
+# kmscon reads most of its configuration only once, at startup, and exposes no
+# runtime API for fonts, palettes or timeouts. Those values are rendered into
+# /run/cpz-kmscon/kmscon.conf from the static template /etc/kmscon/kmscon.conf
+# plus the current settings. The keyboard layout is the exception: it is driven
+# by systemd-localed at runtime, so it is not written here.
 #
 # Prints "changed" or "same" so cpz-kmscon-output can decide whether a restart
 # is needed. The file is replaced atomically, so a concurrent kmscon start
@@ -91,11 +92,19 @@ valid_hex "$fg" || fg=$(sed -n 's/^# palette 7=//p' "$theme_conf" 2>/dev/null | 
 valid_hex "$bg" || bg=101418
 valid_hex "$fg" || fg=e6edf3
 
-# Panel Text Size is a Terminus cell height; kmscon takes a pixel font size.
-case "$(get_setting font_panel)" in
-	8x16) font_size=16 ;;
-	*) font_size=12 ;;
+# The font size is a Terminus pixel height shared by the panel and HDMI.
+# font_panel is the old key format; migrate it when no font_size exists.
+font_size=$(get_setting font_size)
+case "$font_size" in
+	'' | *[!0-9]*)
+		case "$(get_setting font_panel)" in
+			8x16) font_size=16 ;;
+			*) font_size=12 ;;
+		esac
+		;;
 esac
+[ "$font_size" -ge 10 ] || font_size=10
+[ "$font_size" -le 64 ] || font_size=64
 
 case "$(get_setting screen_timeout)" in
 	5) dpms=300 ;;
@@ -104,19 +113,10 @@ case "$(get_setting screen_timeout)" in
 	*) dpms=0 ;;
 esac
 
-# The console keymap selector publishes "cpz" while the internal TCA8418 is
-# the active keyboard and the selected XKB layout for an external keyboard.
-# kmscon needs the XKB form of the CPZ overlay; the console keymap only
-# applies to VTs.
-layout_state=$(head -n 1 /run/cpz-layout.active 2>/dev/null || true)
-if [ "$layout_state" = cpz ]; then
-	layout=cpz
-else
-	layout=$(get_setting keyboard_layout_active)
-	case "$layout" in
-		'' | *[!a-z0-9_-]*) layout=us ;;
-	esac
-fi
+# The keyboard layout is deliberately not rendered here. kmscon follows
+# systemd-localed through its Locale1 D-Bus listener and replaces the keymap in
+# place when cpz-keyboard-layout calls localectl. A layout change therefore
+# does not restart kmscon or renegotiate the HDMI link.
 
 # largest: draw on the biggest screen and stop drawing on the others, which
 # gives one working output and lets kmscon handle hotplug without a restart.
@@ -136,7 +136,6 @@ render() {
 	printf 'multi-monitor=%s\n' "$multi_monitor"
 	printf 'font-size=%s\n' "$font_size"
 	printf 'dpms-timeout=%s\n' "$dpms"
-	printf 'xkb-layout=%s\n' "$layout"
 	printf 'palette=custom\n'
 	index=0
 	while [ "$index" -le 15 ]; do

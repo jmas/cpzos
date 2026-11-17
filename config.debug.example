@@ -25,3 +25,6 @@ CPZ_DTOVERLAYS_REF="4f7aeee9fc103ebb03d22cac476bb191ecfb321e"
 
 # Optional HDMI mode pin (see config.cpz.example).
 CPZ_HDMI_VIDEO=""
+
+# Terminal Trove catalog index (see config.cpz.example). Empty uses default.
+CPZ_TROVE_INDEX_URL=""

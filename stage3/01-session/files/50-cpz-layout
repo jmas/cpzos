@@ -1,4 +1,5 @@
-# Allow members of the sudo group to reload the console keymap after Alt+Space
-# selected the next layout. The helper takes no caller-controlled arguments and
-# only starts cpz-keyboard-layout.service.
+# Allow members of the sudo group to apply the layout selected with Alt+Space.
+# The helper takes no caller-controlled arguments and only starts
+# cpz-keyboard-layout.service, which updates both the console keymap and the
+# runtime kmscon keymap.
 %sudo ALL=(root) NOPASSWD: /usr/local/bin/cpz-layout-apply

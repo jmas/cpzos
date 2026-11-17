@@ -259,6 +259,7 @@ export QUILT_REFRESH_ARGS="-p ab"
 export CPZ_DEBUG_BOOT=${CPZ_DEBUG_BOOT:-0}
 export CPZ_HDMI_VIDEO=${CPZ_HDMI_VIDEO:-}
 export CPZ_DTOVERLAYS_REF=${CPZ_DTOVERLAYS_REF:-4f7aeee9fc103ebb03d22cac476bb191ecfb321e}
+export CPZ_TROVE_INDEX_URL=${CPZ_TROVE_INDEX_URL:-}
 
 # shellcheck source=scripts/common
 source "${SCRIPT_DIR}/common"

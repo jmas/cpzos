@@ -1,0 +1,82 @@
+#!/bin/sh
+# Change the persisted kmscon font size by one pixel.
+#
+# Bound in tmux to Alt+Plus / Alt+Minus (Sym+T / Sym+R on the internal
+# keyboard) and to the Ctrl variants. The old kmscon grab-zoom keys changed the
+# runtime size only, so a layout change or any session restart reset it. This
+# helper writes the new size to the CPZ settings instead: cpz-kmscon-config
+# renders it as font-size and cpz-kmscon-output restarts the session within two
+# seconds (tmux and the panes survive). The value is then the single source of
+# truth for Settings and for the next boot.
+set -u
+
+step=
+case "${1:-}" in
+	up | +1 | 1) step=1 ;;
+	down | -1) step=-1 ;;
+	*)
+		printf 'usage: %s up|down\n' "${0##*/}" >&2
+		exit 2
+		;;
+esac
+
+home=${HOME:-/root}
+user_settings=${XDG_CONFIG_HOME:-$home/.config}/cpz/settings.conf
+system_settings=/etc/cpz/settings.conf
+font_min=10
+font_max=64
+font_default=12
+
+get() {
+	for file in "$user_settings" "$system_settings"; do
+		[ -r "$file" ] || continue
+		value=$(sed -n "s/^$1=//p" "$file" | tail -n 1)
+		[ -n "$value" ] && { printf '%s' "$value"; return 0; }
+	done
+	return 0
+}
+
+font_size=$(get font_size)
+case "$font_size" in
+	'' | *[!0-9]*)
+		# Older user files only had the two cell-size presets.
+		case "$(get font_panel)" in
+			8x16) font_size=16 ;;
+			*) font_size=$font_default ;;
+		esac
+		;;
+esac
+[ "$font_size" -ge "$font_min" ] || font_size=$font_min
+[ "$font_size" -le "$font_max" ] || font_size=$font_max
+
+font_size=$((font_size + step))
+[ "$font_size" -ge "$font_min" ] || font_size=$font_min
+[ "$font_size" -le "$font_max" ] || font_size=$font_max
+
+# Update only font_size, preserving every other setting. Drop the obsolete
+# font_panel/font_hdmi keys so an old value can never be parsed after the new
+# font_size.
+mkdir -p "$(dirname "$user_settings")" 2>/dev/null || true
+tmp="${user_settings}.tmp.$$"
+if [ -r "$user_settings" ]; then
+	awk -v size="$font_size" '
+		BEGIN { done = 0 }
+		/^font_panel=/ { next }
+		/^font_hdmi=/ { next }
+		/^font_size=/ {
+			if (!done) { print "font_size=" size; done = 1 }
+			next
+		}
+		{ print }
+		END { if (!done) print "font_size=" size }
+	' "$user_settings" >"$tmp" || { rm -f "$tmp"; exit 1; }
+else
+	printf '# CPZ user settings. Written by cpz-settings.\nfont_size=%s\n' \
+		"$font_size" >"$tmp" || exit 1
+fi
+chmod 0644 "$tmp" 2>/dev/null || true
+mv "$tmp" "$user_settings" 2>/dev/null || { rm -f "$tmp"; exit 1; }
+
+if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+	tmux display-message -d 2000 "font: ${font_size}px" >/dev/null 2>&1 || true
+fi

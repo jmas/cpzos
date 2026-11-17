@@ -9,7 +9,8 @@
 #   display=hdmi: HDMI while a monitor is connected, panel otherwise.
 #   display=panel: the panel; kmscon is rendered in clone mode so the panel is
 #     drawn even while HDMI is attached.
-#   --auto / --panel / --hdmi: override the setting for one run.
+#   --auto: clear a one-run override and follow the persisted setting again.
+#   --panel / --hdmi: override the setting for one run.
 #   --force: re-render the kmscon configuration and restart the session.
 #   --recover: restart the session (HDMI link recovery).
 #   --status: print the decision and the DRM connector state.
@@ -33,7 +34,7 @@ recover=0
 override=""
 for arg in "$@"; do
 	case "$arg" in
-		--auto) override=auto ;;
+		--auto) override="" ;;
 		--panel) override=panel; force=1 ;;
 		--hdmi) override=hdmi; force=1 ;;
 		--force) force=1 ;;

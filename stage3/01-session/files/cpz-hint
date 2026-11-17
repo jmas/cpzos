@@ -14,5 +14,5 @@ fi
 [ -n "$client" ] || exit 0
 
 tmux display-message -c "$client" -d 5000 \
-	'Alt: L/R tabs  Up/Down scroll  S settings  H help' \
+	'Alt: L/R tabs  V/B split  N/P pane  S settings  H help' \
 	2>/dev/null || true

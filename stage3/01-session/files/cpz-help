@@ -7,45 +7,45 @@
 keys() {
 	cat <<'EOF'
 CPZ keys
+Every action below is a direct Alt+key binding: no tmux prefix is needed.
 ==== Tabs ====
  Alt+Left / Alt+Right  prev / next tab
  Alt+1 .. Alt+9        select tab
  Alt+T                 new tab
  Alt+W                 close tab (asks)
- Ctrl-b c              new tab
- Ctrl-b n / p          next / prev tab
- Ctrl-b 0 .. 9         select tab by number
- Ctrl-b ,              rename tab
- Ctrl-b &              close tab (asks)
- Ctrl-b w              list tabs
+ Alt+R                 rename tab
+ Alt+L                 list tabs
 ==== Panes ====
- Ctrl-b %              split left / right
- Ctrl-b "              split top / bottom
- Ctrl-b o              next pane
- Ctrl-b z              zoom pane
- Ctrl-b x              close pane (asks)
- Ctrl-b { / }          swap pane prev / next
+ Alt+V                 split left / right
+ Alt+B                 split top / bottom
+ Alt+N / Alt+P         next / previous pane
+ Alt+Z                 zoom pane
+ Alt+X                 close pane (asks)
+ Alt+J / Alt+K         swap pane prev / next
 ==== Scroll and copy ====
- Alt+Up / Alt+Down    enter copy mode, scroll
- Alt+PageUp / PgDown  page history (full keyboard)
- Fn+L / Fn+M          page up / down
- Ctrl-b [             copy mode (vi keys)
- j / k or Up / Down   line down / up
- Space                start / stop selection
- Enter                copy selection
- q                    leave copy mode
- Ctrl-b ]             paste a buffer
-==== Session ====
- Ctrl-b d              detach
- Ctrl-b ?              every tmux key
-==== Device ====
+ Alt+Up / Alt+Down     enter copy mode, scroll
+ Alt+PageUp / PgDown   page history (full keyboard)
+ Fn+L / Fn+M           page up / down
+ Alt+C                 copy mode (vi keys)
+ j / k or Up / Down    line down / up
+ Space                 start / stop selection
+ Enter                 copy selection
+ q                     leave copy mode
+ Alt+Y                 paste tmux buffer
+==== Session and device ====
+ Alt+Q                 detach
  Alt+S                 Settings
  Alt+H                 this help
+ Alt+O                 search everything
  Alt+Plus / Alt+Minus  larger / smaller font (Sym+T / Sym+R)
  Ctrl+Plus / Ctrl+Minus  larger / smaller font
- Alt+Space             switch input layout
+                       the size is saved in Settings
+ Alt+I / Alt+Space     switch input layout
  Alt+D                 CPZ panel / auto display
  In Settings           Z/X/C/F move (Fn off)
+==== Search (Alt+O) ====
+ / files   = calc   @ tools   $ buffers
+ Enter open/run   Ctrl+Y copy   Ctrl+O dir
 EOF
 }
 

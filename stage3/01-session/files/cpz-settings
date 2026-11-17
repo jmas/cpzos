@@ -13,13 +13,18 @@ from __future__ import annotations
 import calendar
 import curses
 import glob
+import gzip
+import json
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import textwrap
+import urllib.error
+import urllib.request
 from datetime import datetime
 from typing import Any
 
@@ -34,43 +39,14 @@ DISPLAY_MODES = ("auto", "panel", "hdmi")
 SCREEN_TIMEOUTS = (0, 5, 10, 30)
 MODE_KEYS = ("vi", "emacs")
 STATUS_INTERVALS = (1, 2, 5)
-# Console font cell sizes (width x height, pixels). The panel is 320x170, so
-# 6x12 gives 53x14 cells and 8x16 gives 40x10. HDMI auto keeps about 25 rows
-# and scales a Terminus base font when the packaged sizes are too small; an
-# explicit entry pins that cell size.
-FONT_PANEL_CHOICES = ("6x12", "8x16")
-FONT_HDMI_CHOICES = (
-    "auto",
-    "32x64",
-    "28x56",
-    "24x48",
-    "20x40",
-    "16x32",
-    "14x28",
-    "12x24",
-    "11x22",
-    "10x20",
-    "10x18",
-    "6x12",
-)
-FONT_PANEL_LABELS = {
-    "6x12": "6x12 (normal)",
-    "8x16": "8x16 (large)",
-}
-FONT_HDMI_LABELS = {
-    "auto": "Auto (large)",
-    "32x64": "32x64",
-    "28x56": "28x56",
-    "24x48": "24x48",
-    "20x40": "20x40",
-    "16x32": "16x32",
-    "14x28": "14x28",
-    "12x24": "12x24",
-    "11x22": "11x22",
-    "10x20": "10x20",
-    "10x18": "10x18",
-    "6x12": "6x12 (smallest)",
-}
+# kmscon font size in pixels, shared by the internal panel and HDMI. This is
+# the same scale as kmscon's runtime zoom and the +/- key bindings: cpz-font
+# clamps to the same range. The old 6x12/8x16 presets were 12px/16px.
+FONT_SIZE_MIN = 10
+FONT_SIZE_MAX = 64
+FONT_SIZES = tuple(range(FONT_SIZE_MIN, FONT_SIZE_MAX + 1))
+FONT_SIZE_LABELS = {size: f"{size}px" for size in FONT_SIZES}
+LEGACY_FONT_PANEL = {"6x12": 12, "8x16": 16}
 
 # Arrow-key aliases for the internal CPZ keyboard when Fn is off. The Fn layer
 # uses F/X/Z/C for up/down/left/right, so those letters navigate Settings too.
@@ -79,32 +55,10 @@ NAV_DOWN = (curses.KEY_DOWN, ord("j"), ord("x"))
 NAV_LEFT = (curses.KEY_LEFT, ord("h"), ord("z"))
 NAV_RIGHT = (curses.KEY_RIGHT, ord("l"), ord("c"))
 # Console layouts. The full list comes from xkb-data so every layout packaged
-# for XKB is selectable without editing this file. Fall back to a small set when
+# for XKB is selectable without editing this file. The list is sorted by
+# language name so the picker stays easy to scan. Fall back to a small set when
 # the rules file is not installed (e.g. running cpz-settings on a host).
 XKB_LAYOUTS_FILE = "/usr/share/X11/xkb/rules/evdev.lst"
-PREFERRED_LAYOUTS = (
-    "us",
-    "gb",
-    "ua",
-    "ru",
-    "de",
-    "fr",
-    "es",
-    "it",
-    "pl",
-    "pt",
-    "nl",
-    "cz",
-    "se",
-    "no",
-    "dk",
-    "fi",
-    "gr",
-    "tr",
-    "il",
-    "jp",
-    "kr",
-)
 FALLBACK_LAYOUTS = (
     ("us", "English (US)"),
     ("gb", "English (UK)"),
@@ -128,6 +82,11 @@ FALLBACK_LAYOUTS = (
     ("jp", "Japanese"),
     ("kr", "Korean"),
 )
+
+
+def sort_layouts(layouts) -> tuple:
+    """Return layout (code, label) pairs ordered alphabetically by label."""
+    return tuple(sorted(layouts, key=lambda item: (item[1].casefold(), item[0])))
 
 
 def read_layouts() -> tuple:
@@ -156,15 +115,10 @@ def read_layouts() -> tuple:
                 seen.add(code)
                 layouts.append((code, label))
     except OSError:
-        return FALLBACK_LAYOUTS
+        return sort_layouts(FALLBACK_LAYOUTS)
     if not layouts:
-        return FALLBACK_LAYOUTS
-    labels = dict(layouts)
-    preferred = [
-        (code, labels[code]) for code in PREFERRED_LAYOUTS if code in labels
-    ]
-    rest = [item for item in layouts if item[0] not in PREFERRED_LAYOUTS]
-    return tuple(preferred + rest)
+        return sort_layouts(FALLBACK_LAYOUTS)
+    return sort_layouts(layouts)
 
 
 LAYOUTS = read_layouts()
@@ -211,7 +165,10 @@ def read_timezones() -> tuple:
     preferred = [
         zone for zone in COMMON_TIMEZONES if zone in seen or zone == "UTC"
     ]
-    rest = [zone for zone in zones if zone not in COMMON_TIMEZONES]
+    rest = sorted(
+        (zone for zone in zones if zone not in COMMON_TIMEZONES),
+        key=str.lower,
+    )
     return tuple(preferred + rest)
 
 
@@ -235,8 +192,7 @@ DEFAULTS: dict[str, Any] = {
     "show_bt": 1,
     "show_layout": 1,
     "display": "auto",
-    "font_panel": "6x12",
-    "font_hdmi": "auto",
+    "font_size": 12,
     "brightness": 100,
     "screen_timeout": 0,
     "mouse": 0,
@@ -302,10 +258,14 @@ def user_settings_path() -> str:
 
 
 def available_themes() -> list[str]:
-    names = {
-        os.path.splitext(os.path.basename(path))[0]
-        for path in glob.glob(os.path.join(THEME_DIR, "*.conf"))
-    }
+    names = set()
+    for path in glob.glob(os.path.join(THEME_DIR, "*.conf")):
+        name = os.path.splitext(os.path.basename(path))[0]
+        # Keep the same character set the renderers accept. A file called
+        # "my.theme.conf" would otherwise be listed in Settings and then
+        # silently fall back to Campbell when it is applied.
+        if re.fullmatch(r"[A-Za-z0-9_-]+", name):
+            names.add(name)
     ordered = [name for name in THEME_ORDER if name in names]
     ordered.extend(sorted(names - set(THEME_ORDER)))
     return ordered or [DEFAULTS["theme"]]
@@ -368,14 +328,23 @@ def parse_file(path: str, data: dict) -> None:
                 key, value = line.split("=", 1)
                 key = key.strip()
                 value = value.strip().strip('"')
+                if key == "font_panel":
+                    # Pre-font_size setting: 6x12/8x16 were 12px/16px.
+                    try:
+                        data["font_size"] = LEGACY_FONT_PANEL[value]
+                    except KeyError:
+                        pass
+                    continue
+                if key == "font_hdmi":
+                    # Never used on the kmscon branch; ignore it so an old
+                    # HDMI-only choice cannot make the shared panel font huge.
+                    continue
                 if key not in data:
                     continue
                 if key in (
                     "theme",
                     "date_format",
                     "display",
-                    "font_panel",
-                    "font_hdmi",
                     "mode_keys",
                     "keyboard_layout",
                     "keyboard_layouts",
@@ -404,10 +373,11 @@ def load_settings() -> dict:
         data["date_format"] = DEFAULTS["date_format"]
     if data["display"] not in DISPLAY_MODES:
         data["display"] = DEFAULTS["display"]
-    if data["font_panel"] not in FONT_PANEL_CHOICES:
-        data["font_panel"] = DEFAULTS["font_panel"]
-    if data["font_hdmi"] not in FONT_HDMI_CHOICES:
-        data["font_hdmi"] = DEFAULTS["font_hdmi"]
+    try:
+        font_size = int(data["font_size"])
+    except (TypeError, ValueError):
+        font_size = DEFAULTS["font_size"]
+    data["font_size"] = max(FONT_SIZE_MIN, min(FONT_SIZE_MAX, font_size))
     if data["mode_keys"] not in MODE_KEYS:
         data["mode_keys"] = DEFAULTS["mode_keys"]
     if data["keyboard_layout"] not in ("auto", "cpz", "standard"):
@@ -467,8 +437,7 @@ def save_settings(data: dict) -> None:
             "show_bt",
             "show_layout",
             "display",
-            "font_panel",
-            "font_hdmi",
+            "font_size",
             "brightness",
             "screen_timeout",
             "mouse",
@@ -525,7 +494,8 @@ def refresh_clients(status_only: bool = False) -> None:
 def status_right_length(data: dict) -> int:
     # Reserve three columns for the layout code (e.g. "UA "), three for the
     # volume token (e.g. "V4 ") and four for the brightness token (e.g. "B10 ").
-    extra = 3 if data.get("show_layout") else 0
+    # With a single enabled layout cpz-status hides the layout token.
+    extra = 3 if data.get("show_layout") and len(layout_codes(data)) > 1 else 0
     if data.get("show_volume"):
         extra += 3
     if data.get("show_brightness"):
@@ -552,10 +522,11 @@ def apply_live(data: dict, key: str) -> None:
         apply_screen_timeout(data["screen_timeout"])
     elif key == "display":
         pass
-    elif key in ("font_panel", "font_hdmi"):
+    elif key == "font_size":
         # cpz-kmscon-config renders the font size and cpz-kmscon-output
         # restarts the session within two seconds; no privileged call is
-        # needed from the Settings pane.
+        # needed from the Settings pane. cpz-font writes the same key from the
+        # +/- bindings, so both paths share one persisted value.
         pass
     elif key == "mode_keys":
         tmux("set", "-g", "mode-keys", data["mode_keys"])
@@ -1150,6 +1121,8 @@ def value_text(
         return SCREEN_TIMEOUT_LABELS.get(data["screen_timeout"], str(data["screen_timeout"]))
     if key == "brightness":
         return f"{data['brightness']}%"
+    if key == "font_size":
+        return f"{data['font_size']}px"
     if key == "status_interval":
         return f"{data['status_interval']}s"
     if key == "mode_keys":
@@ -1853,42 +1826,40 @@ def load_info() -> str:
 def help_lines() -> list:
     return [
         "CPZ keys",
+        "Every action is a direct Alt+key binding; no prefix is needed.",
         "",
         "Tabs",
         "Alt+Left/Right    previous / next tab",
         "Alt+1 .. 9        select tab",
         "Alt+T             new tab",
         "Alt+W             close tab (asks)",
-        "Ctrl-b n / p      next / previous tab",
-        "Ctrl-b 0 .. 9     select tab by number",
-        "Ctrl-b ,          rename tab",
-        "Ctrl-b &          close tab (asks)",
-        "Ctrl-b w          list tabs",
+        "Alt+R             rename tab",
+        "Alt+L             list tabs",
         "",
         "Panes",
-        "Ctrl-b %          split left / right",
-        'Ctrl-b "          split top / bottom',
-        "Ctrl-b o          next pane",
-        "Ctrl-b z          zoom pane",
-        "Ctrl-b x          close pane (asks)",
-        "Ctrl-b { / }      swap pane previous / next",
+        "Alt+V             split left / right",
+        "Alt+B             split top / bottom",
+        "Alt+N / Alt+P     next / previous pane",
+        "Alt+Z             zoom pane",
+        "Alt+X             close pane (asks)",
+        "Alt+J / Alt+K     swap pane previous / next",
         "",
         "Scroll and copy",
         "Alt+Up / Alt+Down enter copy mode, scroll",
         "Alt+PageUp/PgDown page history",
         "Fn+L / Fn+M       page up / down",
-        "Ctrl-b [          scroll / copy (vi keys)",
+        "Alt+C             copy mode (vi keys)",
         "j / k or Up/Down  line down / up",
         "Space, Enter      select, then copy",
         "q                 leave copy mode",
-        "Ctrl-b ]          paste tmux buffer",
+        "Alt+Y             paste tmux buffer",
         "",
         "Session and device",
-        "Ctrl-b d          detach",
-        "Ctrl-b ?          all tmux keys",
+        "Alt+Q             detach",
         "Alt+S             Settings",
         "Alt+H             key help",
-        "Alt+Space         switch input layout",
+        "Alt+Plus/Minus    font size (persisted)",
+        "Alt+I / Alt+Space switch input layout",
         "Alt+D             CPZ panel / auto display",
         "In Settings       Z/X/C/F move (Fn off)",
     ]
@@ -2079,102 +2050,26 @@ def show_resources(screen, _data) -> None:
     run_interactive(screen, ["htop"])
 
 
-# Package browser. The screen reads dpkg/apt metadata directly instead of
-# shelling out to aptitude: the image is terminal-only, so only packages that
-# actually ship a command (and are not tied to a GUI toolkit) are listed.
-PKG_STATUS_FILE = "/var/lib/dpkg/status"
-PKG_INFO_DIR = "/var/lib/dpkg/info"
-PKG_EXEC_DIRS = (
-    "/bin/",
-    "/sbin/",
-    "/usr/bin/",
-    "/usr/sbin/",
-    "/usr/games/",
-    "/usr/local/bin/",
-    "/usr/local/sbin/",
+# Terminal Trove applications. The catalog is a static index built by the
+# separate terminal-trove-index project and downloaded to the image. Only apt
+# packages can be installed and removed by this manager; every other tool is
+# discovered here but its install instructions are shown to the user instead.
+TROVE_INDEX_SYSTEM = "/usr/share/cpz/trove-index.json"
+TROVE_INDEX_URL_FILE = "/etc/cpz/trove-index.url"
+TROVE_INDEX_DEFAULT_URL = (
+    "https://raw.githubusercontent.com/jmas/terminal-trove-index/"
+    "main/index/trove.json.gz"
 )
-PKG_DESKTOP_DIR = "/usr/share/applications/"
-# Dependencies that mean "this package needs a graphical session". Matching a
-# library name is a heuristic, but on a terminal image it is accurate enough
-# and keeps the catalogue free of GTK/Qt programs.
-PKG_GUI_LIBS = (
-    "libgdk",
-    "libgtk",
-    "libqt",
-    "libx11",
-    "libxcb",
-    "libwayland",
-    "libsdl",
-    "libgl1",
-    "libegl",
-    "libvulkan",
-    "libwx",
-    "libfox",
-    "libfltk",
-    "libgtkmm",
-    "libpango",
-    "libxrandr",
-    "libxinerama",
-    "libxcursor",
-    "libxfce",
-    "libkf5",
-    "libkf6",
-    "libmate",
+TROVE_APT_INSTALL = (
+    "env",
+    "DEBIAN_FRONTEND=noninteractive",
+    "APT_LISTCHANGES_FRONTEND=none",
+    "apt-get",
+    "install",
+    "-y",
+    "--no-install-recommends",
 )
-PKG_GUI_SECTIONS = frozenset(
-    {
-        "gnome",
-        "kde",
-        "xfce",
-        "lxde",
-        "lxqt",
-        "mate",
-        "cinnamon",
-        "x11",
-        "wayland",
-        "fonts",
-    }
-)
-# Sections that describe programs. Packages from other sections (libs, doc,
-# localisation, desktop add-ons) are never shown in the "Available" tab.
-PKG_SECTION_LABELS = {
-    "admin": "System",
-    "utils": "Utilities",
-    "net": "Network",
-    "comm": "Communication",
-    "editors": "Editors",
-    "shells": "Shells",
-    "text": "Text",
-    "mail": "Mail",
-    "news": "News",
-    "games": "Games",
-    "sound": "Sound",
-    "video": "Video",
-    "graphics": "Graphics",
-    "devel": "Development",
-    "vcs": "Version Control",
-    "database": "Databases",
-    "math": "Math",
-    "science": "Science",
-    "electronics": "Electronics",
-    "embedded": "Embedded",
-    "kernel": "Kernel",
-    "otherosfs": "Other OS",
-    "hamradio": "Ham radio",
-    "web": "Web",
-    "misc": "Misc",
-}
-PKG_SKIP_SUFFIXES = (
-    "-dev",
-    "-dbg",
-    "-dbgsym",
-    "-doc",
-    "-docs",
-    "-data",
-    "-common",
-    "-headers",
-)
-# Removing any of these would break the terminal session or the updater.
+APT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]*$")
 PKG_CORE = frozenset(
     {
         "apt",
@@ -2200,310 +2095,737 @@ PKG_CORE = frozenset(
 )
 
 
-def iter_deb822(lines):
-    """Yield deb822 stanzas (dicts of field -> value) from an iterable."""
-    stanza: dict[str, str] = {}
-    field = ""
-    for raw in lines:
-        line = raw.rstrip("\n")
-        if not line.strip():
-            if stanza:
-                yield stanza
-                stanza = {}
-            field = ""
-            continue
-        if line[:1] in (" ", "\t"):
-            if field:
-                stanza[field] += "\n" + line.strip()
-            continue
-        name, separator, value = line.partition(":")
-        if not separator:
-            continue
-        field = name.strip()
-        stanza[field] = value.strip()
-    if stanza:
-        yield stanza
+def trove_cache_path() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache"
+    )
+    return os.path.join(base, "cpz", "trove-index.json")
 
 
-def parse_deb822(text: str) -> list[dict[str, str]]:
-    return list(iter_deb822(text.splitlines()))
+def trove_state_path() -> str:
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state"
+    )
+    return os.path.join(base, "cpz", "trove-apps.json")
 
 
-def summary_line(description: str) -> str:
-    return description.splitlines()[0].strip() if description else ""
+def trove_index_url() -> str:
+    override = os.environ.get("CPZ_TROVE_INDEX_URL", "").strip()
+    if override:
+        return override
+    try:
+        with open(TROVE_INDEX_URL_FILE, "r", encoding="utf-8") as handle:
+            value = handle.read().strip()
+            if value:
+                return value
+    except OSError:
+        pass
+    return TROVE_INDEX_DEFAULT_URL
 
 
-def long_description(description: str) -> str:
-    lines = description.splitlines()[1:]
-    while lines and not lines[0].strip(". "):
-        lines.pop(0)
-    return " ".join(line.strip() for line in lines if line.strip() not in ("", "."))
+def read_json_file(path: str):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
 
 
-def normalize_section(section: str) -> str:
-    # "non-free/utils" and similar component prefixes are not categories.
-    return (section or "").strip().split("/")[-1].strip().lower() or "misc"
+def valid_trove_index(data) -> bool:
+    return (
+        isinstance(data, dict)
+        and data.get("schema") == 1
+        and isinstance(data.get("tools"), list)
+    )
 
 
-def section_label(section: str) -> str:
-    name = normalize_section(section)
-    return PKG_SECTION_LABELS.get(name, name.replace("-", " ").title())
-
-
-def files_have_program(files) -> bool:
-    for path in files:
-        for prefix in PKG_EXEC_DIRS:
-            if path.startswith(prefix) and "/" not in path[len(prefix) :]:
-                return True
-    return False
-
-
-def package_looks_gui(section: str, depends: str, files=()) -> bool:
-    if any(path.startswith(PKG_DESKTOP_DIR) for path in files):
-        return True
-    if normalize_section(section) in PKG_GUI_SECTIONS:
-        return True
-    dependencies = depends.lower()
-    return any(library in dependencies for library in PKG_GUI_LIBS)
-
-
-def package_record(
-    stanza: dict, installed: bool, section: str, depends: str
-) -> dict[str, Any]:
-    description = stanza.get("Description", "")
+def normalize_trove_tool(raw) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    slug = str(raw.get("slug", "")).strip()
+    name = str(raw.get("name", "")).strip() or slug
+    if not slug or not name:
+        return None
+    categories = []
+    for item in raw.get("categories") or []:
+        value = str(item).strip()
+        if value and value not in categories:
+            categories.append(value)
+    platforms = []
+    for item in raw.get("platforms") or []:
+        value = str(item).strip()
+        if value and value not in platforms:
+            platforms.append(value)
+    install = raw.get("install")
+    apt = raw.get("apt")
     return {
-        "name": stanza.get("Package", ""),
-        "version": stanza.get("Version", ""),
-        "section": section,
-        "summary": summary_line(description),
-        "description": description,
-        "size": stanza.get("Installed-Size", ""),
-        "priority": stanza.get("Priority", ""),
-        "essential": stanza.get("Essential", "").lower() == "yes",
-        "depends": depends,
-        "installed": installed,
+        "slug": slug,
+        "name": name,
+        "url": str(raw.get("url", "")).strip()
+        or f"https://terminaltrove.com/{slug}/",
+        "summary": str(raw.get("summary", "")).strip(),
+        "description": str(raw.get("description", "")).strip(),
+        "language": str(raw.get("language", "")).strip().lower(),
+        "language_label": str(raw.get("language_label", "")).strip(),
+        "categories": categories,
+        "platforms": platforms,
+        "install": install if isinstance(install, dict) else {},
+        "apt": apt if isinstance(apt, dict) else {},
+        "website": str(raw.get("website", "")).strip(),
+        "source": str(raw.get("source", "")).strip(),
+        "license": str(raw.get("license", "")).strip(),
+        "stars": raw.get("stars") if isinstance(raw.get("stars"), int) else 0,
+        "release": str(raw.get("release", "")).strip(),
     }
 
 
-def read_package_files(name: str, architecture: str, info_dir: str) -> tuple:
-    for candidate in (f"{name}:{architecture}", name):
-        if not candidate:
-            continue
+def load_trove_index() -> dict[str, Any]:
+    empty: dict[str, Any] = {
+        "schema": 1,
+        "tools": [],
+        "categories": [],
+        "languages": [],
+        "count": 0,
+        "path": "",
+    }
+    candidates: list[tuple[str, str, dict[str, Any]]] = []
+    for path in (trove_cache_path(), TROVE_INDEX_SYSTEM):
         try:
-            with open(
-                os.path.join(info_dir, candidate + ".list"),
-                "r",
-                encoding="utf-8",
-                errors="replace",
-            ) as handle:
-                return tuple(line.strip() for line in handle if line.strip())
+            if os.path.getsize(path) > 50 * 1024 * 1024:
+                continue
         except OSError:
             continue
-    return ()
+        data = read_json_file(path)
+        if not valid_trove_index(data):
+            continue
+        generated = str(data.get("generated_at", ""))
+        candidates.append((generated, path, data))
+    if not candidates:
+        return empty
+    for _generated, path, data in sorted(
+        candidates, key=lambda item: item[0], reverse=True
+    ):
+        tools = []
+        for raw in data["tools"]:
+            tool = normalize_trove_tool(raw)
+            if tool:
+                tools.append(tool)
+        if not tools:
+            continue
+        data["tools"] = tools
+        data["path"] = path
+        data["count"] = len(tools)
+        return data
+    return empty
 
 
-def read_installed_packages(
-    status_path: str = PKG_STATUS_FILE, info_dir: str = PKG_INFO_DIR
-) -> tuple[list[dict[str, Any]], set]:
-    """Return terminal packages plus the names of every installed package."""
-    packages: list[dict[str, Any]] = []
-    names: set = set()
+def download_trove_index() -> tuple[bool, str]:
+    url = trove_index_url()
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "cpz-settings/1"}
+    )
     try:
-        with open(status_path, "r", encoding="utf-8", errors="replace") as handle:
-            for stanza in iter_deb822(handle):
-                name = stanza.get("Package", "")
-                status = stanza.get("Status", "").split()
-                if not name or not status or status[-1] != "installed":
-                    continue
-                names.add(name)
-                section = normalize_section(stanza.get("Section", ""))
-                depends = " ".join(
-                    (
-                        stanza.get("Pre-Depends", ""),
-                        stanza.get("Depends", ""),
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read(20 * 1024 * 1024 + 1)
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        return False, "Catalog update failed: " + (
+            error_line(str(error)) or "network error"
+        )
+    if len(raw) > 20 * 1024 * 1024:
+        return False, "Catalog update failed: index is too large"
+    if raw[:2] == b"\x1f\x8b":
+        try:
+            raw = gzip.decompress(raw)
+        except OSError:
+            return False, "Catalog update failed: bad gzip data"
+    if len(raw) > 50 * 1024 * 1024:
+        return False, "Catalog update failed: index is too large"
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return False, "Catalog update failed: invalid JSON"
+    if not valid_trove_index(data):
+        return False, "Catalog update failed: unsupported index"
+    if not data.get("tools"):
+        return False, "Catalog update failed: empty index"
+    path = trove_cache_path()
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        temp = path + ".tmp"
+        with open(temp, "wb") as handle:
+            handle.write(raw)
+        os.replace(temp, path)
+    except OSError as error:
+        return False, "Catalog update failed: " + (
+            error_line(str(error)) or "cannot write cache"
+        )
+    return True, f"Catalog updated: {len(data.get('tools', []))} tools"
+
+
+def apt_command_package(command: str) -> str:
+    """Return the package from a Debian/Ubuntu apt install command."""
+    if not command:
+        return ""
+    text = re.split(r"[;&|]", command.strip(), maxsplit=1)[0].strip()
+    match = re.search(
+        r"(?:^|\s)(?:sudo\s+(?:-\S+\s+)*)?(?:env\s+\S+\s+)*"
+        r"(?:[A-Z_][A-Z0-9_]*=\S+\s+)*apt(?:-get)?\s+"
+        r"(?:install|add)\s+(.+)$",
+        text,
+    )
+    if not match:
+        return ""
+    try:
+        tokens = shlex.split(match.group(1))
+    except ValueError:
+        tokens = match.group(1).split()
+    skip_next = False
+    for token in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if token.startswith("-"):
+            if token in ("-t", "--target-release", "-o"):
+                skip_next = True
+            continue
+        if "/" in token or token.startswith((".", "~")):
+            return ""
+        name = token.split("=", 1)[0].split(":", 1)[0]
+        if APT_NAME_RE.fullmatch(name):
+            return name
+    return ""
+
+
+def catalog_trove_apt(tool: dict[str, Any]) -> dict[str, str]:
+    apt = tool.get("apt")
+    if isinstance(apt, dict):
+        package = str(apt.get("package", "")).strip()
+        command = str(apt.get("command", "")).strip()
+        if APT_NAME_RE.fullmatch(package):
+            return {
+                "package": package,
+                "command": command or f"apt install {package}",
+            }
+    install = tool.get("install")
+    if isinstance(install, dict):
+        for platform_name in ("linux", "debian", "ubuntu"):
+            entries = install.get(platform_name)
+            if isinstance(entries, dict):
+                for manager, command in entries.items():
+                    lowered = str(manager).lower()
+                    if "ubuntu" not in lowered and "debian" not in lowered:
+                        continue
+                    package = apt_command_package(str(command))
+                    if package:
+                        return {"package": package, "command": str(command)}
+            elif isinstance(entries, str):
+                package = apt_command_package(entries)
+                if package:
+                    return {"package": package, "command": entries}
+    return {}
+
+
+def package_from_text(value: str) -> str:
+    name = re.sub(r"[^a-z0-9+.-]+", "-", value.lower()).strip("-.")
+    return name if APT_NAME_RE.fullmatch(name) else ""
+
+
+def apt_status(package: str) -> dict[str, str]:
+    if not APT_NAME_RE.fullmatch(package):
+        return {"package": package, "status": "missing", "version": ""}
+    rc, out, _ = nm_run(
+        ["dpkg-query", "-W", "-f=${Status}\n${Version}\n", package], timeout=10
+    )
+    lines = out.splitlines()
+    if rc == 0 and lines and "install ok installed" in lines[0]:
+        return {
+            "package": package,
+            "status": "installed",
+            "version": lines[1] if len(lines) > 1 else "",
+        }
+    rc, out, _ = nm_run(["apt-cache", "policy", package], timeout=15)
+    if rc == 0:
+        installed = re.search(r"^\s*Installed:\s*(\S+)", out, re.MULTILINE)
+        candidate = re.search(r"^\s*Candidate:\s*(\S+)", out, re.MULTILINE)
+        if installed and installed.group(1) != "(none)":
+            return {
+                "package": package,
+                "status": "installed",
+                "version": installed.group(1),
+            }
+        if candidate and candidate.group(1) != "(none)":
+            return {
+                "package": package,
+                "status": "available",
+                "version": candidate.group(1),
+            }
+    return {"package": package, "status": "missing", "version": ""}
+
+
+def resolve_trove_apt(tool: dict[str, Any]) -> dict[str, str]:
+    """Find the apt package for a catalog tool, if one exists.
+
+    The catalog's Debian/Ubuntu command is authoritative. Only when the index
+    has no apt command do we try the tool slug and name, which catches packages
+    such as lazygit that Terminal Trove lists without an Ubuntu/Debian cell.
+    """
+    catalog = catalog_trove_apt(tool)
+    candidates: list[tuple[str, str]] = []
+    if catalog:
+        candidates.append((catalog["package"], "catalog"))
+    else:
+        for value, source in (
+            (str(tool.get("slug", "")), "slug"),
+            (str(tool.get("name", "")), "name"),
+        ):
+            package = package_from_text(value)
+            if package and all(package != item[0] for item in candidates):
+                candidates.append((package, source))
+    for package, source in candidates:
+        status = apt_status(package)
+        if status["status"] != "missing":
+            return {**status, "source": source}
+    return {
+        "package": candidates[0][0] if candidates else "",
+        "status": "missing",
+        "version": "",
+        "source": candidates[0][1] if candidates else "",
+    }
+
+
+def trove_install_commands(tool: dict[str, Any]) -> list[tuple[str, str]]:
+    install = tool.get("install")
+    if not isinstance(install, dict):
+        return []
+    commands: list[tuple[str, str]] = []
+    for platform_name, entries in install.items():
+        if isinstance(entries, dict):
+            for manager, command in entries.items():
+                if str(command).strip():
+                    commands.append(
+                        (f"{platform_name} / {manager}", str(command).strip())
+                    )
+        elif isinstance(entries, str) and entries.strip():
+            commands.append((str(platform_name), entries.strip()))
+    commands.sort(key=lambda item: (0 if "linux" in item[0].lower() else 1, item[0]))
+    return commands
+
+
+def read_trove_apps() -> dict[str, dict[str, Any]]:
+    data = read_json_file(trove_state_path())
+    raw_apps = data.get("apps") if isinstance(data, dict) else None
+    apps: dict[str, dict[str, Any]] = {}
+    if not isinstance(raw_apps, list):
+        return apps
+    for raw in raw_apps:
+        if not isinstance(raw, dict):
+            continue
+        slug = str(raw.get("slug", "")).strip()
+        package = str(raw.get("package", "")).strip()
+        if not slug or not APT_NAME_RE.fullmatch(package):
+            continue
+        apps[slug] = {
+            "slug": slug,
+            "name": str(raw.get("name", "")).strip() or slug,
+            "package": package,
+            "version": str(raw.get("version", "")).strip(),
+            "installed_at": str(raw.get("installed_at", "")).strip(),
+            "install_command": str(raw.get("install_command", "")).strip(),
+            "uninstall_command": str(raw.get("uninstall_command", "")).strip(),
+        }
+    return apps
+
+
+def write_trove_apps(apps: dict[str, dict[str, Any]]) -> None:
+    path = trove_state_path()
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    payload = {
+        "version": 1,
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "apps": [apps[slug] for slug in sorted(apps)],
+    }
+    temp = path + ".tmp"
+    with open(temp, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+        handle.write("\n")
+    os.chmod(temp, 0o600)
+    os.replace(temp, path)
+
+
+def trove_haystack(tool: dict[str, Any]) -> str:
+    parts = [
+        str(tool.get("name", "")),
+        str(tool.get("slug", "")),
+        str(tool.get("summary", "")),
+        str(tool.get("language", "")),
+        str(tool.get("language_label", "")),
+        str(tool.get("_package", "")),
+    ]
+    parts.extend(str(item) for item in tool.get("categories", []))
+    parts.extend(str(item) for item in tool.get("platforms", []))
+    apt = tool.get("apt")
+    if isinstance(apt, dict):
+        parts.append(str(apt.get("package", "")))
+    return " ".join(parts).lower()
+
+
+def trove_matches(tool: dict[str, Any], query: str) -> bool:
+    words = [word for word in query.lower().split() if word]
+    if not words:
+        return True
+    haystack = trove_haystack(tool)
+    return all(word in haystack for word in words)
+
+
+def filter_trove_tools(
+    tools: list[dict[str, Any]],
+    query: str = "",
+    category: str = "",
+    language: str = "",
+) -> list[dict[str, Any]]:
+    selected = []
+    for tool in tools:
+        if category and category not in tool.get("categories", []):
+            continue
+        if language and language != tool.get("language", ""):
+            continue
+        if not trove_matches(tool, query):
+            continue
+        selected.append(tool)
+    return selected
+
+
+def trove_category_options(index: dict[str, Any]) -> list[tuple[str, str, int]]:
+    options = [("", "All categories", 0)]
+    raw = index.get("categories")
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            slug = str(item.get("slug", "")).strip()
+            if not slug:
+                continue
+            label = str(item.get("name", "")).strip() or slug
+            count_value = item.get("count")
+            count = count_value if isinstance(count_value, int) else 0
+            options.append((slug, label, count))
+    return options
+
+
+def trove_language_options(index: dict[str, Any]) -> list[tuple[str, str, int]]:
+    options = [("", "All languages", 0)]
+    raw = index.get("languages")
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            slug = str(item.get("slug", "")).strip()
+            if not slug:
+                continue
+            label = str(item.get("name", "")).strip() or slug
+            count_value = item.get("count")
+            count = count_value if isinstance(count_value, int) else 0
+            options.append((slug, label, count))
+    return options
+
+
+def trove_option_label(
+    options: list[tuple[str, str, int]], slug: str, fallback: str = "All"
+) -> str:
+    for value, label, _count in options:
+        if value == slug:
+            return label
+    return fallback if not slug else slug
+
+
+def trove_category_name(slug: str) -> str:
+    names = {
+        "ai": "AI",
+        "api": "API",
+        "bpf": "BPF",
+        "cli": "CLI",
+        "csv": "CSV",
+        "dns": "DNS",
+        "git": "Git",
+        "irc": "IRC",
+        "json": "JSON",
+        "llm": "LLM",
+        "sre": "SRE",
+        "sql": "SQL",
+        "ssh": "SSH",
+        "tui": "TUI",
+        "tui-frameworks": "TUI Frameworks",
+        "vpn": "VPN",
+        "web": "Web",
+    }
+    return names.get(slug, slug.replace("-", " ").title())
+
+
+def trove_filter_popup(
+    screen, title: str, options: list[tuple[str, str, int]], current: str
+) -> str | None:
+    """Pick a category/language. Printable keys narrow the list."""
+    query = ""
+    selected = 0
+    height, width = screen.getmaxyx()
+    popup_height = min(16, max(6, height - 2))
+    popup_width = min(max(28, len(title) + 12), max(20, width - 2))
+    top = max(0, (height - popup_height) // 2)
+    left = max(0, (width - popup_width) // 2)
+    try:
+        popup = curses.newwin(popup_height, popup_width, top, left)
+    except curses.error:
+        return None
+    popup.keypad(True)
+    initialized = False
+
+    while True:
+        needle = query.lower()
+        filtered = [
+            item
+            for item in options
+            if not needle
+            or needle in item[1].lower()
+            or needle in item[0].lower()
+        ]
+        if not initialized:
+            selected = next(
+                (index for index, item in enumerate(filtered) if item[0] == current),
+                0,
+            )
+            initialized = True
+        selected = max(0, min(selected, len(filtered) - 1))
+        visible = max(1, popup_height - 4)
+        first = max(0, min(selected - visible + 1, len(filtered) - visible))
+        first = max(0, first)
+
+        popup.erase()
+        popup.box()
+        put(popup, 0, 2, f" {title} ")
+        put(popup, 1, 1, f"Search: {query}"[: popup_width - 2])
+        for offset, (_value, label, count) in enumerate(
+            filtered[first : first + visible]
+        ):
+            row = first + offset
+            text = f"{'>' if row == selected else ' '} {label}"
+            if count:
+                text += f" ({count})"
+            attr = curses.A_REVERSE if row == selected else 0
+            put(popup, 2 + offset, 1, text.ljust(max(0, popup_width - 2)), attr)
+        if not filtered:
+            put(popup, 2, 1, "No matches")
+        if first > 0:
+            put(popup, 0, popup_width - 2, "^")
+        if first + visible < len(filtered):
+            put(popup, popup_height - 1, popup_width - 2, "v")
+        popup.refresh()
+
+        key = popup.getch()
+        if key in (ord("q"), ord("Q"), 27):
+            del popup
+            return None
+        if key in (curses.KEY_UP, curses.KEY_PPAGE):
+            selected = max(0, selected - (visible if key == curses.KEY_PPAGE else 1))
+            continue
+        if key in (curses.KEY_DOWN, curses.KEY_NPAGE):
+            selected = min(
+                len(filtered) - 1,
+                selected + (visible if key == curses.KEY_NPAGE else 1),
+            )
+            continue
+        if key in (10, 13, curses.KEY_RIGHT):
+            del popup
+            return filtered[selected][0] if filtered else None
+        if key in (curses.KEY_BACKSPACE, 8, 127):
+            query = query[:-1]
+            selected = 0
+            continue
+        if 32 <= key < 127:
+            query += chr(key)
+            selected = 0
+
+
+def trove_installed_tools(
+    index: dict[str, Any],
+    apps: dict[str, dict[str, Any]],
+    query: str = "",
+) -> list[dict[str, Any]]:
+    by_slug = {tool["slug"]: tool for tool in index.get("tools", [])}
+    installed = []
+    for slug, record in apps.items():
+        tool = dict(by_slug.get(slug) or {})
+        tool.setdefault("slug", slug)
+        tool.setdefault("name", record.get("name", slug))
+        tool.setdefault("summary", "Managed apt package")
+        tool.setdefault("categories", [])
+        tool.setdefault("language", "")
+        tool.setdefault("language_label", "")
+        tool.setdefault("install", {})
+        tool.setdefault("website", "")
+        tool["_record"] = record
+        tool["_package"] = record.get("package", "")
+        if not trove_matches(tool, query):
+            continue
+        installed.append(tool)
+    return sorted(installed, key=lambda item: item.get("name", "").lower())
+
+
+def trove_details_lines(
+    tool: dict[str, Any],
+    apt: dict[str, str],
+    record: dict[str, Any] | None,
+    width: int,
+) -> list[str]:
+    name = tool.get("name", tool.get("slug", "?"))
+    categories = ", ".join(
+        trove_category_name(str(item)) for item in tool.get("categories", [])
+    ) or "-"
+    language = tool.get("language_label") or tool.get("language") or "-"
+    platforms = ", ".join(tool.get("platforms", [])) or "-"
+    status = "not installed"
+    if record:
+        status = "installed (managed)"
+    elif apt.get("status") == "installed":
+        status = "installed (system)"
+    lines = [
+        f"Name: {name}",
+        f"Language: {language}",
+    ]
+    lines.extend(
+        textwrap.wrap(f"Categories: {categories}", max(20, width - 1))
+    )
+    lines.extend(textwrap.wrap(f"Platforms: {platforms}", max(20, width - 1)))
+    lines.append(f"Status: {status}")
+    if tool.get("license"):
+        lines.append(f"License: {tool['license']}")
+    if tool.get("stars"):
+        lines.append(f"Stars: {int(tool['stars']):,}")
+    if tool.get("release"):
+        lines.append(f"Latest release: {tool['release']}")
+    if apt.get("package"):
+        version = f" {apt['version']}" if apt.get("version") else ""
+        lines.append(f"Apt package: {apt['package']}{version}")
+    else:
+        lines.append("Apt package: not available")
+    if record:
+        lines.append(f"Remove: {record.get('uninstall_command') or 'apt-get purge ' + record.get('package', '')}")
+    elif apt.get("status") == "available":
+        command = catalog_trove_apt(tool).get("command") or (
+            f"apt install {apt.get('package', '')}"
+        )
+        lines.append(f"Install: {command}")
+    elif apt.get("status") == "installed":
+        lines.append("Installed outside the manager; not tracked here.")
+    lines.append("")
+    commands = trove_install_commands(tool)
+    if apt.get("status") == "missing":
+        lines.append("Not available in apt; install manually:")
+        if commands:
+            for manager, command in commands:
+                lines.extend(
+                    textwrap.wrap(
+                        f"  {manager}: {command}",
+                        max(20, width - 1),
+                        break_long_words=True,
                     )
                 )
-                files = read_package_files(
-                    name, stanza.get("Architecture", ""), info_dir
-                )
-                if not files_have_program(files):
-                    continue
-                if package_looks_gui(section, depends, files):
-                    continue
-                packages.append(package_record(stanza, True, section, depends))
-    except OSError:
-        pass
-    return packages, names
-
-
-def available_package(stanza: dict) -> dict[str, Any] | None:
-    name = stanza.get("Package", "")
-    section = normalize_section(stanza.get("Section", ""))
-    if not name or section not in PKG_SECTION_LABELS:
-        return None
-    if name.endswith(PKG_SKIP_SUFFIXES):
-        return None
-    depends = " ".join(
-        (stanza.get("Pre-Depends", ""), stanza.get("Depends", ""))
-    )
-    if package_looks_gui(section, depends):
-        return None
-    return package_record(stanza, False, section, depends)
-
-
-def read_available_packages() -> list[dict[str, Any]]:
-    """Read apt's catalogue, keeping only terminal programs."""
-    try:
-        process = subprocess.Popen(
-            ["apt-cache", "dumpavail"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            errors="replace",
-        )
-    except OSError:
-        return []
-    packages: list[dict[str, Any]] = []
-    with process:
-        if process.stdout is None:
-            return []
-        for stanza in iter_deb822(process.stdout):
-            package = available_package(stanza)
-            if package:
-                packages.append(package)
-    return packages
-
-
-def group_packages(
-    packages: list[dict[str, Any]], installed_names=()
-) -> list[tuple[str, list[dict[str, Any]]]]:
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for package in packages:
-        if not package["installed"] and package["name"] in installed_names:
-            continue
-        grouped.setdefault(section_label(package["section"]), []).append(package)
-    known = [
-        label
-        for label in PKG_SECTION_LABELS.values()
-        if label in grouped
-    ]
-    extra = sorted(label for label in grouped if label not in known)
-    return [
-        (label, sorted(grouped[label], key=lambda item: item["name"]))
-        for label in known + extra
-    ]
-
-
-def package_details_lines(package: dict[str, Any], width: int) -> list[str]:
-    lines = [
-        f"Name: {package['name']}",
-        f"Version: {package['version'] or '?'}",
-        f"Section: {section_label(package['section'])}",
-        f"Status: {'installed' if package['installed'] else 'not installed'}",
-    ]
-    if package["size"]:
-        lines.append(f"Size: {package['size']} KiB")
+        else:
+            lines.append("  No install command was published.")
     lines.append("")
-    body = long_description(package["description"]) or package["summary"]
-    lines.extend(textwrap.wrap(body, max(20, width - 2)))
+    if tool.get("summary"):
+        lines.extend(textwrap.wrap(str(tool["summary"]), max(20, width - 1)))
+        lines.append("")
+    description = str(tool.get("description", ""))
+    if description:
+        for paragraph in description.split("\n\n"):
+            lines.extend(
+                textwrap.wrap(
+                    " ".join(paragraph.split()),
+                    max(20, width - 1),
+                    break_long_words=True,
+                )
+            )
+            lines.append("")
+    if tool.get("url"):
+        lines.append(f"Terminal Trove: {tool['url']}")
+    if tool.get("website"):
+        lines.append(f"Website: {tool['website']}")
     return lines
 
 
-def draw_loading(screen, text: str) -> None:
-    screen.erase()
-    height, _width = screen.getmaxyx()
-    put(screen, max(0, height // 2), 1, " " + text)
-    screen.refresh()
+def trove_install_tool(screen, tool: dict[str, Any]) -> str:
+    apt = resolve_trove_apt(tool)
+    name = tool.get("name", tool.get("slug", "?"))
+    if apt["status"] == "missing":
+        return f"{name} is not in apt; press Enter for instructions"
+    if apt["status"] == "installed":
+        return f"{name} is already installed"
+    package = apt["package"]
+    question = f"Install {name}?"
+    if package != name:
+        question = f"Install {name} ({package})?"
+    if not confirm(screen, question):
+        return "Cancelled"
+    rc = run_privileged(screen, list(TROVE_APT_INSTALL) + [package])
+    if rc != 0:
+        return "Install failed (try sudo apt update)"
+    apps = read_trove_apps()
+    version = apt_status(package).get("version", "")
+    apps[str(tool.get("slug", package))] = {
+        "slug": str(tool.get("slug", package)),
+        "name": name,
+        "package": package,
+        "version": version,
+        "installed_at": datetime.now().isoformat(timespec="seconds"),
+        "install_command": catalog_trove_apt(tool).get("command")
+        or f"apt install {package}",
+        "uninstall_command": f"apt-get purge {package}",
+    }
+    try:
+        write_trove_apps(apps)
+    except OSError:
+        return f"Installed {name} (manager state not saved)"
+    return f"Installed {name}"
 
 
-def draw_packages(
-    screen,
-    mode: str,
-    groups: list[tuple[str, list[dict[str, Any]]]],
-    category: int,
-    row: int,
-    notice: str,
-) -> None:
-    screen.erase()
-    height, width = screen.getmaxyx()
-    label = groups[category][0] if groups else "No packages"
-    put(screen, 0, 0, f" Applications: {label}", curses.A_BOLD)
-
-    tabs = (("Installed", "installed"), ("Available", "available"))
-    x = 0
-    for text, tab_mode in tabs:
-        piece = f" {text} "
-        attr = curses.A_REVERSE if mode == tab_mode else curses.A_DIM
-        put(screen, 1, x, piece, attr)
-        x += len(piece)
-
-    hint_lines = 2 if height >= 12 else 1
-    description_lines = 2 if height >= 13 else 1
-    description_y = max(3, height - hint_lines - description_lines)
-    separator_y = description_y - 1
-    top = 2
-    visible = max(1, separator_y - top)
-
-    packages = groups[category][1] if groups else []
-    first = 0
-    if row >= visible:
-        first = row - visible + 1
-    first = max(0, min(first, max(0, len(packages) - visible)))
-
-    name_width = min(26, max(12, width // 2))
-    for offset, package in enumerate(packages[first : first + visible]):
-        index = first + offset
-        selected = index == row
-        name = package["name"][:name_width]
-        text = f"{'>' if selected else ' '} {name:<{name_width}} {package['summary']}"
-        put(
-            screen,
-            top + offset,
-            0,
-            text.ljust(max(0, width - 1)),
-            curses.A_REVERSE if selected else 0,
-        )
-    if not packages:
-        put(screen, top, 1, "No terminal packages here")
-    if first > 0:
-        put(screen, top, width - 2, "^")
-    if first + visible < len(packages):
-        put(screen, top + visible - 1, width - 2, "v")
-
-    put(screen, separator_y, 0, "-" * max(0, width - 1))
-    chosen = packages[row] if packages and row < len(packages) else None
-    if chosen:
-        description = f"{chosen['name']} - {chosen['summary']}"
-        wrapped = textwrap.wrap(description, max(10, width - 2))
-        for offset, line in enumerate(wrapped[:description_lines]):
-            put(screen, description_y + offset, 1, line)
-    else:
-        put(screen, description_y, 1, "No package selected")
-
-    first_hint = " Up/Down move   Left/Right category   Tab mode"
-    if mode == "installed":
-        second_hint = " Enter details   d remove   r reload   q back"
-    else:
-        second_hint = " Enter details   i install   r reload   q back"
-    if notice and hint_lines == 2:
-        put(screen, height - 2, 0, " " + notice)
-        put(screen, height - 1, 0, second_hint)
-    elif notice:
-        put(screen, height - 1, 0, " " + notice)
-    elif hint_lines == 2:
-        put(screen, height - 2, 0, first_hint)
-        put(screen, height - 1, 0, second_hint)
-    else:
-        put(screen, height - 1, 0, second_hint)
-    screen.refresh()
-
-
-def package_is_protected(package: dict[str, Any]) -> bool:
-    return (
-        bool(package["essential"])
-        or package["priority"] in ("required", "important")
-        or package["name"] in PKG_CORE
+def trove_uninstall_tool(screen, record: dict[str, Any]) -> str:
+    package = str(record.get("package", ""))
+    name = str(record.get("name", package)) or package
+    if package in PKG_CORE:
+        return f"{name} is a system package"
+    if apt_status(package)["status"] == "missing":
+        apps = read_trove_apps()
+        apps.pop(str(record.get("slug", "")), None)
+        try:
+            write_trove_apps(apps)
+        except OSError:
+            return "Cannot update manager state"
+        return f"Removed {name} from the manager (package is gone)"
+    planned = simulate_removal(package)
+    if planned is None:
+        return "Cannot check what would be removed"
+    if any(item in PKG_CORE for item in planned):
+        return "Refused: would remove core packages"
+    extra = [item for item in planned if item != package]
+    label = name if name == package else f"{name} ({package})"
+    question = f"Remove {label}?"
+    if extra:
+        question = f"Remove {label} and {len(extra)} more package(s)?"
+    if not confirm(screen, question):
+        return "Cancelled"
+    rc = run_privileged(
+        screen,
+        ["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "purge", "-y", package],
     )
+    if rc != 0:
+        return "Removal failed (try sudo apt update)"
+    apps = read_trove_apps()
+    apps.pop(str(record.get("slug", "")), None)
+    try:
+        write_trove_apps(apps)
+    except OSError:
+        return f"Removed {name} (manager state not saved)"
+    return f"Removed {name}"
 
 
 def simulate_removal(name: str) -> list[str] | None:
@@ -2526,156 +2848,419 @@ def simulate_removal(name: str) -> list[str] | None:
     return planned
 
 
-def packages_remove(screen, package: dict[str, Any]) -> str:
-    name = package["name"]
-    if package_is_protected(package):
-        return f"{name} is a system package"
-    planned = simulate_removal(name)
-    if planned is None:
-        return "Cannot check what would be removed"
-    if any(item in PKG_CORE for item in planned):
-        return "Refused: would remove core packages"
-    extra = [item for item in planned if item != name]
-    question = f"Remove {name}?"
-    if extra:
-        question = f"Remove {name} and {len(extra)} more package(s)?"
-    if not confirm(screen, question):
-        return "Cancelled"
-    rc = run_privileged(
-        screen,
-        [
-            "env",
-            "APT_LISTCHANGES_FRONTEND=none",
-            "apt-get",
-            "purge",
-            "-y",
-            name,
-        ],
-    )
-    return f"Removed {name}" if rc == 0 else "Removal failed"
+def draw_loading(screen, text: str) -> None:
+    screen.erase()
+    height, _width = screen.getmaxyx()
+    put(screen, max(0, height // 2), 1, " " + text)
+    screen.refresh()
 
 
-def packages_install(screen, package: dict[str, Any]) -> str:
-    name = package["name"]
-    if not confirm(screen, f"Install {name}?"):
-        return "Cancelled"
-    # Recommends on Debian often pull in a full GUI; keep the image terminal-only.
-    # apt-listchanges would otherwise open a pager inside the settings screen.
-    rc = run_privileged(
-        screen,
-        [
-            "env",
-            "APT_LISTCHANGES_FRONTEND=none",
-            "apt-get",
-            "install",
-            "-y",
-            "--no-install-recommends",
-            name,
-        ],
-    )
-    return f"Installed {name}" if rc == 0 else "Install failed"
+def draw_trove_list(
+    screen,
+    mode: str,
+    tools: list[dict[str, Any]],
+    selected: int,
+    category_label: str,
+    language_label: str,
+    query: str,
+    search_active: bool,
+    managed: dict[str, dict[str, Any]],
+    index_count: int,
+    notice: str,
+) -> None:
+    screen.erase()
+    height, width = screen.getmaxyx()
+    title = " Applications"
+    if index_count:
+        title += f"  {len(tools)}/{index_count}"
+    else:
+        title += "  no catalog"
+    put(screen, 0, 0, title, curses.A_BOLD)
+
+    x = 0
+    for text, tab_mode in ((" Browse ", "browse"), (" Installed ", "installed")):
+        piece = f" {text.strip()} "
+        attr = curses.A_REVERSE if mode == tab_mode else curses.A_DIM
+        put(screen, 1, x, piece, attr)
+        x += len(piece)
+    if mode == "browse":
+        put(
+            screen,
+            1,
+            x + 1,
+            f"cat:{category_label}  lang:{language_label}",
+            curses.A_DIM,
+        )
+
+    if search_active:
+        put(screen, 2, 0, f" Search: {query}_")
+    else:
+        put(screen, 2, 0, "-" * max(0, width - 1))
+
+    hint_lines = 2 if height >= 12 else 1
+    top = 3
+    list_bottom = max(top + 1, height - hint_lines - 1)
+    visible = max(1, list_bottom - top)
+    first = 0
+    if selected >= visible:
+        first = selected - visible + 1
+    first = max(0, min(first, max(0, len(tools) - visible)))
+
+    name_width = min(26, max(12, width // 3))
+    for offset, tool in enumerate(tools[first : first + visible]):
+        row = first + offset
+        marker = "*" if tool.get("slug") in managed else " "
+        name = str(tool.get("name", tool.get("slug", "?")))[:name_width]
+        if mode == "installed":
+            record = tool.get("_record") or {}
+            package = str(record.get("package", ""))
+            version = str(record.get("version", "")).strip()
+            text = (
+                f"{marker}{'>' if row == selected else ' '} "
+                f"{name:<{name_width}} {package} {version}"
+            )
+        else:
+            text = f"{marker}{'>' if row == selected else ' '} {name:<{name_width}} {tool.get('summary', '')}"
+        put(
+            screen,
+            top + offset,
+            0,
+            text.ljust(max(0, width - 1)),
+            curses.A_REVERSE if row == selected else 0,
+        )
+    if not tools:
+        message = "No tools match the filters"
+        if mode == "installed":
+            message = "No apps installed through the manager"
+        put(screen, top, 1, message)
+    if first > 0:
+        put(screen, top, width - 2, "^")
+    if first + visible < len(tools):
+        put(screen, top + visible - 1, width - 2, "v")
+
+    chosen = tools[selected] if tools and selected < len(tools) else None
+    summary_y = list_bottom
+    if chosen and summary_y < height - hint_lines:
+        put(screen, summary_y, 1, str(chosen.get("summary", "")))
+
+    if mode == "browse":
+        first_hint = " Up/Down move   / search   t cat   g lang"
+        second_hint = " Enter details   i install   u update   q back"
+    else:
+        first_hint = " Up/Down move   / search   Enter details   d remove"
+        second_hint = " r reload   Tab browse   q back"
+    if search_active:
+        first_hint = " Type to filter   Enter keep   Esc clear search"
+    if notice:
+        put(screen, height - 2, 0, " " + notice)
+        put(screen, height - 1, 0, second_hint)
+    elif hint_lines == 2:
+        put(screen, height - 2, 0, first_hint)
+        put(screen, height - 1, 0, second_hint)
+    else:
+        put(screen, height - 1, 0, second_hint)
+    screen.refresh()
 
 
-def packages_screen(screen) -> None:
-    draw_loading(screen, "Reading installed packages...")
-    installed, installed_names = read_installed_packages()
-    installed_groups = group_packages(installed)
-    available: list[dict[str, Any]] | None = None
-    available_groups: list[tuple[str, list[dict[str, Any]]]] = []
-    mode = "installed"
-    category = {"installed": 0, "available": 0}
-    row = {"installed": 0, "available": 0}
+def trove_details_screen(
+    screen, tool: dict[str, Any], record: dict[str, Any] | None
+) -> str:
+    offset = 0
     notice = ""
+    while True:
+        apt = resolve_trove_apt(tool)
+        managed = read_trove_apps()
+        current = managed.get(str(tool.get("slug", "")))
+        record = current
+        _height, width = screen.getmaxyx()
+        lines = trove_details_lines(tool, apt, record, width)
+        screen.erase()
+        height, _width = screen.getmaxyx()
+        title = f" {tool.get('name', tool.get('slug', '?'))}"
+        put(screen, 0, 0, title, curses.A_BOLD)
+        put(screen, 1, 0, "-" * max(0, width - 1))
+        visible = max(1, height - 4)
+        offset = max(0, min(offset, max(0, len(lines) - visible)))
+        for index in range(visible):
+            line = lines[offset + index] if offset + index < len(lines) else ""
+            put(screen, 2 + index, 0, line)
+        hint = " Up/Down scroll   i install   d remove   q back"
+        if notice:
+            put(screen, height - 2, 0, " " + notice)
+            put(screen, height - 1, 0, hint)
+        else:
+            put(screen, height - 1, 0, hint)
+        screen.refresh()
+
+        key = screen.getch()
+        notice = ""
+        if key in (ord("q"), ord("Q"), 27):
+            return ""
+        if key in NAV_UP:
+            offset = max(0, offset - 1)
+            continue
+        if key in NAV_DOWN:
+            offset = min(max(0, len(lines) - visible), offset + 1)
+            continue
+        if key == curses.KEY_PPAGE:
+            offset = max(0, offset - visible)
+            continue
+        if key == curses.KEY_NPAGE:
+            offset = min(max(0, len(lines) - visible), offset + visible)
+            continue
+        if key in (ord("i"), ord("I")):
+            if record:
+                notice = "Already installed through the manager"
+            elif apt["status"] == "missing":
+                notice = "Not in apt; use the install instructions above"
+            else:
+                notice = trove_install_tool(screen, tool)
+            continue
+        if key in (ord("d"), ord("D")):
+            if record:
+                notice = trove_uninstall_tool(screen, record)
+            else:
+                notice = "Not installed through the manager"
+            continue
+
+
+def executable_names() -> set[str]:
+    """Return executable names in PATH for the Trove launch hints."""
+    names = set()
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        if not directory:
+            continue
+        try:
+            entries = os.scandir(directory)
+        except OSError:
+            continue
+        with entries:
+            for entry in entries:
+                if any(ord(char) < 32 for char in entry.name):
+                    continue
+                try:
+                    if entry.is_file() and os.access(entry.path, os.X_OK):
+                        names.add(entry.name)
+                except OSError:
+                    continue
+    return names
+
+
+def trove_command(tool: dict[str, Any], available: set[str]) -> str:
+    """Pick the command that Terminal Trove's tool most likely installs."""
+    name = str(tool.get("name", "")).strip().lower()
+    candidates = [
+        str(tool.get("slug", "")).strip(),
+        name.replace(" ", "-"),
+        name.replace(" ", ""),
+        catalog_trove_apt(tool).get("package", ""),
+    ]
+    for candidate in candidates:
+        if candidate and candidate in available:
+            return candidate
+    return ""
+
+
+def list_tools_payload() -> dict[str, Any]:
+    """Machine-readable tool list used by cpz-search (Alt+O, @ provider)."""
+    index = load_trove_index()
+    managed = read_trove_apps()
+    available = executable_names()
+    tools = []
+    for tool in index.get("tools", []):
+        slug = str(tool.get("slug", "")).strip()
+        if not slug:
+            continue
+        command = trove_command(tool, available)
+        apt = catalog_trove_apt(tool)
+        tools.append(
+            {
+                "slug": slug,
+                "name": str(tool.get("name", "")).strip() or slug,
+                "summary": str(tool.get("summary", "")).strip(),
+                "categories": list(tool.get("categories") or []),
+                "command": command,
+                "installed": bool(command or slug in managed),
+                "apt": apt.get("package", ""),
+            }
+        )
+    return {"schema": 1, "tools": tools}
+
+
+def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
+    draw_loading(screen, "Reading Terminal Trove catalog...")
+    index = load_trove_index()
+    tools = index.get("tools", [])
+    managed = read_trove_apps()
+    categories = trove_category_options(index)
+    languages = trove_language_options(index)
+    mode = "browse"
+    category = ""
+    language = ""
+    query = focus_slug or ""
+    search_active = False
+    row = {"browse": 0, "installed": 0}
+    notice = ""
+    if not tools:
+        notice = "No catalog; press u to download it"
 
     while True:
-        if mode == "available" and available is None:
-            draw_loading(screen, "Reading package lists...")
-            available = read_available_packages()
-            available_groups = group_packages(available, installed_names)
-            if not available:
-                notice = "No package lists; run apt update"
-        groups = installed_groups if mode == "installed" else available_groups
-        index = min(category[mode], max(0, len(groups) - 1))
-        category[mode] = index
-        packages = groups[index][1] if groups else []
-        position = min(row[mode], max(0, len(packages) - 1))
+        shown = (
+            filter_trove_tools(tools, query, category, language)
+            if mode == "browse"
+            else trove_installed_tools(index, managed, query)
+        )
+        position = min(row[mode], max(0, len(shown) - 1))
+        if focus_slug:
+            for offset, tool in enumerate(shown):
+                if str(tool.get("slug", "")) == focus_slug:
+                    position = offset
+                    break
+            focus_slug = None
         row[mode] = position
-
-        draw_packages(screen, mode, groups, index, position, notice)
+        draw_trove_list(
+            screen,
+            mode,
+            shown,
+            position,
+            trove_option_label(categories, category, "All"),
+            trove_option_label(languages, language, "All"),
+            query,
+            search_active,
+            managed,
+            len(tools),
+            notice,
+        )
         key = screen.getch()
         notice = ""
 
+        if key == 9:  # Tab
+            mode = "installed" if mode == "browse" else "browse"
+            search_active = False
+            continue
+        if search_active:
+            if key == 27:
+                if query:
+                    query = ""
+                    row[mode] = 0
+                else:
+                    search_active = False
+                continue
+            if key in (10, 13):
+                search_active = False
+                continue
+            if key in (curses.KEY_BACKSPACE, 8, 127):
+                query = query[:-1]
+                row[mode] = 0
+                continue
+            if 32 <= key < 127:
+                query += chr(key)
+                row[mode] = 0
+                continue
+            if key in NAV_UP and shown:
+                row[mode] = (position - 1) % len(shown)
+                continue
+            if key in NAV_DOWN and shown:
+                row[mode] = (position + 1) % len(shown)
+                continue
+            continue
         if key in (ord("q"), ord("Q"), 27):
             return
-        if key == 9:  # Tab
-            mode = "available" if mode == "installed" else "installed"
+        if key in (ord("/"), ord("s"), ord("S")):
+            search_active = True
+            continue
+
+        if key in (ord("u"), ord("U")):
+            draw_loading(screen, "Updating catalog...")
+            ok, message = download_trove_index()
+            notice = message
+            if ok:
+                index = load_trove_index()
+                tools = index.get("tools", [])
+                categories = trove_category_options(index)
+                languages = trove_language_options(index)
+                row = {"browse": 0, "installed": 0}
             continue
         if key in (ord("r"), ord("R")):
-            draw_loading(screen, "Reading installed packages...")
-            installed, installed_names = read_installed_packages()
-            installed_groups = group_packages(installed)
-            available = None
-            available_groups = []
+            index = load_trove_index()
+            tools = index.get("tools", [])
+            managed = read_trove_apps()
+            categories = trove_category_options(index)
+            languages = trove_language_options(index)
             notice = "Reloaded"
             continue
-        if key in NAV_LEFT:
-            count = max(1, len(groups))
-            category[mode] = (index - 1) % count
-            row[mode] = 0
+        if key in (ord("t"), ord("T")) and mode == "browse":
+            value = trove_filter_popup(screen, "Category", categories, category)
+            if value is not None:
+                category = value
+                row["browse"] = 0
             continue
-        if key in NAV_RIGHT:
-            count = max(1, len(groups))
-            category[mode] = (index + 1) % count
-            row[mode] = 0
+        if key in (ord("g"), ord("G")) and mode == "browse":
+            value = trove_filter_popup(screen, "Language", languages, language)
+            if value is not None:
+                language = value
+                row["browse"] = 0
+            continue
+        if key in NAV_LEFT and mode == "browse":
+            if categories:
+                slugs = [item[0] for item in categories]
+                current = slugs.index(category) if category in slugs else 0
+                category = slugs[(current - 1) % len(slugs)]
+                row["browse"] = 0
+            continue
+        if key in NAV_RIGHT and mode == "browse":
+            if categories:
+                slugs = [item[0] for item in categories]
+                current = slugs.index(category) if category in slugs else 0
+                category = slugs[(current + 1) % len(slugs)]
+                row["browse"] = 0
             continue
         if key in NAV_UP:
-            if packages:
-                row[mode] = (position - 1) % len(packages)
+            if shown:
+                row[mode] = (position - 1) % len(shown)
             continue
         if key in NAV_DOWN:
-            if packages:
-                row[mode] = (position + 1) % len(packages)
+            if shown:
+                row[mode] = (position + 1) % len(shown)
             continue
         if key in (curses.KEY_PPAGE, curses.KEY_NPAGE, curses.KEY_HOME, curses.KEY_END):
-            if not packages:
+            if not shown:
                 continue
             page = max(1, screen.getmaxyx()[0] - 5)
             if key == curses.KEY_PPAGE:
                 position = max(0, position - page)
             elif key == curses.KEY_NPAGE:
-                position = min(len(packages) - 1, position + page)
+                position = min(len(shown) - 1, position + page)
             elif key == curses.KEY_HOME:
                 position = 0
             else:
-                position = len(packages) - 1
+                position = len(shown) - 1
             row[mode] = position
             continue
-        if key in (10, 13) and packages:
-            _height, width = screen.getmaxyx()
-            text_page(
-                screen,
-                f"Package: {packages[position]['name']}",
-                package_details_lines(packages[position], width),
+        if key in (10, 13, ord(" ")) and shown:
+            tool = shown[position]
+            record = tool.get("_record") if mode == "installed" else managed.get(
+                str(tool.get("slug", ""))
             )
+            notice = trove_details_screen(screen, tool, record)
+            managed = read_trove_apps()
             continue
-        if key in (ord("d"), ord("D")) and mode == "installed" and packages:
-            notice = packages_remove(screen, packages[position])
-            draw_loading(screen, "Reading installed packages...")
-            installed, installed_names = read_installed_packages()
-            installed_groups = group_packages(installed)
-            available_groups = group_packages(available or [], installed_names)
+        if key in (ord("i"), ord("I")) and mode == "browse" and shown:
+            notice = trove_install_tool(screen, shown[position])
+            managed = read_trove_apps()
             continue
-        if key in (ord("i"), ord("I")) and mode == "available" and packages:
-            notice = packages_install(screen, packages[position])
-            draw_loading(screen, "Reading installed packages...")
-            installed, installed_names = read_installed_packages()
-            installed_groups = group_packages(installed)
-            available_groups = group_packages(available or [], installed_names)
+        if key in (ord("d"), ord("D")) and mode == "installed" and shown:
+            record = shown[position].get("_record") or managed.get(
+                str(shown[position].get("slug", ""))
+            )
+            if record:
+                notice = trove_uninstall_tool(screen, record)
+                managed = read_trove_apps()
             continue
 
 
 def applications_action(screen, _data) -> None:
-    packages_screen(screen)
+    trove_apps_screen(screen)
 
 
 def network_details_action(screen, _data) -> None:
@@ -2769,6 +3354,13 @@ PAGE_HINTS = {
 }
 
 
+def initial_stack(page: str | None, data: dict) -> list[tuple[str, int]]:
+    """Navigation stack for the optional --page target used by cpz-search."""
+    if page and page in PAGE_TITLES:
+        return [(page, page_initial_index(page, data))]
+    return [("main", 0)]
+
+
 def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
     if name == "main":
         return [
@@ -2858,11 +3450,11 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "labels": DISPLAY_LABELS,
             },
             {
-                "label": "Panel Text Size",
+                "label": "Font Size",
                 "kind": "cycle",
-                "key": "font_panel",
-                "values": FONT_PANEL_CHOICES,
-                "labels": FONT_PANEL_LABELS,
+                "key": "font_size",
+                "values": FONT_SIZES,
+                "labels": FONT_SIZE_LABELS,
             },
             {"label": "Status Bar", "kind": "submenu", "page": "statusbar"},
         ]
@@ -3266,7 +3858,7 @@ def draw_page(screen, title: str, items: list, values: list, selected: int, data
     screen.refresh()
 
 
-def run(screen) -> None:
+def run(screen, start_page: str | None = None) -> None:
     try:
         curses.curs_set(0)
     except curses.error:
@@ -3274,7 +3866,7 @@ def run(screen) -> None:
     screen.keypad(True)
 
     data = load_settings()
-    stack = [("main", 0)]
+    stack = initial_stack(start_page, data)
     notice = ""
     items = []
     values = []
@@ -3307,7 +3899,7 @@ def run(screen) -> None:
             data,
             notice,
             issues,
-            page_name == "main",
+            page_name == "main" or (start_page is not None and len(stack) == 1),
             PAGE_HINTS.get(page_name, ""),
         )
         key = screen.getch()
@@ -3422,13 +4014,48 @@ def check_pages() -> int:
 
 
 def main() -> int:
-    if "--check-pages" in sys.argv:
+    arguments = sys.argv[1:]
+    if "--check-pages" in arguments:
         return check_pages()
+    if "--list-pages" in arguments:
+        for page, title in PAGE_TITLES.items():
+            print(f"{page}\t{title}")
+        return 0
+    if "--list-tools" in arguments:
+        print(json.dumps(list_tools_payload(), ensure_ascii=False))
+        return 0
+
+    start_page = None
+    start_tool = None
+    if arguments:
+        if len(arguments) == 2 and arguments[0] == "--page":
+            start_page = arguments[1]
+            if start_page not in PAGE_TITLES:
+                print(
+                    f"cpz-settings: unknown page '{start_page}'",
+                    file=sys.stderr,
+                )
+                return 2
+        elif len(arguments) == 2 and arguments[0] == "--tool":
+            start_tool = arguments[1].strip()
+            if not start_tool:
+                print("cpz-settings: --tool needs a slug", file=sys.stderr)
+                return 2
+        else:
+            print(
+                f"cpz-settings: unknown arguments: {' '.join(arguments)}",
+                file=sys.stderr,
+            )
+            return 2
+
     if not sys.stdout.isatty():
         print("cpz-settings: this is a TUI; run it from the terminal.", file=sys.stderr)
         return 1
     try:
-        curses.wrapper(run)
+        if start_tool:
+            curses.wrapper(trove_apps_screen, start_tool)
+        else:
+            curses.wrapper(run, start_page)
     except KeyboardInterrupt:
         return 0
     except curses.error as error:

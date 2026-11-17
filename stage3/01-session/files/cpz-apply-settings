@@ -121,16 +121,28 @@ case "$history" in
 esac
 
 # The right side has to grow when a full date, the layout code, the volume
-# token or the brightness token is shown.
+# token or the brightness token is shown. cpz-status hides the layout code when
+# only one layout is enabled, so it reserves no space for it either.
 show_date=$(get show_date)
 date_format=$(get date_format)
 show_layout=$(get show_layout)
 show_volume=$(get show_volume)
 show_brightness=$(get show_brightness)
+layout_count=0
+old_ifs=$IFS
+IFS=,
+for code in $(get keyboard_layouts); do
+	case "$code" in
+		*[a-zA-Z0-9]*) layout_count=$((layout_count + 1)) ;;
+	esac
+done
+IFS=$old_ifs
 right_length=30
 case "$show_layout" in
 	0 | off | false | no) ;;
-	*) right_length=$((right_length + 3)) ;;
+	*)
+		[ "$layout_count" -gt 1 ] && right_length=$((right_length + 3))
+		;;
 esac
 case "$show_volume" in
 	0 | off | false | no) ;;

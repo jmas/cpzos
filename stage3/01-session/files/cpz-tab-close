@@ -1,5 +1,5 @@
 #!/bin/sh
-# Close the current tab. Bound to Alt+W and Ctrl-b & in tmux.conf; both ask for
+# Close the current tab. Bound to Alt+W in tmux.conf; the prefix + & fallback asks for
 # confirmation there.
 #
 # Any terminal tab may be closed, including the first one: renumber-windows

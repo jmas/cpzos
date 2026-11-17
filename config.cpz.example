@@ -33,3 +33,7 @@ CPZ_DTOVERLAYS_REF="4f7aeee9fc103ebb03d22cac476bb191ecfb321e"
 # always-connected would defeat the "panel off while HDMI is active" policy.
 # Example: CPZ_HDMI_VIDEO="HDMI-A-1:1920x1080@60"
 CPZ_HDMI_VIDEO=""
+
+# Terminal Trove catalog index used by Settings -> Applications. Leave empty
+# for the hosted default, or point at a local/alternate JSON or JSON.gz file.
+CPZ_TROVE_INDEX_URL=""

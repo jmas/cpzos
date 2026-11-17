@@ -7,4 +7,4 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/cpz-kmscon-output --auto
+ExecStart=/usr/local/bin/cpz-kmscon-output
