@@ -139,5 +139,8 @@ that matches the actual artifact:
 - `devices` including `m5-cardputerzero`
 
 A `latest` alias is fine, but update the manifest atomically with the artifact.
-For reproducible builds, prefer versioned filenames and add a new manifest entry
-instead of overwriting `latest`.
+For reproducible builds, prefer versioned filenames such as
+`cardputerzero-trixie-arm64-v0.1.0.img.xz` and add a new manifest entry instead
+of overwriting the previous version. The release workflow also maintains
+`cardputerzero-trixie-arm64-stable.img.xz` for the newest stable version; keep
+that alias pointing only at a fully published release.

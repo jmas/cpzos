@@ -1,0 +1,18 @@
+#!/bin/sh
+# Show the one-line key hint on the attached client's status line.
+#
+# A display-message run from a client-attached hook has no client context, so
+# the message is dropped or printed into the pane where the top status bar
+# covers it. Target the client explicitly; fall back to the first client when
+# the hook does not provide the name.
+set -eu
+
+client=${1:-}
+if [ -z "$client" ]; then
+	client=$(tmux list-clients -F '#{client_name}' 2>/dev/null | head -n 1)
+fi
+[ -n "$client" ] || exit 0
+
+tmux display-message -c "$client" -d 5000 \
+	'Alt: L/R tabs  Up/Down scroll  S settings  H help' \
+	2>/dev/null || true

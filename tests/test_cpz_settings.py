@@ -217,6 +217,90 @@ class SettingsTUI(unittest.TestCase):
         self.assertIn("pages OK", output.getvalue())
         self.assertGreater(len(self.mod.PAGE_TITLES), 10)
 
+    def test_package_metadata_parsing(self):
+        text = (
+            "Package: tmux\n"
+            "Status: install ok installed\n"
+            "Section: admin\n"
+            "Version: 3.4-1\n"
+            "Description: terminal multiplexer\n"
+            " tmux lets you switch between programs.\n"
+            " .\n"
+            " It is scriptable.\n"
+            "\n"
+            "Package: htop\n"
+            "Section: utils\n"
+            "Description: interactive process viewer\n"
+        )
+        stanzas = self.mod.parse_deb822(text)
+        self.assertEqual([s["Package"] for s in stanzas], ["tmux", "htop"])
+        self.assertEqual(
+            self.mod.summary_line(stanzas[0]["Description"]),
+            "terminal multiplexer",
+        )
+        self.assertIn(
+            "scriptable", self.mod.long_description(stanzas[0]["Description"])
+        )
+        self.assertEqual(self.mod.normalize_section("non-free/utils"), "utils")
+        self.assertEqual(self.mod.section_label("utils"), "Utilities")
+
+    def test_terminal_package_filter(self):
+        terminal = ("/usr/bin/tmux", "/usr/share/man/man1/tmux.1.gz")
+        self.assertTrue(self.mod.files_have_program(terminal))
+        self.assertFalse(self.mod.files_have_program(("/usr/lib/libfoo.so",)))
+        self.assertFalse(
+            self.mod.package_looks_gui("admin", "libc6, libtinfo6", terminal)
+        )
+        self.assertTrue(self.mod.package_looks_gui("utils", "libgtk-3-0", ()))
+        self.assertTrue(
+            self.mod.package_looks_gui(
+                "utils", "", ("/usr/share/applications/foo.desktop",)
+            )
+        )
+
+    def test_available_package_skips_libraries_and_gui(self):
+        stanza = {
+            "Package": "htop",
+            "Section": "utils",
+            "Description": "interactive process viewer",
+        }
+        self.assertIsNotNone(self.mod.available_package(stanza))
+        self.assertIsNone(
+            self.mod.available_package(dict(stanza, Package="libfoo", Section="libs"))
+        )
+        self.assertIsNone(
+            self.mod.available_package(dict(stanza, Package="htop-dev"))
+        )
+        self.assertIsNone(
+            self.mod.available_package(
+                dict(stanza, Package="galculator", Depends="libgtk-3-0")
+            )
+        )
+
+    def test_packages_are_grouped_by_category(self):
+        installed = [
+            {"name": "tmux", "section": "admin", "installed": True},
+            {"name": "htop", "section": "utils", "installed": True},
+        ]
+        groups = self.mod.group_packages(installed)
+        self.assertEqual([label for label, _ in groups], ["System", "Utilities"])
+        self.assertEqual(groups[0][1][0]["name"], "tmux")
+        # Already installed packages are not offered again.
+        available = [
+            {"name": "tmux", "section": "admin", "installed": False},
+            {"name": "nano", "section": "editors", "installed": False},
+        ]
+        groups = self.mod.group_packages(available, {"tmux"})
+        self.assertEqual([label for label, _ in groups], ["Editors"])
+
+    def test_core_packages_are_protected(self):
+        optional = {"name": "cowsay", "priority": "optional", "essential": False}
+        tmux = {"name": "tmux", "priority": "optional", "essential": False}
+        essential = {"name": "bash", "priority": "required", "essential": True}
+        self.assertFalse(self.mod.package_is_protected(optional))
+        self.assertTrue(self.mod.package_is_protected(tmux))
+        self.assertTrue(self.mod.package_is_protected(essential))
+
 
 if __name__ == "__main__":
     unittest.main()

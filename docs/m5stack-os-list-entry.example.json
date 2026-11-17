@@ -1,8 +1,8 @@
 {
   "name": "CardputerZero CPZ (Trixie arm64)",
-  "description": "Terminal-first kmscon + tmux image for CardputerZero.",
+  "description": "Terminal-first Linux console + tmux image for CardputerZero.",
   "icon": "https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/icons/cardputerzero.png",
-  "url": "https://example.invalid/cardputerzero-cpz-trixie-arm64-YYYYMMDD.img.xz",
+  "url": "https://example.invalid/cardputerzero-trixie-arm64-v0.1.0.img.xz",
   "extract_size": 0,
   "extract_sha256": "FILL_ME",
   "image_download_size": 0,

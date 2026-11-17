@@ -24,7 +24,7 @@ install -m 0755 \
 	files/cpz-tab-close-key files/cpz-tab-info \
 	files/cpz-settings-open \
 	files/cpz-settings files/cpz-settings-shell files/cpz-status \
-	files/cpz-apply-settings files/cpz-help \
+	files/cpz-apply-settings files/cpz-help files/cpz-hint \
 	files/cpz-first-login \
 	files/cpz-session-save files/cpz-session-restore \
 	files/cpz-session-save-as-user files/cpz-conn-status \
@@ -39,6 +39,27 @@ install -m 0644 files/99-cpz-backlight.rules files/99-cpz-keyboard.rules \
 install -m 0644 files/cpz-keyboard-layout.service \
 	files/cpz-keyboard-layout.path \
 	"${ROOTFS_DIR}/etc/systemd/system/"
+
+# kmscon uses libxkbcommon, not the VT keymap, so the TCA8418 Sym/Fn overlay
+# needs an XKB layout. cpz-kmscon-config selects this layout while the internal
+# keyboard is active; an external keyboard keeps the standard layout.
+install -d -m 0755 "${ROOTFS_DIR}/usr/share/X11/xkb/symbols"
+install -m 0644 files/xkb/symbols/cpz \
+	"${ROOTFS_DIR}/usr/share/X11/xkb/symbols/cpz"
+
+# xkb-data does not name the keycode the Sym layer uses for ">" (Linux
+# KEY_ZENKAKUHANKAKU, XKB keycode 93). Name it so symbols/cpz can map it. The
+# image masks automatic xkb-data upgrades, so this stays in place.
+keycodes="${ROOTFS_DIR}/usr/share/X11/xkb/keycodes/evdev"
+if [ -f "$keycodes" ] && ! grep -q '<ZENK>' "$keycodes"; then
+	if grep -q '<HKTG> = 101;' "$keycodes"; then
+		sed -i '/<HKTG> = 101;/i\
+	<ZENK> = 93;' "$keycodes"
+	else
+		echo "stage3: xkb-data evdev keycodes changed; cannot add <ZENK>" >&2
+		exit 1
+	fi
+fi
 install -d -m 0755 "${ROOTFS_DIR}/etc/cpz/themes"
 install -m 0644 files/settings.conf "${ROOTFS_DIR}/etc/cpz/settings.conf"
 # cpz-settings warns while the factory password is unchanged. It cannot read

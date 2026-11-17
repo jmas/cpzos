@@ -27,6 +27,9 @@ pull request (`.github/workflows/ci.yml`).
   module and checks settings precedence, defaults/clamping, save/load
   round-trip, layout normalization, the date/time editor helpers and the
   internal submenu graph (`--check-pages`).
+- `test_update_os_list.py` checks the os-list naming rules used by the release
+  workflow: SemVer tags (`v0.1.0`), prerelease suffixes and legacy timestamp
+  tags.
 
 The tests are intentionally host-only. Hardware behaviour (DRM modesets,
 kmscon hotplug, backlight) still needs the debug image on a device; see

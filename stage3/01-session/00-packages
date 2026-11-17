@@ -31,8 +31,6 @@ htop
 chafa
 rsync
 python3
-# Interactive package browser used by Settings > Applications.
-aptitude
 # terminfo for tmux-256color, used by the Settings TUI and other curses apps.
 ncurses-term
 

@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import textwrap
 from datetime import datetime
 from typing import Any
 
@@ -993,6 +994,14 @@ def set_datetime_action(screen, _data) -> str | None:
     return f"Set: {value}"
 
 
+def cpz_version() -> str:
+    try:
+        with open("/etc/cpz-version", "r", encoding="utf-8") as handle:
+            return handle.read().strip() or "unknown"
+    except OSError:
+        return "unknown"
+
+
 def battery_info() -> str:
     for supply in glob.glob("/sys/class/power_supply/*"):
         try:
@@ -1865,7 +1874,11 @@ def help_lines() -> list:
         "Ctrl-b { / }      swap pane previous / next",
         "",
         "Scroll and copy",
+        "Alt+Up / Alt+Down enter copy mode, scroll",
+        "Alt+PageUp/PgDown page history",
+        "Fn+L / Fn+M       page up / down",
         "Ctrl-b [          scroll / copy (vi keys)",
+        "j / k or Up/Down  line down / up",
         "Space, Enter      select, then copy",
         "q                 leave copy mode",
         "Ctrl-b ]          paste tmux buffer",
@@ -1888,6 +1901,7 @@ def system_info_lines(data: dict) -> list:
         "",
         f"Host: {platform.node() or 'unknown'}",
         f"Kernel: {platform.release()}",
+        f"CPZ version: {cpz_version()}",
         f"Uptime: {uptime_info()}",
         f"CPU temp: {cpu_temperature()}",
         f"Memory: {memory_info()}",
@@ -2065,13 +2079,603 @@ def show_resources(screen, _data) -> None:
     run_interactive(screen, ["htop"])
 
 
-def applications_action(screen, _data) -> None:
-    if not confirm(screen, "Open Aptitude? Core packages can break CPZ."):
-        return
-    run_interactive(
-        screen,
-        ["sudo", "aptitude", "-o", "Aptitude::Delete-Unused=false"],
+# Package browser. The screen reads dpkg/apt metadata directly instead of
+# shelling out to aptitude: the image is terminal-only, so only packages that
+# actually ship a command (and are not tied to a GUI toolkit) are listed.
+PKG_STATUS_FILE = "/var/lib/dpkg/status"
+PKG_INFO_DIR = "/var/lib/dpkg/info"
+PKG_EXEC_DIRS = (
+    "/bin/",
+    "/sbin/",
+    "/usr/bin/",
+    "/usr/sbin/",
+    "/usr/games/",
+    "/usr/local/bin/",
+    "/usr/local/sbin/",
+)
+PKG_DESKTOP_DIR = "/usr/share/applications/"
+# Dependencies that mean "this package needs a graphical session". Matching a
+# library name is a heuristic, but on a terminal image it is accurate enough
+# and keeps the catalogue free of GTK/Qt programs.
+PKG_GUI_LIBS = (
+    "libgdk",
+    "libgtk",
+    "libqt",
+    "libx11",
+    "libxcb",
+    "libwayland",
+    "libsdl",
+    "libgl1",
+    "libegl",
+    "libvulkan",
+    "libwx",
+    "libfox",
+    "libfltk",
+    "libgtkmm",
+    "libpango",
+    "libxrandr",
+    "libxinerama",
+    "libxcursor",
+    "libxfce",
+    "libkf5",
+    "libkf6",
+    "libmate",
+)
+PKG_GUI_SECTIONS = frozenset(
+    {
+        "gnome",
+        "kde",
+        "xfce",
+        "lxde",
+        "lxqt",
+        "mate",
+        "cinnamon",
+        "x11",
+        "wayland",
+        "fonts",
+    }
+)
+# Sections that describe programs. Packages from other sections (libs, doc,
+# localisation, desktop add-ons) are never shown in the "Available" tab.
+PKG_SECTION_LABELS = {
+    "admin": "System",
+    "utils": "Utilities",
+    "net": "Network",
+    "comm": "Communication",
+    "editors": "Editors",
+    "shells": "Shells",
+    "text": "Text",
+    "mail": "Mail",
+    "news": "News",
+    "games": "Games",
+    "sound": "Sound",
+    "video": "Video",
+    "graphics": "Graphics",
+    "devel": "Development",
+    "vcs": "Version Control",
+    "database": "Databases",
+    "math": "Math",
+    "science": "Science",
+    "electronics": "Electronics",
+    "embedded": "Embedded",
+    "kernel": "Kernel",
+    "otherosfs": "Other OS",
+    "hamradio": "Ham radio",
+    "web": "Web",
+    "misc": "Misc",
+}
+PKG_SKIP_SUFFIXES = (
+    "-dev",
+    "-dbg",
+    "-dbgsym",
+    "-doc",
+    "-docs",
+    "-data",
+    "-common",
+    "-headers",
+)
+# Removing any of these would break the terminal session or the updater.
+PKG_CORE = frozenset(
+    {
+        "apt",
+        "bash",
+        "bluez",
+        "coreutils",
+        "dpkg",
+        "fonts-terminus-otb",
+        "iw",
+        "kmscon",
+        "ncurses-term",
+        "network-manager",
+        "pipewire",
+        "polkitd",
+        "python3",
+        "rfkill",
+        "sudo",
+        "systemd",
+        "tmux",
+        "util-linux",
+        "wireplumber",
+    }
+)
+
+
+def iter_deb822(lines):
+    """Yield deb822 stanzas (dicts of field -> value) from an iterable."""
+    stanza: dict[str, str] = {}
+    field = ""
+    for raw in lines:
+        line = raw.rstrip("\n")
+        if not line.strip():
+            if stanza:
+                yield stanza
+                stanza = {}
+            field = ""
+            continue
+        if line[:1] in (" ", "\t"):
+            if field:
+                stanza[field] += "\n" + line.strip()
+            continue
+        name, separator, value = line.partition(":")
+        if not separator:
+            continue
+        field = name.strip()
+        stanza[field] = value.strip()
+    if stanza:
+        yield stanza
+
+
+def parse_deb822(text: str) -> list[dict[str, str]]:
+    return list(iter_deb822(text.splitlines()))
+
+
+def summary_line(description: str) -> str:
+    return description.splitlines()[0].strip() if description else ""
+
+
+def long_description(description: str) -> str:
+    lines = description.splitlines()[1:]
+    while lines and not lines[0].strip(". "):
+        lines.pop(0)
+    return " ".join(line.strip() for line in lines if line.strip() not in ("", "."))
+
+
+def normalize_section(section: str) -> str:
+    # "non-free/utils" and similar component prefixes are not categories.
+    return (section or "").strip().split("/")[-1].strip().lower() or "misc"
+
+
+def section_label(section: str) -> str:
+    name = normalize_section(section)
+    return PKG_SECTION_LABELS.get(name, name.replace("-", " ").title())
+
+
+def files_have_program(files) -> bool:
+    for path in files:
+        for prefix in PKG_EXEC_DIRS:
+            if path.startswith(prefix) and "/" not in path[len(prefix) :]:
+                return True
+    return False
+
+
+def package_looks_gui(section: str, depends: str, files=()) -> bool:
+    if any(path.startswith(PKG_DESKTOP_DIR) for path in files):
+        return True
+    if normalize_section(section) in PKG_GUI_SECTIONS:
+        return True
+    dependencies = depends.lower()
+    return any(library in dependencies for library in PKG_GUI_LIBS)
+
+
+def package_record(
+    stanza: dict, installed: bool, section: str, depends: str
+) -> dict[str, Any]:
+    description = stanza.get("Description", "")
+    return {
+        "name": stanza.get("Package", ""),
+        "version": stanza.get("Version", ""),
+        "section": section,
+        "summary": summary_line(description),
+        "description": description,
+        "size": stanza.get("Installed-Size", ""),
+        "priority": stanza.get("Priority", ""),
+        "essential": stanza.get("Essential", "").lower() == "yes",
+        "depends": depends,
+        "installed": installed,
+    }
+
+
+def read_package_files(name: str, architecture: str, info_dir: str) -> tuple:
+    for candidate in (f"{name}:{architecture}", name):
+        if not candidate:
+            continue
+        try:
+            with open(
+                os.path.join(info_dir, candidate + ".list"),
+                "r",
+                encoding="utf-8",
+                errors="replace",
+            ) as handle:
+                return tuple(line.strip() for line in handle if line.strip())
+        except OSError:
+            continue
+    return ()
+
+
+def read_installed_packages(
+    status_path: str = PKG_STATUS_FILE, info_dir: str = PKG_INFO_DIR
+) -> tuple[list[dict[str, Any]], set]:
+    """Return terminal packages plus the names of every installed package."""
+    packages: list[dict[str, Any]] = []
+    names: set = set()
+    try:
+        with open(status_path, "r", encoding="utf-8", errors="replace") as handle:
+            for stanza in iter_deb822(handle):
+                name = stanza.get("Package", "")
+                status = stanza.get("Status", "").split()
+                if not name or not status or status[-1] != "installed":
+                    continue
+                names.add(name)
+                section = normalize_section(stanza.get("Section", ""))
+                depends = " ".join(
+                    (
+                        stanza.get("Pre-Depends", ""),
+                        stanza.get("Depends", ""),
+                    )
+                )
+                files = read_package_files(
+                    name, stanza.get("Architecture", ""), info_dir
+                )
+                if not files_have_program(files):
+                    continue
+                if package_looks_gui(section, depends, files):
+                    continue
+                packages.append(package_record(stanza, True, section, depends))
+    except OSError:
+        pass
+    return packages, names
+
+
+def available_package(stanza: dict) -> dict[str, Any] | None:
+    name = stanza.get("Package", "")
+    section = normalize_section(stanza.get("Section", ""))
+    if not name or section not in PKG_SECTION_LABELS:
+        return None
+    if name.endswith(PKG_SKIP_SUFFIXES):
+        return None
+    depends = " ".join(
+        (stanza.get("Pre-Depends", ""), stanza.get("Depends", ""))
     )
+    if package_looks_gui(section, depends):
+        return None
+    return package_record(stanza, False, section, depends)
+
+
+def read_available_packages() -> list[dict[str, Any]]:
+    """Read apt's catalogue, keeping only terminal programs."""
+    try:
+        process = subprocess.Popen(
+            ["apt-cache", "dumpavail"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            errors="replace",
+        )
+    except OSError:
+        return []
+    packages: list[dict[str, Any]] = []
+    with process:
+        if process.stdout is None:
+            return []
+        for stanza in iter_deb822(process.stdout):
+            package = available_package(stanza)
+            if package:
+                packages.append(package)
+    return packages
+
+
+def group_packages(
+    packages: list[dict[str, Any]], installed_names=()
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for package in packages:
+        if not package["installed"] and package["name"] in installed_names:
+            continue
+        grouped.setdefault(section_label(package["section"]), []).append(package)
+    known = [
+        label
+        for label in PKG_SECTION_LABELS.values()
+        if label in grouped
+    ]
+    extra = sorted(label for label in grouped if label not in known)
+    return [
+        (label, sorted(grouped[label], key=lambda item: item["name"]))
+        for label in known + extra
+    ]
+
+
+def package_details_lines(package: dict[str, Any], width: int) -> list[str]:
+    lines = [
+        f"Name: {package['name']}",
+        f"Version: {package['version'] or '?'}",
+        f"Section: {section_label(package['section'])}",
+        f"Status: {'installed' if package['installed'] else 'not installed'}",
+    ]
+    if package["size"]:
+        lines.append(f"Size: {package['size']} KiB")
+    lines.append("")
+    body = long_description(package["description"]) or package["summary"]
+    lines.extend(textwrap.wrap(body, max(20, width - 2)))
+    return lines
+
+
+def draw_loading(screen, text: str) -> None:
+    screen.erase()
+    height, _width = screen.getmaxyx()
+    put(screen, max(0, height // 2), 1, " " + text)
+    screen.refresh()
+
+
+def draw_packages(
+    screen,
+    mode: str,
+    groups: list[tuple[str, list[dict[str, Any]]]],
+    category: int,
+    row: int,
+    notice: str,
+) -> None:
+    screen.erase()
+    height, width = screen.getmaxyx()
+    label = groups[category][0] if groups else "No packages"
+    put(screen, 0, 0, f" Applications: {label}", curses.A_BOLD)
+
+    tabs = (("Installed", "installed"), ("Available", "available"))
+    x = 0
+    for text, tab_mode in tabs:
+        piece = f" {text} "
+        attr = curses.A_REVERSE if mode == tab_mode else curses.A_DIM
+        put(screen, 1, x, piece, attr)
+        x += len(piece)
+
+    hint_lines = 2 if height >= 12 else 1
+    description_lines = 2 if height >= 13 else 1
+    description_y = max(3, height - hint_lines - description_lines)
+    separator_y = description_y - 1
+    top = 2
+    visible = max(1, separator_y - top)
+
+    packages = groups[category][1] if groups else []
+    first = 0
+    if row >= visible:
+        first = row - visible + 1
+    first = max(0, min(first, max(0, len(packages) - visible)))
+
+    name_width = min(26, max(12, width // 2))
+    for offset, package in enumerate(packages[first : first + visible]):
+        index = first + offset
+        selected = index == row
+        name = package["name"][:name_width]
+        text = f"{'>' if selected else ' '} {name:<{name_width}} {package['summary']}"
+        put(
+            screen,
+            top + offset,
+            0,
+            text.ljust(max(0, width - 1)),
+            curses.A_REVERSE if selected else 0,
+        )
+    if not packages:
+        put(screen, top, 1, "No terminal packages here")
+    if first > 0:
+        put(screen, top, width - 2, "^")
+    if first + visible < len(packages):
+        put(screen, top + visible - 1, width - 2, "v")
+
+    put(screen, separator_y, 0, "-" * max(0, width - 1))
+    chosen = packages[row] if packages and row < len(packages) else None
+    if chosen:
+        description = f"{chosen['name']} - {chosen['summary']}"
+        wrapped = textwrap.wrap(description, max(10, width - 2))
+        for offset, line in enumerate(wrapped[:description_lines]):
+            put(screen, description_y + offset, 1, line)
+    else:
+        put(screen, description_y, 1, "No package selected")
+
+    first_hint = " Up/Down move   Left/Right category   Tab mode"
+    if mode == "installed":
+        second_hint = " Enter details   d remove   r reload   q back"
+    else:
+        second_hint = " Enter details   i install   r reload   q back"
+    if notice and hint_lines == 2:
+        put(screen, height - 2, 0, " " + notice)
+        put(screen, height - 1, 0, second_hint)
+    elif notice:
+        put(screen, height - 1, 0, " " + notice)
+    elif hint_lines == 2:
+        put(screen, height - 2, 0, first_hint)
+        put(screen, height - 1, 0, second_hint)
+    else:
+        put(screen, height - 1, 0, second_hint)
+    screen.refresh()
+
+
+def package_is_protected(package: dict[str, Any]) -> bool:
+    return (
+        bool(package["essential"])
+        or package["priority"] in ("required", "important")
+        or package["name"] in PKG_CORE
+    )
+
+
+def simulate_removal(name: str) -> list[str] | None:
+    try:
+        result = subprocess.run(
+            ["apt-get", "-s", "purge", name],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    planned = []
+    for line in result.stdout.splitlines():
+        if line.startswith(("Remv ", "Purg ")):
+            planned.append(line.split()[1])
+    return planned
+
+
+def packages_remove(screen, package: dict[str, Any]) -> str:
+    name = package["name"]
+    if package_is_protected(package):
+        return f"{name} is a system package"
+    planned = simulate_removal(name)
+    if planned is None:
+        return "Cannot check what would be removed"
+    if any(item in PKG_CORE for item in planned):
+        return "Refused: would remove core packages"
+    extra = [item for item in planned if item != name]
+    question = f"Remove {name}?"
+    if extra:
+        question = f"Remove {name} and {len(extra)} more package(s)?"
+    if not confirm(screen, question):
+        return "Cancelled"
+    rc = run_privileged(
+        screen,
+        [
+            "env",
+            "APT_LISTCHANGES_FRONTEND=none",
+            "apt-get",
+            "purge",
+            "-y",
+            name,
+        ],
+    )
+    return f"Removed {name}" if rc == 0 else "Removal failed"
+
+
+def packages_install(screen, package: dict[str, Any]) -> str:
+    name = package["name"]
+    if not confirm(screen, f"Install {name}?"):
+        return "Cancelled"
+    # Recommends on Debian often pull in a full GUI; keep the image terminal-only.
+    # apt-listchanges would otherwise open a pager inside the settings screen.
+    rc = run_privileged(
+        screen,
+        [
+            "env",
+            "APT_LISTCHANGES_FRONTEND=none",
+            "apt-get",
+            "install",
+            "-y",
+            "--no-install-recommends",
+            name,
+        ],
+    )
+    return f"Installed {name}" if rc == 0 else "Install failed"
+
+
+def packages_screen(screen) -> None:
+    draw_loading(screen, "Reading installed packages...")
+    installed, installed_names = read_installed_packages()
+    installed_groups = group_packages(installed)
+    available: list[dict[str, Any]] | None = None
+    available_groups: list[tuple[str, list[dict[str, Any]]]] = []
+    mode = "installed"
+    category = {"installed": 0, "available": 0}
+    row = {"installed": 0, "available": 0}
+    notice = ""
+
+    while True:
+        if mode == "available" and available is None:
+            draw_loading(screen, "Reading package lists...")
+            available = read_available_packages()
+            available_groups = group_packages(available, installed_names)
+            if not available:
+                notice = "No package lists; run apt update"
+        groups = installed_groups if mode == "installed" else available_groups
+        index = min(category[mode], max(0, len(groups) - 1))
+        category[mode] = index
+        packages = groups[index][1] if groups else []
+        position = min(row[mode], max(0, len(packages) - 1))
+        row[mode] = position
+
+        draw_packages(screen, mode, groups, index, position, notice)
+        key = screen.getch()
+        notice = ""
+
+        if key in (ord("q"), ord("Q"), 27):
+            return
+        if key == 9:  # Tab
+            mode = "available" if mode == "installed" else "installed"
+            continue
+        if key in (ord("r"), ord("R")):
+            draw_loading(screen, "Reading installed packages...")
+            installed, installed_names = read_installed_packages()
+            installed_groups = group_packages(installed)
+            available = None
+            available_groups = []
+            notice = "Reloaded"
+            continue
+        if key in NAV_LEFT:
+            count = max(1, len(groups))
+            category[mode] = (index - 1) % count
+            row[mode] = 0
+            continue
+        if key in NAV_RIGHT:
+            count = max(1, len(groups))
+            category[mode] = (index + 1) % count
+            row[mode] = 0
+            continue
+        if key in NAV_UP:
+            if packages:
+                row[mode] = (position - 1) % len(packages)
+            continue
+        if key in NAV_DOWN:
+            if packages:
+                row[mode] = (position + 1) % len(packages)
+            continue
+        if key in (curses.KEY_PPAGE, curses.KEY_NPAGE, curses.KEY_HOME, curses.KEY_END):
+            if not packages:
+                continue
+            page = max(1, screen.getmaxyx()[0] - 5)
+            if key == curses.KEY_PPAGE:
+                position = max(0, position - page)
+            elif key == curses.KEY_NPAGE:
+                position = min(len(packages) - 1, position + page)
+            elif key == curses.KEY_HOME:
+                position = 0
+            else:
+                position = len(packages) - 1
+            row[mode] = position
+            continue
+        if key in (10, 13) and packages:
+            _height, width = screen.getmaxyx()
+            text_page(
+                screen,
+                f"Package: {packages[position]['name']}",
+                package_details_lines(packages[position], width),
+            )
+            continue
+        if key in (ord("d"), ord("D")) and mode == "installed" and packages:
+            notice = packages_remove(screen, packages[position])
+            draw_loading(screen, "Reading installed packages...")
+            installed, installed_names = read_installed_packages()
+            installed_groups = group_packages(installed)
+            available_groups = group_packages(available or [], installed_names)
+            continue
+        if key in (ord("i"), ord("I")) and mode == "available" and packages:
+            notice = packages_install(screen, packages[position])
+            draw_loading(screen, "Reading installed packages...")
+            installed, installed_names = read_installed_packages()
+            installed_groups = group_packages(installed)
+            available_groups = group_packages(available or [], installed_names)
+            continue
+
+
+def applications_action(screen, _data) -> None:
+    packages_screen(screen)
 
 
 def network_details_action(screen, _data) -> None:

@@ -34,6 +34,14 @@ rm -f /etc/systemd/system/sysinit.target.wants/fb_load.service \
     /etc/systemd/system/fb_load.service
 CHROOT
 
+# The vendor display rule puts the panel DRM card on seat-cardputer-zero,
+# which hides it from kmscon/libseat on seat0. Replace it with a CPZ rule that
+# keeps the card on seat0; the fbdev symlink is no longer needed because the
+# normal image has no panel fbdev node.
+rm -f "${ROOTFS_DIR}/etc/udev/rules.d/99-cardputer-zero-lcd.rules"
+install -m 644 files/99-cpz-display.rules \
+    "${ROOTFS_DIR}/etc/udev/rules.d/99-cpz-display.rules"
+
 # Keep realtime media scheduling deterministic on the low-memory target.
 for config_dir in \
     pipewire.conf.d \

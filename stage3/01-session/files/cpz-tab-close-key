@@ -8,22 +8,27 @@ set -eu
 session=${1:-main}
 tmux has-session -t "=$session" 2>/dev/null || exit 0
 
-tab=$(printf '\t')
+# tmux 3.5 replaces literal tabs in -F output with "_", so use spaces. The
+# fixed fields come first and the window name is last.
 windows=$(tmux list-windows -t "=$session" -F \
-	"#{window_id}${tab}#{window_index}${tab}#{window_name}${tab}#{window_active}${tab}#{?@cpz_main,1,0}${tab}#{?@cpz_settings,1,0}")
+	"#{window_id} #{window_index} #{window_active} #{?@cpz_settings,1,0} #{window_name}")
 
-current=$(printf '%s\n' "$windows" | awk -F "$tab" '$4 == 1 { print; exit }')
+current=$(printf '%s\n' "$windows" | awk '$3 == 1 { print; exit }')
 [ -n "$current" ] || exit 0
 
-IFS=$tab read -r _window_id _index name _active is_main is_settings <<EOF
+read -r _window_id _index _active is_settings name <<EOF
 $current
 EOF
+
+# Settings is not a terminal tab, so it never counts towards the last tab.
+terminals=$(printf '%s\n' "$windows" |
+	awk '$4 != 1 && $5 != "settings" { count++ } END { print count + 0 }')
 
 notice=
 if [ "$is_settings" = 1 ] || [ "$name" = settings ]; then
 	notice="Settings stays open"
-elif [ "$is_main" = 1 ]; then
-	notice="Tab 1 is the shell tab"
+elif [ "$terminals" -le 1 ]; then
+	notice="Last tab stays open"
 fi
 
 client=$(tmux list-clients -t "=$session" -F '#{client_name}' | head -n 1)

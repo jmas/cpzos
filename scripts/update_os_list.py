@@ -9,11 +9,11 @@ builds (desktop/kmscon and prereleases) before the configured cutoff date.
 Usage (called by the CI publish workflow):
     python3 scripts/update_os_list.py \
         --json os-list.json \
-        --tag 20260601-022317-29f3dcd \
-        --release-date 2026-06-01 \
+        --tag v0.1.0 \
+        --release-date 2026-11-17 \
         --is-prerelease false \
-        --release-url https://github.com/CardputerZero/pi-gen/releases/tag/... \
-        --oss-filename cardputerzero-trixie-arm64-20260601-022317-29f3dcd.img.xz \
+        --release-url https://github.com/jmas/cpzos/releases/tag/v0.1.0 \
+        --oss-filename cardputerzero-trixie-arm64-v0.1.0.img.xz \
         --download-size 1460389544 \
         --download-sha256 01a6abcc... \
         --extract-size 6576668672 \
@@ -22,11 +22,42 @@ Usage (called by the CI publish workflow):
 
 import argparse
 import json
+import re
 from datetime import date
 
 BASE_URL = "https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com"
 ICON_URL = f"{BASE_URL}/icons/cardputerzero.png"
 PRERELEASE_VISIBLE_FROM = date(2026, 9, 29)
+SEMVER_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
+
+
+def display_tag(tag: str) -> str:
+    """Short, human-facing version for an os-list entry.
+
+    Semantic-version tags are shown as-is (with a leading v); legacy
+    timestamp tags keep only YYYYMMDD-HHMMSS and drop the commit hash.
+    """
+    tag = str(tag or "")
+    if SEMVER_RE.fullmatch(tag):
+        return tag if tag.startswith("v") else "v" + tag
+    return "-".join(tag.split("-")[:2])
+
+
+def os_entry_name(tag: str, is_prerelease: bool) -> str:
+    name = f"CardputerZero CPZ (Trixie arm64) {display_tag(tag)}"
+    return name + (" (Beta)" if is_prerelease else "")
+
+
+def tag_sort_key(tag: str):
+    """Sort key for newest-first ordering, numeric for SemVer tags."""
+    tag = str(tag or "")
+    if SEMVER_RE.fullmatch(tag):
+        version, _, prerelease = tag.lstrip("v").partition("-")
+        major, minor, patch = (int(part) for part in version.split("."))
+        # A stable release sorts above its own prereleases.
+        return (1, major, minor, patch, 0 if prerelease else 1, prerelease)
+    # Legacy timestamp tags sort correctly as strings.
+    return (0, 0, 0, 0, 0, tag)
 
 
 def is_cardputerzero_entry(entry):
@@ -76,14 +107,10 @@ def main():
     is_prerelease = args.is_prerelease == "true"
 
     # Build the new entry
-    # Tag format: YYYYMMDD-HHMMSS-commit → strip commit hash for display
-    tag_short = "-".join(args.tag.split("-")[:2])  # "20260608-102710"
+    display_name = os_entry_name(args.tag, is_prerelease)
+    description = "Terminal-first Linux console + tmux image for CardputerZero."
     if is_prerelease:
-        display_name = f"CardputerZero CPZ (Trixie arm64) {tag_short} (Beta)"
-        description = "Terminal-first kmscon + tmux image for CardputerZero. Pre-release build."
-    else:
-        display_name = "CardputerZero CPZ (Trixie arm64)"
-        description = "Terminal-first kmscon + tmux image for CardputerZero."
+        description += " Pre-release build."
 
     new_entry = {
         "name": display_name,
@@ -115,7 +142,7 @@ def main():
     if args.driver_commit:
         components["driver_overlay"] = {"repo": "m5stack/m5stack-linux-dtoverlays", "commit": args.driver_commit}
     if args.pigen_commit:
-        components["pigen"] = {"repo": "CardputerZero/pi-gen", "commit": args.pigen_commit}
+        components["pigen"] = {"repo": "jmas/cpzos", "commit": args.pigen_commit}
     if components:
         new_entry["components"] = components
 
@@ -165,12 +192,12 @@ def main():
 
     stable = sorted(
         [e for e in cz_entries if not e.get("is_prerelease")],
-        key=lambda e: e.get("tag", ""),
+        key=lambda e: tag_sort_key(e.get("tag", "")),
         reverse=True,
     )
     beta = sorted(
         [e for e in cz_entries if e.get("is_prerelease")],
-        key=lambda e: e.get("tag", ""),
+        key=lambda e: tag_sort_key(e.get("tag", "")),
         reverse=True,
     )
 

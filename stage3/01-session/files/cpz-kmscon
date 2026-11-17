@@ -10,9 +10,8 @@
 # rendered file changes (font size, layout, theme, timeout, output).
 #
 # tty1 switches to its own VT on start: that vt_enter() is what puts the VT in
-# KD_GRAPHICS and makes fbcon release the DRM device. The tty2/tty3 recovery
-# instances must not do that, or they would fight over the foreground VT at
-# boot.
+# KD_GRAPHICS and gives kmscon control of the DRM console. Other VTs must not
+# use --switchvt, or they would fight over the foreground VT at boot.
 set -eu
 
 vt=${1:-tty1}

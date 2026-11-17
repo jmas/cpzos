@@ -156,15 +156,18 @@ rm -f "${ROOTFS_DIR}/boot/firmware/rpi-preseed.toml"
 on_chroot <<'CHROOT'
 set -e
 
-# kmscon owns the DRM console on tty1 (the CPZ session) and on tty2/tty3
-# (plain recovery logins). fbcon is mapped off in cmdline.txt, so the tty
-# gettys have no display and are masked in the normal image.
+# kmscon owns the DRM console on tty1. The normal image has no panel fbdev
+# node and boots with fbcon=map:off, so tty2/tty3 gettys are kept only as a
+# fallback; they are not drawn unless fbcon is bound again. SSH/serial and the
+# debug image are the primary recovery paths.
 systemctl set-default multi-user.target
 
 if [ -f /etc/cpz-debug-boot ]; then
 	# Debug image: keep tty1/tty2 as visible getty consoles so the
-	# kernel/systemd log and a login prompt are available. kmscon must not
-	# take the VT, otherwise the logs would be hidden.
+	# kernel/systemd log and a login prompt are available. The debug build
+	# keeps the panel fbdev and uses fbcon=map:10, so these consoles appear
+	# on the panel. kmscon must not take the VT, otherwise the logs would be
+	# hidden.
 	systemctl disable kmsconvt@tty1.service 2>/dev/null || true
 	systemctl mask kmsconvt@tty1.service || true
 	systemctl disable cpz-kmscon-output.timer 2>/dev/null || true
@@ -172,9 +175,8 @@ if [ -f /etc/cpz-debug-boot ]; then
 	systemctl enable getty@tty1.service getty@tty2.service getty@tty3.service || true
 	systemctl enable console-setup.service 2>/dev/null || true
 else
-	# kmscon owns tty1. tty2/tty3 stay fbcon recovery logins: fbcon gives the
-	# panel card a valid mode at boot, and tty2/tty3 keep a text console when
-	# kmscon is unavailable.
+	# kmscon owns tty1. tty2/tty3 stay plain getty fallbacks; with
+	# fbcon=map:off they have no visible console.
 	systemctl disable getty@tty1.service 2>/dev/null || true
 	systemctl mask getty@tty1.service || true
 	systemctl enable kmsconvt@tty1.service

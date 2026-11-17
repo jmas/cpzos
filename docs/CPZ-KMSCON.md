@@ -2,7 +2,8 @@
 
 The regular CPZ image is a terminal system: kmscon owns the DRM/KMS console and
 runs tmux with the CPZ status bar and Settings TUI. There is no compositor,
-desktop or launcher. fbcon stays mapped to the panel before kmscon takes over.
+desktop or launcher. The internal panel is a pure DRM display (card1/SPI-1);
+kmscon drives it through KMS and fbcon is disabled.
 
 ```text
 firmware splash
@@ -11,34 +12,42 @@ firmware splash
   → HDMI usable: kmscon draws on HDMI and disables the panel screen,
     cpz-kmscon-output switches the panel backlight off
   → HDMI removed: kmscon re-enables the panel, backlight on
-  → tty2/tty3: fbcon recovery logins
+  → tty2/tty3: getty fallbacks (not drawn while fbcon=map:off)
 ```
 
 The fbcon backend lives on the `main` branch (`docs/CPZ-FBCON.md` there).
 
-## Why fbcon stays mapped
+## The panel is a DRM display, not an fbdev one
 
-kmscon needs the panel card to have an **active CRTC** when it starts. With
-`fbcon=map:off` nothing sets a panel mode at boot, kmscon's "original" mode is
-0x0, and its first atomic commit fails with
+The CM0 panel is driven by `panel-mipi-dbi-m` (mipi-dbi), which registers
+`/dev/dri/card1` with the `SPI-1` connector and a 320x170 mode. The normal
+image deliberately does **not** register the driver's fbdev emulation, so
+there is no `/dev/fb1` for the panel.
+
+That matters because kmscon treats an fbdev node that belongs to a DRM device
+as a duplicate and ignores it. It detects that by checking whether
+`fb_fix_screeninfo.id` ends in `drmfb`. The kernel builds that id as
+`"<driver>drmfb"` into `char id[16]`; `panel-mipi-dbi` + `drmfb` does not fit
+and is truncated to `panel-mipi-dbid`, so kmscon cannot recognise it. It then
+picks the fbdev backend, which has no atomic modesetting, page flips or DRM
+hotplug. Removing the fbdev node is the reliable fix.
+
+With no fbdev node, fbcon has nothing to draw on and is disabled globally:
 
 ```text
-Error: drm_shared: test-only atomic commit failed, -13
+fbcon=map:off
 ```
 
-after which the panel display is dropped and never re-added.
+kmscon sets the panel mode itself through KMS. The old boot-time "active CRTC"
+workaround (`fbcon=map:10`) and the VT nudge in `cpz-kmscon-output` are gone.
+`--switchvt` is still used so kmscon owns tty1 and VT switching behaves
+normally.
 
-`cmdline.append` therefore keeps fbcon mapped to the panel:
-
-```text
-fbcon=map:10 consoleblank=0 vt.global_cursor_default=0
-```
-
-fbcon sets the 320x170 mode on the panel at boot, so kmscon finds a valid mode.
-kmscon starts with `--switchvt`: activating the VT runs `vt_enter()`, sets
-`KD_GRAPHICS` and releases the framebuffer to kmscon. tty2/tty3 stay fbcon
-recovery consoles (tty2 on HDMI, tty3 on the panel, following `map:10`), and
-`getty@tty1` is masked because kmscon owns tty1.
+The debug image is the exception: it keeps the panel fbdev and
+`fbcon=map:10` so the kernel log is visible on the panel before kmscon starts.
+The source patch that removes the emulation is applied to the pinned m5stack
+dtoverlays checkout in `stage2/05-cardputerzero/01-run.sh`; `CPZ_DEBUG_BOOT=1`
+skips it.
 
 ## Build
 
@@ -88,7 +97,7 @@ sudo cpz-kmscon-output --status
 # HDMI    : connected, EDID 256 bytes, pinned no, enabled yes
 # target  : hdmi
 # current : hdmi
-# drm     : card0-HDMI-A-1 connected/enabled, card1-DSI-1 connected/disabled
+# drm     : card0-HDMI-A-1 connected/enabled, card1-SPI-1 connected/disabled
 # panel   : backlight brightness=0/255 bl_power=4
 # session : active
 ```
@@ -112,25 +121,36 @@ up within two seconds.
 kmscon logs one line per display it drives:
 
 ```sh
-journalctl -u kmsconvt@tty1 -b | grep -E 'Display|master|drm'
+journalctl -u kmsconvt@tty1 -b | grep -E 'Display|new drm device|master|drm'
 ```
 
 `Display [HDMI-A-1] ...` is the monitor. A working panel adds a second line
-with the panel connector (`SPI-1`). If only HDMI appears, look for
-`test-only atomic commit failed` in the same log; check what the kernel
-reports:
+with the panel connector (`SPI-1`). The normal image should also log
+`new drm device via /dev/dri/card1, using driver panel-mipi-dbi`; if only
+card0 appears, kmscon never opened the panel card.
+
+Check what the kernel reports:
 
 ```sh
+ls -l /dev/dri
 for d in /sys/class/drm/card*-*; do
     echo "$d: $(cat "$d/status") $(cat "$d/enabled" 2>/dev/null)"
 done
 cat /sys/class/drm/card*-SPI-*/modes 2>/dev/null
+cat /proc/fb
+udevadm info -q property -n /dev/dri/card1 | grep -E 'ID_SEAT|ID_PATH'
 ```
 
 `connected/disabled` means the connector is fine but nothing drew on it (the
 card nudge should correct that on the next boot or plug). `disconnected` or an
 empty `modes` list is a driver issue: kmscon can only use a DRM connector that
 reports `connected` with at least one mode.
+
+`/proc/fb` must contain only `vc4drmfb` in the normal image; a `panel-mipi-dbi`
+entry means the fbdev emulation is still enabled. `ID_SEAT` must be empty or
+`seat0`; the vendor rule used to pin the card to `seat-cardputer-zero`, which
+made `uterm_monitor` ignore it. Look for `test-only atomic commit failed -13`
+in the kmscon log if the card is opened but the first modeset fails.
 
 ### Hotplug and the "monitor turns off and on" symptom
 
@@ -144,9 +164,13 @@ kmscon 10 only listens for `HOTPLUG=1` on the **DRM card** device, but vc4
 reports an HDMI hotplug on the **connector** (`card0-HDMI-A-1`), which
 `uterm_monitor` ignores. `cpz-kmscon-output` therefore writes `change` to
 `/sys/class/drm/cardN/uevent` when the connector state changes (and once after
-boot, so the panel card is re-scanned). `99-cpz-kmscon-nudge.rules` marks that
+boot, so kmscon re-scans both cards). `99-cpz-kmscon-nudge.rules` marks that
 synthetic event `HOTPLUG=1`, and kmscon re-scans its connectors in place. The
 session, tmux and all panes keep running; only the screen layout changes.
+
+The internal panel has no hotplug pin: it is present from boot on `SPI-1`. The
+nudge matters for HDMI; the panel only disappears if its driver fails to
+probe.
 
 Restarts only happen for:
 
@@ -178,12 +202,25 @@ the Settings TUI can change are rendered into
 | `font_panel=6x12` | `font-size=12` |
 | `font_panel=8x16` | `font-size=16` |
 | `screen_timeout=5/10/30` | `dpms-timeout=300/600/1800` (0 = never) |
-| `keyboard_layout_active` | `xkb-layout=...` |
+| internal keyboard active | `xkb-layout=cpz` |
+| external keyboard active | `xkb-layout=<keyboard_layout_active>` |
 | `theme` | `palette=custom` + the theme's 16 colours, background and foreground |
 
+`cpz-keyboard-layout` writes `/run/cpz-layout.active` (`cpz` or the standard
+layout code). It detects a full USB/Bluetooth/PS2 keyboard from sysfs and
+switches both the console keymaps and `xkb-layout`. Plugging or unplugging a
+keyboard therefore restarts kmscon once; tmux and its panes stay alive.
+
+The CPZ layout maps the TCA8418 Sym layer to punctuation (`Sym+B` is `.`),
+while an external keyboard keeps the selected national layout. The two cannot
+be active at the same time because kmscon has one XKB keymap per session.
+
 The font size is shared by both screens, so HDMI gets more columns at the same
-cell size. `Ctrl+Plus` / `Ctrl+Minus` zoom the terminal at runtime without a
-restart (kmscon's `grab-zoom-in` / `grab-zoom-out`).
+cell size. `Alt+Plus` / `Alt+Minus` change the terminal font size at runtime
+(the internal keyboard emits them as Sym+T / Sym+R); `Ctrl+Plus` /
+`Ctrl+Minus` are kmscon's defaults. This zoom is runtime-only: a session
+restart (theme, layout, display change) returns to the configured
+`font_panel` size.
 
 `font_hdmi` is unused on this branch. `cpz-kmscon-config` prints `changed` or
 `same`; `cpz-kmscon-output` restarts the session only when the rendered file
@@ -203,8 +240,8 @@ survive. Only a foreground program outside tmux would be lost.
 kmscon runs its child on a pty, so `tty` there is `/dev/pts/N`, not
 `/dev/tty1`. `cpz-login` records that pty per VT
 (`/run/cpz-kmscon/session.tty1.tty`, `session.tty2.tty`), and `cpz-session.sh`
-attaches tmux only on the tty1 pty. The tty2/tty3 kmscon logins, SSH and
-the debug image stay plain shells.
+attaches tmux only on the tty1 pty. The tty2/tty3 gettys, SSH and the debug
+image stay plain shells.
 
 ## Files
 
@@ -215,22 +252,41 @@ the debug image stay plain shells.
 /usr/local/bin/cpz-kmscon-config            # renders /run/cpz-kmscon/kmscon.conf
 /usr/local/bin/cpz-kmscon-output            # output reconciler
 /usr/local/bin/cpz-login                    # uid 1000 autologin + pty marker
+/usr/local/bin/cpz-hint                     # one-line key hint on attach
+/usr/local/bin/cpz-help                     # Alt+H key reference
+/usr/local/bin/cpz-tab-info                 # status bar tab counters
 /etc/systemd/system/kmsconvt@.service.d/10-cpz.conf
 /etc/systemd/system/cpz-kmscon-output.service
 /etc/systemd/system/cpz-kmscon-output.timer
 /etc/udev/rules.d/99-cpz-kmscon-output.rules
 /etc/udev/rules.d/99-cpz-kmscon-nudge.rules
+/etc/udev/rules.d/99-cpz-display.rules       # panel DRM card stays on seat0
+/usr/share/X11/xkb/symbols/cpz              # CPZ Sym/Fn layer for kmscon
 /etc/systemd/system-sleep/cpz-kmscon
 /etc/profile.d/cpz-session.sh
 /etc/tmux.conf
 ```
+
+The image adds `<ZENK> = 93;` to `/usr/share/X11/xkb/keycodes/evdev`: xkb-data
+leaves the keycode used by Sym+N (`>`) unnamed. Automatic `xkb-data` upgrades
+are masked; a manual package upgrade would need that line re-applied.
+
+The tmux helpers avoid two tmux 3.5 behaviours: literal tabs in `-F` output are
+replaced with `_`, and `set-option` no longer accepts the `=session` exact-match
+prefix. The tab counter, tab close and session save therefore use
+space-separated formats or per-window queries.
+
+`cpz-hint` runs from the `client-attached` hook and targets that client's
+status line, so the one-line shortcut hint is not printed into the pane under
+the top status bar. `Alt+H` opens the full paged reference.
 
 Enabled: `kmsconvt@tty1`, `getty@tty2`, `getty@tty3`, `console-setup`,
 `cpz-kmscon-output.timer`,
 `cpz-conn-status.timer`, `cpz-session-save.timer`,
 `cardputerzero-keymap.service`, `cpz-keyboard-layout.path`,
 `cpz-bt-agent.service`, `bluetooth.service`, `NetworkManager.service`,
-`rpi-preseed.service`.
+`rpi-preseed.service`. The tty2/tty3 gettys are fallbacks; with
+`fbcon=map:off` they are not drawn.
 
 Masked/disabled: `getty@tty1` (kmscon owns tty1),
 `userconfig.service`, `NetworkManager-wait-online.service`,
@@ -246,18 +302,24 @@ sudo ./build.sh
 ./build-docker.sh -c config.debug.example
 ```
 
-The debug image removes the splash, `quiet`, `loglevel=3` and
-`vt.global_cursor_default=0`, keeps `fbcon=map:10 consoleblank=0`, adds
-`console=serial0,115200 console=tty1 loglevel=8`, masks `kmsconvt@tty1` and
-enables `getty@tty1`/`tty2`/`tty3`. If it shows nothing, the failure is before
-kmscon.
+The debug image is the one exception to the pure-DRM rule: `CPZ_DEBUG_BOOT=1`
+keeps the panel's fbdev emulation so fbcon can draw the kernel log on the
+panel. It removes the splash, `quiet`, `loglevel=3` and
+`vt.global_cursor_default=0`, replaces `fbcon=map:off` with
+`fbcon=map:10 consoleblank=0`, adds `console=serial0,115200 console=tty1
+loglevel=8`, masks `kmsconvt@tty1` and enables `getty@tty1`/`tty2`/`tty3`.
+If it shows nothing, the failure is before kmscon.
 
 ## Known limitations
 
-- **The internal TCA8418 keymap is not applied inside kmscon.** kmscon uses
-  libxkbcommon, not the VT keymap, so `loadkeys` cannot reach it. The selected
-  `xkb-layout` works for external keyboards and `Alt+Space` switches it (with
-  a session restart), but the CPZ Sym/Fn overlay needs an XKB keymap port.
+- **The CPZ Sym/Fn overlay is an XKB layout for kmscon.** The TCA8418 driver
+  emits otherwise unused keycodes for the Sym layer; the console keymap
+  (`loadkeys`) maps them to punctuation for VTs, but kmscon uses libxkbcommon
+  and never reads the VT keymap. `symbols/cpz` maps the same keycodes, and
+  `cpz-kmscon-config` selects it while `cpz-keyboard-layout` reports the
+  internal keyboard. An external USB/Bluetooth keyboard switches the session
+  back to the configured standard XKB layout, so the internal overlay and an
+  external keyboard cannot use different layouts at the same time.
 - **Screen timeout is DPMS, not blank-only.** kmscon's `dpms-timeout` powers
   the output down. A monitor that renegotiates on wake may change the mode;
   pin `CPZ_HDMI_VIDEO` (`video=HDMI-A-1:1920x1080@60`) if that happens. Set
@@ -265,8 +327,9 @@ kmscon.
   a crash loop.
 - **Theme changes restart the session** to rebuild the palette (about 1–2 s,
   tmux reattaches).
-- **tty1 is graphics-only.** tty2/tty3 keep framebuffer consoles; if kmscon
-  itself cannot start, use those, SSH or the serial console.
+- **tty1 is graphics-only.** The normal image boots with `fbcon=map:off`, so
+  tty2/tty3 gettys are fallbacks without a visible console; if kmscon cannot
+  start, use SSH, the serial console or the debug image.
 - kmscon is pinned from `trixie-backports`; keep `KMSCON_VERSION` in
   `stage3/00-kmscon/00-run.sh` in step with the image.
 
@@ -276,9 +339,9 @@ kmscon.
 # boot to the panel, then plug HDMI: session moves, panel backlight goes dark
 sudo cpz-kmscon-output --status
 journalctl -t cpz-kmscon-output -b
-journalctl -u kmsconvt@tty1 -b     # look for "Cannot set drm master"
+journalctl -u kmsconvt@tty1 -b     # expect card1/SPI-1 and "Display [SPI-1]"
+cat /proc/fb                       # only vc4drmfb in the normal image
 # unplug: panel returns without an HDMI blink
-# Ctrl+Alt+F2 / Ctrl+Alt+F3: fbcon recovery logins
 # Alt+D: panel comes back while HDMI stays attached
 # suspend/resume: output and backlight are re-applied
 sudo evtest                 # verify Fn key codes

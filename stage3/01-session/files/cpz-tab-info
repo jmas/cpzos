@@ -1,30 +1,29 @@
 #!/bin/sh
 # Publish the tab counters used by the status bar.
 #
-# Settings is an always-present maintenance window, not a user tab, so it must
-# not inflate "current / total". While Settings is focused, the current token
-# is "S"; the total counts only shell/working tabs.
+# Every window is a tab, including the Settings maintenance window, so the
+# total matches the window numbers. The current token is the active window
+# index, which also works while Settings is focused.
 set -eu
 
 session=${1:-main}
 tmux has-session -t "=$session" 2>/dev/null || exit 0
 
-tab=$(printf '\t')
-windows=$(tmux list-windows -t "=$session" -F \
-	"#{window_index}${tab}#{window_active}${tab}#{?@cpz_settings,1,0}${tab}#{window_name}")
+windows=$(tmux list-windows -t "=$session" -F '#{window_index} #{window_active}')
 
 total=0
 current=
 
-while IFS=$tab read -r index active settings name; do
-	[ "$settings" = 1 ] && continue
-	[ "$name" = settings ] && continue
+while read -r index active; do
+	[ -n "$index" ] || continue
 	total=$((total + 1))
 	[ "$active" = 1 ] && current=$index
 done <<EOF
 $windows
 EOF
 
-[ -n "$current" ] || current=S
-tmux set-option -t "=$session" @cpz_tab_current "$current" 2>/dev/null || true
-tmux set-option -t "=$session" @cpz_tab_total "$total" 2>/dev/null || true
+[ -n "$current" ] || current=1
+# set-option does not accept the "=name" exact-match prefix in tmux 3.5;
+# the session name is fixed to "main", so the plain name is unambiguous.
+tmux set-option -t "$session" @cpz_tab_current "$current" 2>/dev/null || true
+tmux set-option -t "$session" @cpz_tab_total "$total" 2>/dev/null || true

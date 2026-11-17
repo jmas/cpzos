@@ -174,8 +174,22 @@ do
 done
 
 export PI_GEN=${PI_GEN:-pi-gen}
-export PI_GEN_REPO=${PI_GEN_REPO:-https://github.com/CardputerZero/pi-gen}
+export PI_GEN_REPO=${PI_GEN_REPO:-https://github.com/jmas/cpzos}
 export PI_GEN_RELEASE=${PI_GEN_RELEASE:-CardputerZero CPZ}
+
+# Release version recorded in the image. tools/release.sh bumps VERSION, and
+# the release workflow checks that the git tag matches it.
+if [ -z "${CPZ_VERSION:-}" ] && [ -f "${BASE_DIR}/VERSION" ]; then
+	CPZ_VERSION="$(tr -d '[:space:]' < "${BASE_DIR}/VERSION")"
+fi
+CPZ_VERSION="${CPZ_VERSION:-0.0.0-dev}"
+if ! printf '%s\n' "${CPZ_VERSION}" |
+	grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+	echo "Invalid CPZ_VERSION '${CPZ_VERSION}'" 1>&2
+	echo "Expected X.Y.Z or X.Y.Z-prerelease (see VERSION)" 1>&2
+	exit 1
+fi
+export CPZ_VERSION
 
 export ARCH=arm64
 export RELEASE=${RELEASE:-trixie} # Don't forget to update stage0/prerun.sh

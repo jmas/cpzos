@@ -32,7 +32,7 @@ pciutils
 rpi-eeprom
 raspi-utils
 udisks2
-unzip zip p7zip-full
+unzip zip 7zip
 file
 kms++-utils
 python3-venv

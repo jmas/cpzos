@@ -54,6 +54,9 @@ echo "uninitialized" > "${ROOTFS_DIR}/etc/machine-id"
 
 ln -nsf /proc/mounts "${ROOTFS_DIR}/etc/mtab"
 
+# Release version, also shown by cpz-settings -> About.
+printf '%s\n' "${CPZ_VERSION:-unknown}" > "${ROOTFS_DIR}/etc/cpz-version"
+
 find "${ROOTFS_DIR}/var/log/" -type f -exec cp /dev/null {} \;
 
 update_issue "$(basename "${EXPORT_DIR}")"
@@ -66,6 +69,8 @@ if ! [ -L "${ROOTFS_DIR}/boot/issue.txt" ]; then
 fi
 
 cp "$ROOTFS_DIR/etc/rpi-issue" "$INFO_FILE"
+
+printf "\nCPZ version: %s\n" "${CPZ_VERSION:-unknown}" >> "$INFO_FILE"
 
 {
 	if [ -f "$ROOTFS_DIR/usr/share/doc/raspberrypi-kernel/changelog.Debian.gz" ]; then

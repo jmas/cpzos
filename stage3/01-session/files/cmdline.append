@@ -1,10 +1,9 @@
 # Append to the single line in /boot/firmware/cmdline.txt.
 #
-# kmscon needs an active CRTC on the panel card when it starts: with no mode
-# set, its first atomic commit fails (test-only atomic commit failed, -13) and
-# the panel display is dropped. fbcon maps tty1 to the internal panel (fb1), so
-# the panel has a valid mode at boot; kmscon starts with --switchvt, which puts
-# the VT in KD_GRAPHICS and releases the framebuffer to kmscon. tty2/tty3 stay
-# fbcon recovery consoles (tty2 -> HDMI, tty3 -> panel).
+# The internal panel is a pure DRM display (panel-mipi-dbi-m, card1/SPI-1).
+# The normal image does not register the driver's fbdev emulation, so there is
+# no /dev/fb1 and fbcon has nothing to draw on. Disable fbcon entirely and let
+# kmscon set the panel mode through KMS. The debug image keeps the panel fbdev
+# and maps fbcon to it (stage3/01-session/02-run.sh).
 quiet loglevel=3 vt.global_cursor_default=0 logo.nologo nowatchdog
-fbcon=map:10 consoleblank=0
+fbcon=map:off

@@ -1,10 +1,11 @@
 #!/bin/sh
-# Require a password change before the CPZ session starts while the factory
-# password is still in use.
+# Recommend setting a new password while the factory password is still in use.
+# The session is never blocked: skipping keeps the factory password, and
+# cpz-settings keeps showing a warning until it is changed.
 #
 # The build records /etc/shadow's mtime in /etc/cpz/shadow-mtime. Imager,
 # rpi-preseed, passwd, usermod and chage all update that mtime, so any real
-# password change clears the gate automatically.
+# password change clears the reminder automatically.
 set -u
 
 stamp=/etc/cpz/shadow-mtime
@@ -18,13 +19,27 @@ current=$(stat -c %Y /etc/shadow 2>/dev/null || true)
 
 clear
 printf 'CPZ: the factory password is still in use.\n\n'
-printf 'Set a new password for this account before the session starts.\n'
-while :; do
-	if passwd; then
-		clear
-		printf 'Password updated.\n'
-		exit 0
-	fi
-	printf '\nPassword not changed. Press Enter to try again, or Ctrl+C to log out.\n'
-	read -r _ || exit 1
-done
+printf 'It is recommended to set a new password for this account.\n'
+printf 'You can do it now, or later from Settings.\n\n'
+printf 'Set a new password now? [y/N] '
+answer=
+read -r answer || exit 0
+case "$answer" in
+y | Y | yes | YES | Yes) ;;
+*)
+	clear
+	printf 'Keeping the factory password. You can change it later from Settings.\n'
+	sleep 2
+	exit 0
+	;;
+esac
+
+if passwd; then
+	clear
+	printf 'Password updated.\n'
+else
+	clear
+	printf 'Password not changed. You can set it later from Settings.\n'
+	sleep 2
+fi
+exit 0

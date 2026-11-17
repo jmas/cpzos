@@ -104,10 +104,19 @@ case "$(get_setting screen_timeout)" in
 	*) dpms=0 ;;
 esac
 
-layout=$(get_setting keyboard_layout_active)
-case "$layout" in
-	'' | *[!a-z0-9_-]*) layout=us ;;
-esac
+# The console keymap selector publishes "cpz" while the internal TCA8418 is
+# the active keyboard and the selected XKB layout for an external keyboard.
+# kmscon needs the XKB form of the CPZ overlay; the console keymap only
+# applies to VTs.
+layout_state=$(head -n 1 /run/cpz-layout.active 2>/dev/null || true)
+if [ "$layout_state" = cpz ]; then
+	layout=cpz
+else
+	layout=$(get_setting keyboard_layout_active)
+	case "$layout" in
+		'' | *[!a-z0-9_-]*) layout=us ;;
+	esac
+fi
 
 # largest: draw on the biggest screen and stop drawing on the others, which
 # gives one working output and lets kmscon handle hotplug without a restart.

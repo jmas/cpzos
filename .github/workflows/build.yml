@@ -1,32 +1,88 @@
-name: Build CardputerZero OS Image (arm64)
+name: Build and publish CPZ image
 
 on:
   push:
-    branches: [arm64, cpz]
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
-      release_channel:
-        description: 'Release channel'
-        type: choice
+      tag:
+        description: "Existing tag to build (e.g. v0.1.0)"
         required: true
-        default: Beta
-        options:
-          - Beta
-          - Stable
+      release_channel:
+        description: "Channel override (auto derives it from the tag)"
+        type: choice
+        options: [auto, Stable, Beta]
+        default: auto
 
 permissions:
   contents: write
   actions: read
 
+concurrency:
+  group: cpz-image-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  IMG_BASENAME: cardputerzero-trixie-arm64
+
 jobs:
   build-image:
-    name: Build CPZ kmscon image (arm64)
+    name: Build and publish ${{ inputs.tag || github.ref_name }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: meta
+        env:
+          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+          CHANNEL: ${{ inputs.release_channel || 'auto' }}
+        run: |
+          set -euo pipefail
+          # Manual runs may check out a tag by name without creating a local
+          # ref; the os-list step needs it for `git log $TAG`.
+          git fetch --quiet --tags --force origin
+          TAG="$REQUESTED_TAG"
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "Tag must start with v: $TAG" >&2; exit 1 ;;
+          esac
+
+          VERSION="${TAG#v}"
+          if ! printf '%s\n' "$VERSION" |
+              grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "Tag is not SemVer: $TAG (expected vX.Y.Z[-prerelease])" >&2
+            exit 1
+          fi
+
+          FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [ "$FILE_VERSION" != "$VERSION" ]; then
+            echo "VERSION ($FILE_VERSION) does not match tag ($TAG)" >&2
+            exit 1
+          fi
+
+          case "$CHANNEL" in
+            Stable) PRERELEASE=false ;;
+            Beta) PRERELEASE=true ;;
+            *)
+              case "$TAG" in
+                *-*) PRERELEASE=true ;;
+                *) PRERELEASE=false ;;
+              esac
+              ;;
+          esac
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "image=${IMG_BASENAME}-${TAG}.img.xz" >> "$GITHUB_OUTPUT"
+          echo "Building $TAG (version $VERSION, prerelease=$PRERELEASE)"
 
       - name: Free disk space
         run: |
@@ -41,12 +97,13 @@ jobs:
             gpg pigz xxd arch-test qemu-user-static kmod binfmt-support e2fsprogs
 
       - name: Configure build
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          IMG_DATE=$(date +%Y-%m-%d)
           cat > config <<CONFIG
-          IMG_NAME=cardputerzero-trixie-arm64
-          IMG_FILENAME=${IMG_DATE}-cardputerzero-trixie-arm64
-          ARCHIVE_FILENAME=${IMG_DATE}-cardputerzero-trixie-arm64
+          IMG_NAME=${IMG_BASENAME}
+          IMG_FILENAME=${IMG_BASENAME}-${TAG}
+          ARCHIVE_FILENAME=${IMG_BASENAME}-${TAG}
           RELEASE=trixie
           DEPLOY_COMPRESSION=xz
           TARGET_HOSTNAME=cardputerzero
@@ -59,7 +116,7 @@ jobs:
           TIMEZONE_DEFAULT=Asia/Shanghai
           PASSWORDLESS_SUDO=0
           CONFIG
-          sed -i 's/^          //' config
+          cat config
 
       - name: Verify CPZ stage structure
         run: ./tools/verify-stage.sh
@@ -68,67 +125,52 @@ jobs:
         run: sudo XZ_DEFAULTS="-T0" ./build.sh
 
       - name: Fix deploy permissions
-        run: sudo chown -R $(id -u):$(id -g) deploy/
+        run: sudo chown -R "$(id -u):$(id -g)" deploy/
 
       - name: Find output image
         id: image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          echo "Contents of deploy/:"
-          find deploy/ -type f | sort
-          FILE=$(find deploy/ -type f \( -name "*.img.xz" -o -name "*.zip" \) | head -1)
-          if [[ -z "$FILE" ]]; then
-            echo "No CPZ image found"
-            find deploy/ -type f
+          set -euo pipefail
+          FILE="deploy/${IMG_BASENAME}-${TAG}.img.xz"
+          if [ ! -s "$FILE" ]; then
+            echo "Expected $FILE is missing. deploy/ contains:" >&2
+            find deploy/ -type f | sort >&2
             exit 1
           fi
-          echo "Found: $FILE"
-          ls -lh "$FILE"
-          # Decompress for verification
           IMG_RAW="${FILE%.xz}"
-          IMG_RAW="${IMG_RAW%.zip}"
-          if [[ "$FILE" == *.xz ]]; then
-            xz -dk "$FILE"
-            IMG_RAW="${FILE%.xz}"
-            INFO_FILE="${FILE%.img.xz}.info"
-          elif [[ "$FILE" == *.zip ]]; then
-            IMG_RAW=$(unzip -Z1 "$FILE" | head -1)
-            unzip -o "$FILE" -d "$(dirname "$FILE")"
-            IMG_RAW="$(dirname "$FILE")/$IMG_RAW"
-            INFO_FILE="${IMG_RAW%.img}.info"
-          else
-            echo "Unsupported image archive: $FILE"
+          xz -dk "$FILE"
+          INFO_FILE="${IMG_RAW%.img}.info"
+          if [ ! -f "$INFO_FILE" ]; then
+            echo "Image metadata file not found: $INFO_FILE" >&2
             exit 1
           fi
-          if [[ ! -f "$INFO_FILE" ]]; then
-            echo "Image metadata file not found: $INFO_FILE"
-            exit 1
-          fi
-          echo "path=$FILE" >> "$GITHUB_OUTPUT"
-          echo "raw=$IMG_RAW" >> "$GITHUB_OUTPUT"
-          echo "info=$INFO_FILE" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$FILE")" >> "$GITHUB_OUTPUT"
+          ls -lh "$FILE" "$INFO_FILE"
+          {
+            echo "path=$FILE"
+            echo "raw=$IMG_RAW"
+            echo "info=$INFO_FILE"
+            echo "name=$(basename "$FILE")"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Verify image contents
+        env:
+          RAW: ${{ steps.image.outputs.raw }}
         run: |
           set -o pipefail
           sudo apt-get install -y e2fsprogs
-          sudo ./tools/verify-image.sh "${{ steps.image.outputs.raw }}" 2>&1 | \
-            tee deploy/full-image-verification.log
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: cardputerzero-image
-          path: ${{ steps.image.outputs.path }}
+          sudo ./tools/verify-image.sh "$RAW" 2>&1 | tee deploy/full-image-verification.log
 
       - name: Collect component versions
         id: components
+        env:
+          INFO_FILE: ${{ steps.image.outputs.info }}
         run: |
           set -euo pipefail
           VERIFY_LOG="deploy/full-image-verification.log"
 
-          KERNEL_VER=$(awk '$2 == "linux-image-rpi-v8" { print $3; exit }' \
-            "${{ steps.image.outputs.info }}")
+          KERNEL_VER=$(awk '$2 == "linux-image-rpi-v8" { print $3; exit }' "$INFO_FILE")
           [ -n "$KERNEL_VER" ] || { echo "Kernel version missing from image metadata"; exit 1; }
 
           DRIVER_COMMIT=$(awk '
@@ -144,50 +186,90 @@ jobs:
             echo "Driver overlay commit missing or invalid"
             exit 1
           }
-          DRIVER_COMMIT="${DRIVER_COMMIT:0:7}"
 
           echo "kernel_version=$KERNEL_VER" >> "$GITHUB_OUTPUT"
           echo "driver_commit=$DRIVER_COMMIT" >> "$GITHUB_OUTPUT"
           echo "Components: kernel=$KERNEL_VER driver=$DRIVER_COMMIT"
 
-      - name: Create release
-        id: release
-        run: |
-          TAG="$(date -u +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          RELEASE_FLAGS=(--prerelease)
-          if [[ "$RELEASE_CHANNEL" == "Stable" ]]; then
-            RELEASE_FLAGS=()
-          fi
-          gh release create "$TAG" \
-            "${RELEASE_FLAGS[@]}" \
-            --title "$TAG" \
-            --notes "Built from pi-gen commit ${GITHUB_SHA}
-
-          **Components:**
-          - UI: CPZ kmscon + tmux
-          - Kernel: ${{ steps.components.outputs.kernel_version }}
-          - Driver overlay: m5stack/m5stack-linux-dtoverlays @ ${{ steps.components.outputs.driver_commit }}
-          - CONFIG_CARDPUTERO_V0_5: y (enabled)" \
-            "${{ steps.image.outputs.path }}"
+      - name: Write release metadata
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_CHANNEL: ${{ inputs.release_channel || 'Beta' }}
-
-      - name: Upload build-info.json to release
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+          OSS_NAME: ${{ steps.meta.outputs.image }}
+          KERNEL_VER: ${{ steps.components.outputs.kernel_version }}
+          DRIVER_COMMIT: ${{ steps.components.outputs.driver_commit }}
         run: |
-          cat > /tmp/build-info.json <<EOF
+          set -euo pipefail
+          DRIVER_SHORT="${DRIVER_COMMIT:0:7}"
+          OSS_URL="https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/${OSS_NAME}"
+
+          cat > build-info.json <<INFO
           {
+            "version": "${VERSION}",
+            "tag": "${TAG}",
             "pigen_commit": "${GITHUB_SHA}",
-            "ui": "cpz-kmscon-tmux",
-            "kernel_version": "${{ steps.components.outputs.kernel_version }}",
-            "driver_commit": "${{ steps.components.outputs.driver_commit }}",
+            "ui": "terminal-first",
+            "kernel_version": "${KERNEL_VER}",
+            "driver_commit": "${DRIVER_COMMIT}",
             "config_cardputero_v0_5": true
           }
-          EOF
-          gh release upload "${{ steps.release.outputs.tag }}" /tmp/build-info.json --clobber
+          INFO
+
+          {
+            echo "## CardputerZero CPZ ${TAG}"
+            echo ""
+            echo "Terminal-first Linux console + tmux image for CardputerZero."
+            echo ""
+            echo "- **Version:** ${VERSION}"
+            echo "- **Kernel:** ${KERNEL_VER}"
+            echo "- **Driver overlay:** m5stack/m5stack-linux-dtoverlays @ ${DRIVER_SHORT}"
+            echo "- **pi-gen commit:** ${GITHUB_SHA}"
+            echo "- **CONFIG_CARDPUTERO_V0_5:** y"
+            echo ""
+            echo "**OSS download:** [${OSS_NAME}](${OSS_URL})"
+            if [ "$PRERELEASE" != "true" ]; then
+              echo ""
+              echo "**Stable alias:** [${IMG_BASENAME}-stable.img.xz](https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/${IMG_BASENAME}-stable.img.xz)"
+            fi
+          } > release-notes.md
+
+          cat release-notes.md
+
+      - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+          FILE: ${{ steps.image.outputs.path }}
+          INFO_FILE: ${{ steps.image.outputs.info }}
+          RAW: ${{ steps.image.outputs.raw }}
+        run: |
+          set -euo pipefail
+          BASE="${RAW%.img}"
+          ASSETS=("$FILE" "$INFO_FILE" build-info.json)
+          for extra in "${BASE}.sbom" "${BASE}.sbom.xz" "${BASE}.bmap"; do
+            [ -f "$extra" ] && ASSETS+=("$extra")
+          done
+
+          if [ "$PRERELEASE" = "true" ]; then
+            FLAGS=(--prerelease)
+          else
+            FLAGS=(--latest)
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --title "$TAG" \
+              --notes-file release-notes.md \
+              "${FLAGS[@]}"
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --title "$TAG" \
+              --notes-file release-notes.md \
+              "${FLAGS[@]}"
+          fi
 
       - name: Upload to Aliyun OSS
         uses: manyuanrong/setup-ossutil@v3.0
@@ -197,19 +279,74 @@ jobs:
           access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
 
       - name: Copy image to OSS
-        run: |
-          OSS_URL="https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/images/${{ steps.image.outputs.name }}"
-          ossutil cp -f "${{ steps.image.outputs.path }}" \
-            "oss://cardputer-zero-repo/images/${{ steps.image.outputs.name }}"
-          NOTES="Built from pi-gen commit ${GITHUB_SHA}
-
-          **Components:**
-          - UI: CPZ kmscon + tmux
-          - Kernel: ${{ steps.components.outputs.kernel_version }}
-          - Driver overlay: m5stack/m5stack-linux-dtoverlays @ ${{ steps.components.outputs.driver_commit }}
-          - CONFIG_CARDPUTERO_V0_5: y (enabled)
-
-          **OSS Download:** [${OSS_URL}](${OSS_URL})"
-          gh release edit "${{ steps.release.outputs.tag }}" --notes "$NOTES"
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+          FILE: ${{ steps.image.outputs.path }}
+          OSS_NAME: ${{ steps.meta.outputs.image }}
+        run: |
+          set -euo pipefail
+          ossutil cp -f "$FILE" "oss://cardputer-zero-repo/${OSS_NAME}"
+          if [ "$PRERELEASE" != "true" ]; then
+            ossutil cp -f "$FILE" \
+              "oss://cardputer-zero-repo/${IMG_BASENAME}-stable.img.xz"
+          fi
+
+      - name: Update os-list.json
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+          FILE: ${{ steps.image.outputs.path }}
+          RAW: ${{ steps.image.outputs.raw }}
+          OSS_NAME: ${{ steps.meta.outputs.image }}
+          KERNEL_VER: ${{ steps.components.outputs.kernel_version }}
+          DRIVER_COMMIT: ${{ steps.components.outputs.driver_commit }}
+        run: |
+          set -euo pipefail
+          if ! ossutil cp "oss://cardputer-zero-repo/os-list.json" os-list.json; then
+            printf '{"os_list": []}\n' > os-list.json
+          fi
+
+          RELEASE_DATE=$(git log -1 --format=%cs "$TAG")
+          DOWNLOAD_SIZE=$(stat --format=%s "$FILE")
+          DOWNLOAD_SHA=$(sha256sum "$FILE" | awk '{print $1}')
+          EXTRACT_SIZE=$(stat --format=%s "$RAW")
+          EXTRACT_SHA=$(sha256sum "$RAW" | awk '{print $1}')
+
+          python3 scripts/update_os_list.py \
+            --json os-list.json \
+            --tag "$TAG" \
+            --release-date "$RELEASE_DATE" \
+            --is-prerelease "$PRERELEASE" \
+            --release-url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}" \
+            --oss-filename "$OSS_NAME" \
+            --download-size "$DOWNLOAD_SIZE" \
+            --download-sha256 "$DOWNLOAD_SHA" \
+            --extract-size "$EXTRACT_SIZE" \
+            --extract-sha256 "$EXTRACT_SHA" \
+            --kernel-version "$KERNEL_VER" \
+            --driver-commit "$DRIVER_COMMIT" \
+            --pigen-commit "$GITHUB_SHA"
+
+          ossutil cp -f os-list.json "oss://cardputer-zero-repo/os-list.json"
+
+      - name: Summary
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
+          OSS_NAME: ${{ steps.meta.outputs.image }}
+          FILE: ${{ steps.image.outputs.path }}
+        run: |
+          {
+            echo "## Published ${TAG}"
+            echo ""
+            echo "- Version: ${VERSION}"
+            echo "- Prerelease: ${PRERELEASE}"
+            echo "- Asset: ${OSS_NAME}"
+            echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+            echo ""
+            echo '```'
+            ls -lh "$FILE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

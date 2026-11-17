@@ -26,17 +26,23 @@ CPZ keys
  Ctrl-b x              close pane (asks)
  Ctrl-b { / }          swap pane prev / next
 ==== Scroll and copy ====
- Ctrl-b [              enter copy mode (vi keys)
- Space                 start / stop selection
- Enter                 copy selection
- q                     leave copy mode
- Ctrl-b ]              paste a buffer
+ Alt+Up / Alt+Down    enter copy mode, scroll
+ Alt+PageUp / PgDown  page history (full keyboard)
+ Fn+L / Fn+M          page up / down
+ Ctrl-b [             copy mode (vi keys)
+ j / k or Up / Down   line down / up
+ Space                start / stop selection
+ Enter                copy selection
+ q                    leave copy mode
+ Ctrl-b ]             paste a buffer
 ==== Session ====
  Ctrl-b d              detach
  Ctrl-b ?              every tmux key
 ==== Device ====
  Alt+S                 Settings
  Alt+H                 this help
+ Alt+Plus / Alt+Minus  larger / smaller font (Sym+T / Sym+R)
+ Ctrl+Plus / Ctrl+Minus  larger / smaller font
  Alt+Space             switch input layout
  Alt+D                 CPZ panel / auto display
  In Settings           Z/X/C/F move (Fn off)

@@ -17,13 +17,11 @@ marker=/run/cpz-kmscon/session.tty1.tty
 
 cd "$HOME" 2>/dev/null || return 0
 
-# Block local logins while the image password is unchanged. Imager or
-# rpi-preseed password changes update /etc/shadow, so the gate clears itself.
-if [ -x /usr/local/bin/cpz-first-login ] &&
-	! /usr/local/bin/cpz-first-login; then
-	printf '\nPassword change required; logging out.\n' >&2
-	sleep 2
-	exit 1
+# Recommend a new password while the image password is unchanged. The prompt
+# never blocks the session; Imager or rpi-preseed password changes update
+# /etc/shadow, so the reminder clears itself.
+if [ -x /usr/local/bin/cpz-first-login ]; then
+	/usr/local/bin/cpz-first-login || true
 fi
 
 # Load /etc/tmux.conf (base-index 1) before creating the first session.

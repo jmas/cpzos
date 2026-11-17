@@ -36,8 +36,8 @@ done | sort -u >"$list"
 shellcheck -x $(cat "$list")
 
 echo "== ruff =="
-ruff check scripts tools stage3/01-session/files/cpz-settings
+ruff check scripts tools tests stage3/01-session/files/cpz-settings
 
 echo "== mypy =="
-mypy --ignore-missing-imports scripts/*.py tools/*.py \
+mypy --ignore-missing-imports scripts/*.py tools/*.py tests/*.py \
 	stage3/01-session/files/cpz-settings

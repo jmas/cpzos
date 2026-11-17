@@ -16,6 +16,14 @@ case "$DTOVERLAYS_REF" in
 esac
 printf '%s\n' "$DTOVERLAYS_REF" > "${ROOTFS_DIR}/opt/cpz-dtoverlays.ref"
 
+# The normal image drives the panel through DRM only and removes the driver's
+# fbdev emulation. The debug image keeps it: fbcon on the panel is the only
+# pre-kmscon console there. Pass the choice into the chroot as a marker file.
+rm -f "${ROOTFS_DIR}/opt/cpz-keep-panel-fbdev"
+if [ "${CPZ_DEBUG_BOOT:-0}" = "1" ]; then
+    install -m 0644 /dev/null "${ROOTFS_DIR}/opt/cpz-keep-panel-fbdev"
+fi
+
 on_chroot << 'CHROOT'
 set -e
 
@@ -38,6 +46,36 @@ git -C /tmp/dtoverlays rev-parse HEAD \
     > /etc/cardputerzero-dtoverlays.commit
 rm -f /opt/cpz-dtoverlays.ref
 
+# CPZ: in the normal image the internal panel is a pure DRM display. The
+# driver's fbdev emulation (/dev/fb1) is what made kmscon pick its fbdev
+# backend: kmscon only recognises a DRM-backed fbdev node when fix.id ends in
+# "drmfb", but fix.id is 16 bytes and "panel-mipi-dbi" + "drmfb" is truncated
+# to "panel-mipi-dbid". Without the fbdev node there is nothing to fall back
+# to. The debug image keeps the emulation for the panel fbcon.
+if [ ! -e /opt/cpz-keep-panel-fbdev ]; then
+    python3 - <<'PY'
+from pathlib import Path
+
+path = Path("/tmp/dtoverlays/modules/st7789v-1.0/panel-mipi-dbi-m.c")
+text = path.read_text()
+old = """    if (bpp == 16)
+        drm_client_setup_with_fourcc(drm, DRM_FORMAT_RGB565);
+    else
+        drm_client_setup_with_fourcc(drm, DRM_FORMAT_RGB888);
+"""
+new = """    /*
+     * CPZ: do not register the DRM fbdev emulation. The panel is driven
+     * through KMS only; a /dev/fb1 node makes kmscon use its fbdev backend.
+     */
+"""
+if text.count(old) != 1:
+    raise SystemExit(
+        "CPZ: panel-mipi-dbi-m fbdev block not found; upstream source changed"
+    )
+path.write_text(text.replace(old, new))
+PY
+fi
+
 KVER=$(basename "$(ls -d /lib/modules/*-rpi-v8 | sort -V | tail -n 1)")
 export KERNELDIR="/lib/modules/${KVER}/build"
 export EXTRADIR="/lib/modules/${KVER}/extra"
@@ -58,3 +96,5 @@ depmod -a "${KVER}"
 rm -rf /tmp/dtoverlays
 
 CHROOT
+
+rm -f "${ROOTFS_DIR}/opt/cpz-keep-panel-fbdev"

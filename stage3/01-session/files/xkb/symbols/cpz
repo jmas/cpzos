@@ -1,0 +1,52 @@
+// CardputerZero internal keyboard (TCA8418).
+//
+// The base layer is a normal US keyboard. The Sym layer does not emit shifted
+// standard keysyms: the kernel driver replaces the keycodes with otherwise
+// unused punctuation/Japanese keycodes, and the console keymap maps them to
+// symbols. kmscon uses libxkbcommon and never reads the VT keymap, so the same
+// mapping has to exist here as an XKB layout.
+//
+// This layout is selected only while the internal keyboard is active. An
+// external USB/Bluetooth keyboard keeps the user-selected standard layout.
+
+default partial alphanumeric_keys modifier_keys
+xkb_symbols "basic" {
+    include "us(basic)"
+    name[Group1] = "CardputerZero internal";
+
+    // Row 4 / number row (Sym layer)
+    key <AD11> { [ exclam,       exclam       ] };  // 26
+    key <AD12> { [ at,           at           ] };  // 27
+    key <AC10> { [ numbersign,   numbersign   ] };  // 39
+    key <AC11> { [ dollar,       dollar       ] };  // 40
+    key <TLDE> { [ percent,      percent      ] };  // 41
+    key <BKSL> { [ asciicircum,  asciicircum  ] };  // 43
+    key <AB08> { [ ampersand,    ampersand    ] };  // 51
+    key <AB09> { [ asterisk,     asterisk     ] };  // 52
+    key <AB10> { [ parenleft,    parenleft    ] };  // 53
+    key <KPMU> { [ asciitilde,   asciitilde   ] };  // 55
+
+    // Sym layer: punctuation block
+    key <NMLK> { [ grave,        grave        ] };  // 69
+    key <SCLK> { [ underscore,   underscore   ] };  // 70
+    key <KP7>  { [ minus,        minus        ] };  // 71
+    key <KP8>  { [ plus,         plus         ] };  // 72
+    key <KP9>  { [ equal,        equal        ] };  // 73
+    key <KPSU> { [ bracketleft,  bracketleft  ] };  // 74
+    key <KP4>  { [ bracketright, bracketright ] };  // 75
+    key <KP5>  { [ braceleft,    braceleft    ] };  // 76
+    key <KP6>  { [ braceright,   braceright   ] };  // 77
+    key <KP1>  { [ semicolon,    semicolon    ] };  // 79
+    key <KP2>  { [ colon,        colon        ] };  // 80
+    key <KP3>  { [ apostrophe,   apostrophe   ] };  // 81
+    key <KP0>  { [ quotedbl,     quotedbl     ] };  // 82
+    key <KPDL> { [ less,         less         ] };  // 83
+    key <ZENK> { [ greater,      greater      ] };  // 85
+    key <LSGT> { [ backslash,    backslash    ] };  // 86
+    key <AB11> { [ bar,          bar          ] };  // 89
+    key <KATA> { [ comma,        comma        ] };  // 90
+    key <HIRA> { [ period,       period       ] };  // 91
+    key <HENK> { [ slash,        slash        ] };  // 92
+    key <HKTG> { [ question,     question     ] };  // 93
+    key <MUHE> { [ parenright,   parenright   ] };  // 94
+};

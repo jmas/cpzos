@@ -6,11 +6,11 @@ IMG_FILENAME="cardputerzero-trixie-arm64"
 ARCHIVE_FILENAME="cardputerzero-trixie-arm64"
 RELEASE="trixie"
 DEPLOY_COMPRESSION="xz"
-TARGET_HOSTNAME="cardputerzero"
-FIRST_USER_NAME="pi"
-FIRST_USER_PASS="raspberry"
-# SSH is opt-in. The first console login requires a password change before
-# the CPZ session starts.
+TARGET_HOSTNAME="cpz"
+FIRST_USER_NAME="cpz"
+FIRST_USER_PASS="cpz"
+# SSH is opt-in. The first console login recommends setting a new password;
+# the session still starts if you keep the factory one (Settings keeps warning).
 ENABLE_SSH=0
 LOCALE_DEFAULT="en_US.UTF-8"
 KEYBOARD_KEYMAP="us"

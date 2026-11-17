@@ -1,0 +1,11 @@
+# Internal panel DRM card.
+#
+# The vendor 99-cardputer-zero-lcd.rules assigned this card to its own seat
+# (seat-cardputer-zero). kmscon and libseat run on seat0, and uterm_monitor
+# drops every DRM device assigned to a different seat, so card1 never reached
+# kmscon and it fell back to the panel's fbdev node. CPZ has no separate seat
+# or compositor: keep the card on seat0 and keep only the stable symlink.
+ACTION!="remove", SUBSYSTEM=="drm", KERNEL=="card*", \
+  ENV{ID_PATH}=="platform-3f204000.spi-cs-0", \
+  ENV{ID_SEAT}="seat0", \
+  SYMLINK+="dri/cardputer-zero-internal"

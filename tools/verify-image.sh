@@ -2,6 +2,7 @@
 # Verify CardputerZero image contains all required customizations.
 # Usage: ./tools/verify-image.sh <image.img>
 # Exit 0 = all checks pass, Exit 1 = failure (breaks CI)
+# shellcheck disable=SC2016  # grep patterns intentionally contain a literal $
 
 set -euo pipefail
 
@@ -32,6 +33,21 @@ ROOT_SECTORS=$((ROOT_END - ROOT_START + 1))
 echo "[1/6] Extracting partitions..."
 dd if="$IMG" of="$TMPDIR/boot.fat" bs=512 skip="$BOOT_START" count="$BOOT_SECTORS" 2>/dev/null
 dd if="$IMG" of="$TMPDIR/root.ext4" bs=512 skip="$ROOT_START" count="$ROOT_SECTORS" 2>/dev/null
+
+# The debug image keeps the panel fbdev and fbcon so the boot log is visible.
+DEBUG_IMAGE=0
+if debugfs -R "stat etc/cpz-debug-boot" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
+    DEBUG_IMAGE=1
+fi
+
+# Release version written by export-image from VERSION.
+CPZ_VERSION_IMG=$(debugfs -R "cat etc/cpz-version" "$TMPDIR/root.ext4" 2>/dev/null | tr -d '\r\n' || true)
+if printf '%s\n' "$CPZ_VERSION_IMG" |
+    grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+    pass "CPZ version: $CPZ_VERSION_IMG"
+else
+    fail "etc/cpz-version MISSING or not SemVer"
+fi
 
 # --- Mount boot ---
 mkdir -p "$TMPDIR/boot"
@@ -161,16 +177,28 @@ else
     pass "cmdline.txt: console=serial0,115200 removed"
 fi
 
-if grep -q "fbcon=map:10" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
-    pass "cmdline.txt: fbcon gives the panel a mode at boot"
+if [ "$DEBUG_IMAGE" = 1 ]; then
+    if grep -q "fbcon=map:10" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
+        pass "cmdline.txt: debug image keeps fbcon on the panel"
+    else
+        fail "cmdline.txt: debug image lost fbcon=map:10"
+    fi
+    if grep -q "fbcon=map:off" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
+        fail "cmdline.txt: debug image has fbcon disabled"
+    else
+        pass "cmdline.txt: debug image does not disable fbcon"
+    fi
 else
-    fail "cmdline.txt: fbcon=map:10 missing"
-fi
-
-if grep -q "fbcon=map:off" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
-    fail "cmdline.txt: fbcon is mapped off (panel has no mode at boot)"
-else
-    pass "cmdline.txt: fbcon is not mapped off"
+    if grep -q "fbcon=map:off" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
+        pass "cmdline.txt: fbcon disabled (panel is DRM-only)"
+    else
+        fail "cmdline.txt: fbcon=map:off missing"
+    fi
+    if grep -q "fbcon=map:10" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
+        fail "cmdline.txt: fbcon is still mapped to the panel"
+    else
+        pass "cmdline.txt: fbcon is not mapped to the panel"
+    fi
 fi
 
 if grep -q "vt.global_cursor_default=0" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
@@ -192,6 +220,7 @@ REQUIRED_MODULES=(
     "es8389_m5stack.ko"
     "pwm_bl_m5stack.ko"
     "st7789v_m5stack.ko"
+    "panel-mipi-dbi-m.ko"
 )
 
 for mod in "${REQUIRED_MODULES[@]}"; do
@@ -222,6 +251,7 @@ for file in usr/local/bin/cpz-first-login \
     usr/local/bin/cpz-apply-settings \
     usr/local/bin/cpz-kmscon usr/local/bin/cpz-kmscon-config \
     usr/local/bin/cpz-kmscon-output usr/local/bin/cpz-login \
+    usr/local/bin/cpz-hint usr/local/bin/cpz-help \
     usr/local/bin/cpz-session-save usr/local/bin/cpz-session-restore \
     usr/local/bin/cpz-tab-info usr/local/bin/cpz-tab-close-key \
     usr/local/bin/cpz-session-save-as-user usr/local/bin/cpz-conn-status \
@@ -303,8 +333,8 @@ else
     fail "cpz-settings: Bluetooth entry MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Aptitude::Delete-Unused=false"; then
-    pass "cpz-settings: Applications (aptitude)"
+if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "/var/lib/dpkg/status"; then
+    pass "cpz-settings: Applications (package browser)"
 else
     fail "cpz-settings: Applications entry MISSING"
 fi
@@ -568,6 +598,27 @@ else
     fail "cpz-keyboard-layout does not use ckbcomp"
 fi
 
+if debugfs -R "cat usr/share/X11/xkb/symbols/cpz" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -qF 'key <HIRA> { [ period'; then
+    pass "CPZ XKB layout present"
+else
+    fail "CPZ XKB layout MISSING"
+fi
+
+if debugfs -R "cat usr/share/X11/xkb/keycodes/evdev" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -qF '<ZENK> = 93;'; then
+    pass "xkb-data <ZENK> keycode named"
+else
+    fail "xkb-data <ZENK> keycode MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -qF 'cpz-layout.active'; then
+    pass "kmscon selects the CPZ XKB layout for the internal keyboard"
+else
+    fail "kmscon CPZ XKB layout selection MISSING"
+fi
+
 if debugfs -R "cat usr/local/bin/cpz-keyboard-layout" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cached_UTF-8_del.kmap.gz"; then
     pass "standard keymap fallback present"
 else
@@ -610,6 +661,27 @@ else
     fail "cpz-status language layout fallback MISSING"
 fi
 
+if debugfs -R "cat usr/local/bin/cpz-tab-info" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -qF 'set-option -t "$session"'; then
+    pass "status bar tab counters update the session"
+else
+    fail "status bar tab counter session target MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-tab-info" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -qF 'set-option -t "=$session"'; then
+    fail "tab counter uses the tmux 3.5-invalid =session target"
+else
+    pass "tab counter avoids the tmux 3.5-invalid =session target"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-session-save" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -qF 'display-message -p -t "$id"'; then
+    pass "session save queries window fields without tab delimiters"
+else
+    fail "session save tab-delimited fields MISSING"
+fi
+
 if debugfs -R "cat etc/tmux.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "M-Space"; then
     pass "tmux: Alt+Space switches layout"
 else
@@ -630,9 +702,37 @@ fi
 
 if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "vt_nudge"; then
-    pass "cpz-kmscon-output activates the fbdev panel display"
+    fail "cpz-kmscon-output still contains the fbdev vt nudge"
 else
-    fail "cpz-kmscon-output fbdev activation MISSING"
+    pass "cpz-kmscon-output has no fbdev vt nudge"
+fi
+
+if debugfs -R "cat etc/udev/rules.d/99-cpz-display.rules" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "platform-3f204000.spi-cs-0"; then
+    pass "panel DRM card udev rule present"
+else
+    fail "panel DRM card udev rule MISSING"
+fi
+
+if debugfs -R "cat etc/udev/rules.d/99-cpz-display.rules" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q 'ENV{ID_SEAT}="seat0"'; then
+    pass "panel DRM card stays on seat0"
+else
+    fail "panel DRM card is not explicitly assigned to seat0"
+fi
+
+if debugfs -R "cat etc/udev/rules.d/99-cpz-display.rules" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q 'ENV{ID_SEAT}="seat-cardputer-zero"'; then
+    fail "panel DRM card is still pinned to seat-cardputer-zero"
+else
+    pass "vendor display seat assignment removed"
+fi
+
+if debugfs -R "stat etc/udev/rules.d/99-cardputer-zero-lcd.rules" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "Size:"; then
+    fail "vendor display rule still present"
+else
+    pass "vendor display rule removed"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "hdmi_probe"; then
@@ -674,6 +774,27 @@ if debugfs -R "cat etc/kmscon/kmscon.conf" "$TMPDIR/root.ext4" 2>/dev/null |
     pass "kmscon draws on one screen"
 else
     fail "kmscon multi-monitor config MISSING"
+fi
+
+if debugfs -R "cat etc/kmscon/kmscon.conf" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -qF '<Alt>plus'; then
+    pass "runtime font zoom shortcuts configured"
+else
+    fail "runtime font zoom shortcuts MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-hint" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "display-message -c"; then
+    pass "attach key hint targets the client status line"
+else
+    fail "attach key hint client target MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-help" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "larger / smaller font"; then
+    pass "help lists font size shortcuts"
+else
+    fail "help font size shortcuts MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-kmscon" "$TMPDIR/root.ext4" 2>/dev/null |
@@ -790,10 +911,17 @@ else
     fail "tmux NOT installed"
 fi
 
-if grep -q "^Package: aptitude$" "$TMPDIR/dpkg_status"; then
-    pass "aptitude installed"
+if grep -q "^Package: python3$" "$TMPDIR/dpkg_status"; then
+    pass "python3 installed"
 else
-    fail "aptitude NOT installed"
+    fail "python3 NOT installed"
+fi
+
+# p7zip-full is transitional; the real archiver must survive its removal.
+if grep -q "^Package: 7zip$" "$TMPDIR/dpkg_status"; then
+    pass "7zip installed"
+else
+    fail "7zip NOT installed"
 fi
 
 # Regular CPZ image: desktop/full-stage packages must not be present.
@@ -802,6 +930,19 @@ for pkg in fastfetch cmatrix adbd pulseaudio-utils python3-cairo python3-gi-cair
         fail "${pkg} should not be installed"
     else
         pass "${pkg} absent"
+    fi
+done
+
+# stage3/03-cleanup removes build-only and duplicate packages. Only assert the
+# entries that have no reverse dependencies; the cleanup keeps anything apt
+# would have to take another package with.
+for pkg in p7zip-full vim-tiny ed ack net-tools wireless-tools bluez-tools \
+    lua5.1 luajit manpages-dev fbset dmidecode ueberzug debconf-utils \
+    build-essential gdb strace; do
+    if grep -q "^Package: ${pkg}$" "$TMPDIR/dpkg_status"; then
+        fail "${pkg} should have been removed by cpz-cleanup"
+    else
+        pass "${pkg} removed"
     fi
 done
 set -e
