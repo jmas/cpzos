@@ -650,7 +650,9 @@ contains tools/release.sh 'git tag -a'
 contains tools/release.sh 'refs/tags/$tag'
 contains tools/release.sh 'git commit -m "chore(release): $tag"'
 have .github/workflows/build.yml
-contains .github/workflows/build.yml 'tags: ["v*"]'
+contains .github/workflows/build.yml 'types: [published]'
+not_contains .github/workflows/build.yml 'push:
+    tags:'
 contains .github/workflows/build.yml 'gh release create'
 contains .github/workflows/build.yml 'scripts/update_os_list.py'
 contains .github/workflows/build.yml 'VERSION ($FILE_VERSION) does not match tag'
