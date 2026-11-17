@@ -284,6 +284,7 @@ for file in usr/local/bin/cpz-first-login \
     etc/profile.d/cpz-session.sh etc/tmux.conf \
     etc/cpz/settings.conf etc/cpz/shadow-mtime etc/default/console-setup \
     etc/cpz/trove-index.url \
+    usr/share/cpz/apt-packages.txt.gz \
     etc/cpz/themes/cpz-campbell.palette \
     etc/cpz/themes/cpz-homebrew.palette \
     etc/cpz/themes/cpz-ocean.palette \

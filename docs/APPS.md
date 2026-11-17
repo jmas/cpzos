@@ -28,6 +28,7 @@ after pointing the runtime URL at a reachable copy.
 | `t` | category picker |
 | `g` | language picker |
 | `Left` / `Right` | cycle categories |
+| `a` | toggle apt-only / full catalog |
 | `Enter` | details / install instructions |
 | `i` | install the selected apt package |
 | `Tab` | switch Browse / Installed |
@@ -38,8 +39,19 @@ after pointing the runtime URL at a reachable copy.
 
 ## Install policy
 
-The catalog is a discovery source, not a package-manager abstraction. CPZ only
-installs what apt can provide:
+The catalog is a discovery source, not a package-manager abstraction. Browse
+defaults to the apt-backed subset so the list only contains things CPZ can
+actually install and track. Press `a` to show the full Terminal Trove catalog;
+entries without an apt package show their published install instructions.
+
+The default list is built from `apt-cache pkgnames`, installed dpkg package
+names and the build-time `/usr/share/cpz/apt-packages.txt.gz` snapshot. The
+snapshot matters because `export-image` deletes `/var/lib/apt/lists`; without
+it a fresh image would know only its installed packages. The catalog's
+Debian/Ubuntu package is preferred; only when Terminal Trove publishes no apt
+command are the tool slug and display name checked.
+
+CPZ only installs what apt can provide:
 
 - If Terminal Trove publishes a Debian/Ubuntu `apt install` command, that
   package is authoritative.
@@ -55,6 +67,9 @@ Installs use:
 ```sh
 sudo apt-get install -y --no-install-recommends PACKAGE
 ```
+
+Because `export-image` removes `/var/lib/apt/lists`, the first install from a
+fresh image runs `sudo apt-get update` automatically before installing.
 
 Removal uses the same protection as the rest of Settings:
 
@@ -88,6 +103,7 @@ The catalog cache and image snapshot are read-only data:
 ```text
 ~/.cache/cpz/trove-index.json       user-updated snapshot
 /usr/share/cpz/trove-index.json     image snapshot
+/usr/share/cpz/apt-packages.txt.gz  build-time apt package-name snapshot
 /etc/cpz/trove-index.url            build-time source URL
 ```
 

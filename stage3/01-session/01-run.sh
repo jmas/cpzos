@@ -212,5 +212,16 @@ setupcon --force --save-only 2>/dev/null || true
 # Fail the build early on a malformed sudoers drop-in.
 visudo -cf /etc/sudoers.d/50-cpz-layout
 
+# Snapshot apt package names before export-image deletes /var/lib/apt/lists.
+# Applications uses this offline snapshot to default to apt-backed tools.
+if command -v apt-cache >/dev/null 2>&1; then
+	install -d -m 0755 /usr/share/cpz
+	{
+		apt-cache pkgnames 2>/dev/null || true
+		dpkg-query -W -f='${Package}\n' 2>/dev/null || true
+	} | LC_ALL=C sort -u | gzip -9 > /usr/share/cpz/apt-packages.txt.gz
+	chmod 0644 /usr/share/cpz/apt-packages.txt.gz
+fi
+
 systemctl daemon-reload || true
 CHROOT

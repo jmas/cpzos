@@ -2056,6 +2056,8 @@ def show_resources(screen, _data) -> None:
 # discovered here but its install instructions are shown to the user instead.
 TROVE_INDEX_SYSTEM = "/usr/share/cpz/trove-index.json"
 TROVE_INDEX_URL_FILE = "/etc/cpz/trove-index.url"
+TROVE_APT_SNAPSHOT = "/usr/share/cpz/apt-packages.txt.gz"
+TROVE_APT_SNAPSHOT_TXT = "/usr/share/cpz/apt-packages.txt"
 TROVE_INDEX_DEFAULT_URL = (
     "https://raw.githubusercontent.com/jmas/terminal-trove-index/"
     "main/index/trove.json.gz"
@@ -2330,6 +2332,18 @@ def package_from_text(value: str) -> str:
     return name if APT_NAME_RE.fullmatch(name) else ""
 
 
+def apt_lists_present() -> bool:
+    """True when apt has downloaded package lists."""
+    try:
+        with os.scandir("/var/lib/apt/lists") as entries:
+            for entry in entries:
+                if entry.is_file() and "Packages" in entry.name:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
 def apt_status(package: str) -> dict[str, str]:
     if not APT_NAME_RE.fullmatch(package):
         return {"package": package, "status": "missing", "version": ""}
@@ -2362,12 +2376,73 @@ def apt_status(package: str) -> dict[str, str]:
     return {"package": package, "status": "missing", "version": ""}
 
 
-def resolve_trove_apt(tool: dict[str, Any]) -> dict[str, str]:
+def apt_snapshot_lines(path: str):
+    if path.endswith(".gz"):
+        return gzip.open(path, "rt", encoding="utf-8", errors="replace")
+    return open(path, "r", encoding="utf-8", errors="replace")
+
+
+def trove_apt_names() -> set[str]:
+    """Return every package name apt knows about, plus installed packages.
+
+    ``apt-cache pkgnames`` is a single fast command, unlike running apt-cache
+    policy once per catalog entry. dpkg-query covers packages that are
+    installed but missing from the current apt lists. export-image deletes
+    /var/lib/apt/lists, so the build also stores a compressed snapshot of the
+    package names for offline use.
+    """
+    names: set[str] = set()
+    for command in (
+        ["apt-cache", "pkgnames"],
+        ["dpkg-query", "-W", "-f=${Package}\n"],
+    ):
+        rc, out, _ = nm_run(command, timeout=60)
+        if rc != 0:
+            continue
+        for line in out.splitlines():
+            name = line.strip().split(":", 1)[0]
+            if APT_NAME_RE.fullmatch(name):
+                names.add(name)
+    for path in (TROVE_APT_SNAPSHOT, TROVE_APT_SNAPSHOT_TXT):
+        try:
+            with apt_snapshot_lines(path) as handle:
+                for line in handle:
+                    name = line.strip().split(":", 1)[0]
+                    if APT_NAME_RE.fullmatch(name):
+                        names.add(name)
+        except OSError:
+            continue
+    return names
+
+
+def trove_tool_apt_supported(
+    tool: dict[str, Any], apt_names: set[str]
+) -> bool:
+    """True when the tool has a package name present in apt."""
+    if not apt_names:
+        return False
+    catalog = catalog_trove_apt(tool)
+    if catalog:
+        return catalog["package"] in apt_names
+    for value in (tool.get("slug", ""), tool.get("name", "")):
+        package = package_from_text(str(value))
+        if package and package in apt_names:
+            return True
+    return False
+
+
+def resolve_trove_apt(
+    tool: dict[str, Any], apt_names: set[str] | None = None
+) -> dict[str, str]:
     """Find the apt package for a catalog tool, if one exists.
 
     The catalog's Debian/Ubuntu command is authoritative. Only when the index
     has no apt command do we try the tool slug and name, which catches packages
     such as lazygit that Terminal Trove lists without an Ubuntu/Debian cell.
+
+    ``apt_names`` is the offline package-name snapshot. It lets a fresh image
+    report a package as available even though export-image removed
+    /var/lib/apt/lists; install runs apt-get update before using it.
     """
     catalog = catalog_trove_apt(tool)
     candidates: list[tuple[str, str]] = []
@@ -2385,6 +2460,14 @@ def resolve_trove_apt(tool: dict[str, Any]) -> dict[str, str]:
         status = apt_status(package)
         if status["status"] != "missing":
             return {**status, "source": source}
+        if apt_names and package in apt_names and not apt_lists_present():
+            return {
+                "package": package,
+                "status": "available",
+                "version": "",
+                "source": source,
+                "needs_update": "1",
+            }
     return {
         "package": candidates[0][0] if candidates else "",
         "status": "missing",
@@ -2482,12 +2565,15 @@ def filter_trove_tools(
     query: str = "",
     category: str = "",
     language: str = "",
+    apt_names: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     selected = []
     for tool in tools:
         if category and category not in tool.get("categories", []):
             continue
         if language and language != tool.get("language", ""):
+            continue
+        if apt_names is not None and not trove_tool_apt_supported(tool, apt_names):
             continue
         if not trove_matches(tool, query):
             continue
@@ -2707,6 +2793,8 @@ def trove_details_lines(
         lines.append(f"Apt package: {apt['package']}{version}")
     else:
         lines.append("Apt package: not available")
+    if apt.get("needs_update") == "1":
+        lines.append("Apt lists: update before install")
     if record:
         lines.append(f"Remove: {record.get('uninstall_command') or 'apt-get purge ' + record.get('package', '')}")
     elif apt.get("status") == "available":
@@ -2753,8 +2841,12 @@ def trove_details_lines(
     return lines
 
 
-def trove_install_tool(screen, tool: dict[str, Any]) -> str:
-    apt = resolve_trove_apt(tool)
+def trove_install_tool(
+    screen, tool: dict[str, Any], apt_names: set[str] | None = None
+) -> str:
+    if apt_names is None:
+        apt_names = trove_apt_names()
+    apt = resolve_trove_apt(tool, apt_names)
     name = tool.get("name", tool.get("slug", "?"))
     if apt["status"] == "missing":
         return f"{name} is not in apt; press Enter for instructions"
@@ -2766,6 +2858,25 @@ def trove_install_tool(screen, tool: dict[str, Any]) -> str:
         question = f"Install {name} ({package})?"
     if not confirm(screen, question):
         return "Cancelled"
+    if apt.get("needs_update") == "1":
+        draw_loading(screen, "Updating apt lists...")
+        rc = run_privileged(
+            screen,
+            [
+                "env",
+                "DEBIAN_FRONTEND=noninteractive",
+                "apt-get",
+                "update",
+            ],
+        )
+        if rc != 0:
+            return "apt update failed"
+        apt = resolve_trove_apt(tool, set())
+        if apt["status"] == "installed":
+            return f"{name} is already installed"
+        if apt["status"] == "missing":
+            return f"{name} is not in apt after update"
+        package = apt["package"]
     rc = run_privileged(screen, list(TROVE_APT_INSTALL) + [package])
     if rc != 0:
         return "Install failed (try sudo apt update)"
@@ -2867,6 +2978,7 @@ def draw_trove_list(
     managed: dict[str, dict[str, Any]],
     index_count: int,
     notice: str,
+    apt_only: bool = False,
 ) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
@@ -2888,6 +3000,7 @@ def draw_trove_list(
             screen,
             1,
             x + 1,
+            f"apt:{'on' if apt_only else 'all'}  "
             f"cat:{category_label}  lang:{language_label}",
             curses.A_DIM,
         )
@@ -2932,6 +3045,8 @@ def draw_trove_list(
         message = "No tools match the filters"
         if mode == "installed":
             message = "No apps installed through the manager"
+        elif apt_only:
+            message = "No apt tools match; press a for all"
         put(screen, top, 1, message)
     if first > 0:
         put(screen, top, width - 2, "^")
@@ -2944,7 +3059,7 @@ def draw_trove_list(
         put(screen, summary_y, 1, str(chosen.get("summary", "")))
 
     if mode == "browse":
-        first_hint = " Up/Down move   / search   t cat   g lang"
+        first_hint = " Up/Down  / search  t cat  g lang  a apt"
         second_hint = " Enter details   i install   u update   q back"
     else:
         first_hint = " Up/Down move   / search   Enter details   d remove"
@@ -2963,12 +3078,17 @@ def draw_trove_list(
 
 
 def trove_details_screen(
-    screen, tool: dict[str, Any], record: dict[str, Any] | None
+    screen,
+    tool: dict[str, Any],
+    record: dict[str, Any] | None,
+    apt_names: set[str] | None = None,
 ) -> str:
     offset = 0
     notice = ""
+    if apt_names is None:
+        apt_names = trove_apt_names()
     while True:
-        apt = resolve_trove_apt(tool)
+        apt = resolve_trove_apt(tool, apt_names)
         managed = read_trove_apps()
         current = managed.get(str(tool.get("slug", "")))
         record = current
@@ -3014,7 +3134,7 @@ def trove_details_screen(
             elif apt["status"] == "missing":
                 notice = "Not in apt; use the install instructions above"
             else:
-                notice = trove_install_tool(screen, tool)
+                notice = trove_install_tool(screen, tool, apt_names)
             continue
         if key in (ord("d"), ord("D")):
             if record:
@@ -3094,6 +3214,10 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
     managed = read_trove_apps()
     categories = trove_category_options(index)
     languages = trove_language_options(index)
+    draw_loading(screen, "Reading apt package names...")
+    apt_names = trove_apt_names()
+    apt_available = bool(apt_names)
+    apt_only = apt_available and not focus_slug
     mode = "browse"
     category = ""
     language = ""
@@ -3103,13 +3227,20 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
     notice = ""
     if not tools:
         notice = "No catalog; press u to download it"
+    elif not apt_available:
+        notice = "apt package list unavailable; showing all"
 
     while True:
-        shown = (
-            filter_trove_tools(tools, query, category, language)
-            if mode == "browse"
-            else trove_installed_tools(index, managed, query)
-        )
+        if mode == "browse":
+            shown = filter_trove_tools(
+                tools,
+                query,
+                category,
+                language,
+                apt_names if apt_only else None,
+            )
+        else:
+            shown = trove_installed_tools(index, managed, query)
         position = min(row[mode], max(0, len(shown) - 1))
         if focus_slug:
             for offset, tool in enumerate(shown):
@@ -3130,6 +3261,7 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             managed,
             len(tools),
             notice,
+            apt_only=apt_only,
         )
         key = screen.getch()
         notice = ""
@@ -3164,6 +3296,16 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
                 row[mode] = (position + 1) % len(shown)
                 continue
             continue
+        if key in (ord("a"), ord("A")) and mode == "browse":
+            if not apt_available:
+                notice = "apt package list unavailable"
+                continue
+            apt_only = not apt_only
+            row["browse"] = 0
+            notice = (
+                "Showing apt packages only" if apt_only else "Showing all catalog tools"
+            )
+            continue
         if key in (ord("q"), ord("Q"), 27):
             return
         if key in (ord("/"), ord("s"), ord("S")):
@@ -3179,6 +3321,11 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
                 tools = index.get("tools", [])
                 categories = trove_category_options(index)
                 languages = trove_language_options(index)
+                draw_loading(screen, "Reading apt package names...")
+                apt_names = trove_apt_names()
+                apt_available = bool(apt_names)
+                if not apt_available:
+                    apt_only = False
                 row = {"browse": 0, "installed": 0}
             continue
         if key in (ord("r"), ord("R")):
@@ -3187,6 +3334,11 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             managed = read_trove_apps()
             categories = trove_category_options(index)
             languages = trove_language_options(index)
+            draw_loading(screen, "Reading apt package names...")
+            apt_names = trove_apt_names()
+            apt_available = bool(apt_names)
+            if not apt_available:
+                apt_only = False
             notice = "Reloaded"
             continue
         if key in (ord("t"), ord("T")) and mode == "browse":
@@ -3242,11 +3394,11 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             record = tool.get("_record") if mode == "installed" else managed.get(
                 str(tool.get("slug", ""))
             )
-            notice = trove_details_screen(screen, tool, record)
+            notice = trove_details_screen(screen, tool, record, apt_names)
             managed = read_trove_apps()
             continue
         if key in (ord("i"), ord("I")) and mode == "browse" and shown:
-            notice = trove_install_tool(screen, shown[position])
+            notice = trove_install_tool(screen, shown[position], apt_names)
             managed = read_trove_apps()
             continue
         if key in (ord("d"), ord("D")) and mode == "installed" and shown:

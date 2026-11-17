@@ -7,6 +7,7 @@ policy that decides what gets written to ~/.config/cpz/settings.conf.
 from __future__ import annotations
 
 import contextlib
+import gzip
 import importlib.util
 import io
 import json
@@ -80,6 +81,12 @@ class SettingsTUI(unittest.TestCase):
         self.mod.THEME_DIR = str(self.themes)
         self.mod.TROVE_INDEX_SYSTEM = str(
             root / "usr" / "share" / "cpz" / "trove-index.json"
+        )
+        self.mod.TROVE_APT_SNAPSHOT = str(
+            root / "usr" / "share" / "cpz" / "apt-packages.txt.gz"
+        )
+        self.mod.TROVE_APT_SNAPSHOT_TXT = str(
+            root / "usr" / "share" / "cpz" / "apt-packages.txt"
         )
         self.config_home = root / "home" / ".config"
         old = os.environ.get("XDG_CONFIG_HOME")
@@ -406,6 +413,70 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(tools["tmux"]["apt"], "tmux")
         self.assertEqual(tools["lazygit"]["command"], "")
         self.assertFalse(tools["lazygit"]["installed"])
+
+    def test_trove_apt_support_filter(self):
+        apt_names = {"tmux", "lazygit", "github-cli"}
+        tools = [
+            {
+                "slug": "tmux",
+                "name": "tmux",
+                "apt": {"command": "apt install tmux", "package": "tmux"},
+            },
+            {"slug": "lazygit", "name": "lazygit", "apt": {}},
+            {"slug": "github", "name": "GitHub CLI", "apt": {}},
+            {
+                "slug": "broken",
+                "name": "broken",
+                "apt": {"command": "apt install not-in-apt", "package": "not-in-apt"},
+            },
+        ]
+        supported = [
+            tool["slug"]
+            for tool in self.mod.filter_trove_tools(tools, apt_names=apt_names)
+        ]
+        self.assertEqual(supported, ["tmux", "lazygit", "github"])
+        # A catalog apt command is authoritative: do not silently fall back to
+        # an unrelated package with the same slug/name.
+        self.assertFalse(
+            self.mod.trove_tool_apt_supported(tools[3], apt_names)
+        )
+        self.assertEqual(self.mod.filter_trove_tools(tools, apt_names=set()), [])
+
+    def test_trove_apt_names_parses_commands(self):
+        def fake_run(args, timeout=30):
+            if "pkgnames" in args:
+                return 0, "tmux\nfoo:arm64\nnot a package\n", ""
+            return 0, "htop\n", ""
+
+        self.mod.nm_run = fake_run
+        self.assertEqual(
+            self.mod.trove_apt_names(), {"tmux", "foo", "htop"}
+        )
+
+    def test_trove_apt_names_reads_build_snapshot(self):
+        self.mod.nm_run = lambda args, timeout=30: (1, "", "")
+        path = Path(self.mod.TROVE_APT_SNAPSHOT)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            handle.write("tmux\nfoo:arm64\nbad name\n")
+        self.assertEqual(self.mod.trove_apt_names(), {"tmux", "foo"})
+
+    def test_resolve_trove_apt_uses_snapshot(self):
+        self.mod.apt_status = lambda package: {
+            "package": package,
+            "status": "missing",
+            "version": "",
+        }
+        self.mod.apt_lists_present = lambda: False
+        tool = {
+            "slug": "tmux",
+            "name": "tmux",
+            "apt": {"command": "apt install tmux", "package": "tmux"},
+        }
+        resolved = self.mod.resolve_trove_apt(tool, {"tmux"})
+        self.assertEqual(resolved["status"], "available")
+        self.assertEqual(resolved["needs_update"], "1")
+        self.assertEqual(self.mod.resolve_trove_apt(tool, set())["status"], "missing")
 
     def test_trove_managed_state_round_trip(self):
         apps = {
