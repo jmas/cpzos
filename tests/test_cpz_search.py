@@ -71,6 +71,11 @@ class SearchItems(unittest.TestCase):
         )
         self.assertIn(("app", "vim", "vim  [app]", ""), parsed)
 
+    def test_home_items_are_only_actions(self):
+        parsed = [self.mod.parse_item(line) for line in self.mod.home_items()]
+        self.assertEqual(len(parsed), len(self.mod.ACTIONS))
+        self.assertEqual({item[0] for item in parsed if item}, {"action"})
+
     def test_buffer_items_from_tmux(self):
         bindir = self.root / "bin"
         bindir.mkdir()
@@ -275,6 +280,19 @@ class ModeSwitch(unittest.TestCase):
         self.assertEqual(output, "")
         self.assertEqual(state, "buffers")
 
+    def test_empty_query_shows_the_short_action_list(self):
+        output, state = self.run_mode("default", "")
+        self.assertIn("--home", output)
+        self.assertEqual(state, "home")
+
+        output, state = self.run_mode("home", "v")
+        self.assertIn("--default", output)
+        self.assertEqual(state, "default")
+
+        output, state = self.run_mode("home", "")
+        self.assertEqual(output, "")
+        self.assertEqual(state, "home")
+
 
 class Dispatch(unittest.TestCase):
     def setUp(self):
@@ -286,9 +304,19 @@ class Dispatch(unittest.TestCase):
         launch.assert_called_once_with(["tmux"], "/tmp")
 
     def test_uninstalled_tool_opens_the_catalog_details(self):
-        with mock.patch.object(self.mod, "exec_settings") as exec_settings:
+        with mock.patch.object(self.mod, "open_settings") as open_settings:
             self.mod.dispatch("tool", "lazygit", "", "/tmp", "")
-        exec_settings.assert_called_once_with("--tool", "lazygit")
+        open_settings.assert_called_once_with("--tool", "lazygit")
+
+    def test_settings_page_opens_in_the_settings_tab(self):
+        with mock.patch.object(self.mod, "open_settings") as open_settings:
+            self.mod.dispatch("settings", "network", "", "/tmp")
+        open_settings.assert_called_once_with("--page", "network")
+
+    def test_ctrl_o_on_a_tool_opens_the_catalog_details(self):
+        with mock.patch.object(self.mod, "open_settings") as open_settings:
+            self.mod.dispatch("tool", "lazygit", "ctrl-o", "/tmp", "")
+        open_settings.assert_called_once_with("--tool", "lazygit")
 
     def test_buffer_enter_pastes(self):
         with mock.patch.object(self.mod, "paste_buffer") as paste:
@@ -328,6 +356,60 @@ class SettingsDeepLink(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn("unknown page", result.stderr)
+
+
+class OpenSettings(unittest.TestCase):
+    def setUp(self):
+        self.mod = load_script("cpz_search_settings", SEARCH)
+
+    def test_uses_the_settings_tab_inside_tmux(self):
+        with mock.patch.dict(os.environ, {"TMUX": "1"}), mock.patch.object(
+            self.mod.shutil, "which", return_value="/usr/bin/tmux"
+        ), mock.patch.object(
+            self.mod, "helper", return_value="/usr/local/bin/cpz-settings-open"
+        ), mock.patch.object(
+            self.mod.os, "access", return_value=True
+        ), mock.patch.object(
+            self.mod, "run_hidden", return_value=True
+        ) as run_hidden:
+            self.mod.open_settings("--page", "network")
+        run_hidden.assert_called_once_with(
+            ["/usr/local/bin/cpz-settings-open", "--page", "network", "main"]
+        )
+
+    def test_falls_back_to_the_tui_outside_tmux(self):
+        environment = {key: value for key, value in os.environ.items() if key != "TMUX"}
+        with mock.patch.dict(os.environ, environment, clear=True), mock.patch.object(
+            self.mod, "exec_settings"
+        ) as exec_settings:
+            self.mod.open_settings("--page", "network")
+        exec_settings.assert_called_once_with("--page", "network")
+
+
+class SettingsRequests(unittest.TestCase):
+    def setUp(self):
+        self.mod = load_script("cpz_settings_requests", SETTINGS)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "settings-request"
+        old = os.environ.get("CPZ_SETTINGS_REQUEST")
+        os.environ["CPZ_SETTINGS_REQUEST"] = str(self.path)
+        if old is None:
+            self.addCleanup(os.environ.pop, "CPZ_SETTINGS_REQUEST", None)
+        else:
+            self.addCleanup(os.environ.__setitem__, "CPZ_SETTINGS_REQUEST", old)
+
+    def test_take_request_claims_the_file_once(self):
+        self.path.write_text("page\nnetwork\n", encoding="utf-8")
+        self.assertEqual(self.mod.take_request(), ("page", "network"))
+        self.assertIsNone(self.mod.take_request())
+
+    def test_take_request_rejects_incomplete_files(self):
+        self.path.write_text("page\n", encoding="utf-8")
+        self.assertIsNone(self.mod.take_request())
+        self.path.write_text("bogus\nnetwork\n", encoding="utf-8")
+        self.assertIsNone(self.mod.take_request())
+        self.assertIsNone(self.mod.take_request())
 
 
 if __name__ == "__main__":

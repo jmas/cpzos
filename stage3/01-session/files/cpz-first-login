@@ -1,7 +1,8 @@
 #!/bin/sh
 # Recommend setting a new password while the factory password is still in use.
-# The session is never blocked: skipping keeps the factory password, and
-# cpz-settings keeps showing a warning until it is changed.
+# The prompt is bounded: it defaults to "keep" after a short timeout, so a
+# first login cannot hang before tmux starts. cpz-settings keeps showing a
+# warning until the password is changed.
 #
 # The build records /etc/shadow's mtime in /etc/cpz/shadow-mtime. Imager,
 # rpi-preseed, passwd, usermod and chage all update that mtime, so any real
@@ -21,9 +22,17 @@ clear
 printf 'CPZ: the factory password is still in use.\n\n'
 printf 'It is recommended to set a new password for this account.\n'
 printf 'You can do it now, or later from Settings.\n\n'
-printf 'Set a new password now? [y/N] '
+prompt_timeout=${CPZ_PASSWORD_PROMPT_TIMEOUT:-10}
+printf 'Set a new password now? [y/N] (default N in %ss) ' "$prompt_timeout"
 answer=
-read -r answer || exit 0
+if command -v timeout >/dev/null 2>&1; then
+	# The single quotes are intentional: sh -c expands $answer in the child.
+	# shellcheck disable=SC2016
+	answer=$(timeout "$prompt_timeout" sh -c \
+		'IFS= read -r answer && printf "%s" "$answer"' </dev/tty) || true
+else
+	read -r answer || exit 0
+fi
 case "$answer" in
 y | Y | yes | YES | Yes) ;;
 *)

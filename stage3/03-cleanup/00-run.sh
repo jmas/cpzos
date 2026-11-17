@@ -81,10 +81,53 @@ if dpkg-query -W -f='${Status}' 7zip 2>/dev/null |
 	apt-mark manual 7zip >/dev/null
 fi
 
+# apt-get -s is read-only, but it still takes about a second per package.
+# Simulate the purges in parallel and keep the decision loop in the original
+# order so the purge list and the log stay deterministic.
+sim_dir=$(mktemp -d "${TMPDIR:-/tmp}/cpz-cleanup.XXXXXX")
+trap 'rm -rf "$sim_dir"' EXIT
+export sim_dir
+jobs=$(nproc 2>/dev/null || echo 2)
+case "$jobs" in
+	'' | *[!0-9]*) jobs=2 ;;
+esac
+if [ "$jobs" -lt 1 ]; then
+	jobs=1
+fi
+if [ "$jobs" -gt 8 ]; then
+	jobs=8
+fi
+
+for package in $installed; do
+	printf '%s\n' "$package"
+done | xargs -r -P "$jobs" -I '{}' bash -c '
+	package="$1"
+	raw="$sim_dir/$package.raw"
+	# These are simulations, but apt still writes its package cache files by
+	# default; disable locking and the on-disk caches so parallel simulations
+	# cannot race each other.
+	if apt-get -o Debug::NoLocking=1 \
+		-o Dir::Cache::pkgcache= \
+		-o Dir::Cache::srcpkgcache= \
+		-s purge "$package" >"$raw" 2>/dev/null; then
+		awk "/^(Purg|Remv) /{print \$2}" "$raw" >"$sim_dir/$package"
+	else
+		printf "__FAILED__\n" >"$sim_dir/$package"
+	fi
+	rm -f "$raw"
+' bash '{}'
+
 purge=""
 for package in $installed; do
-	planned=$(apt-get -s purge "$package" 2>/dev/null |
-		awk '/^(Purg|Remv) /{print $2}' || true)
+	if [ ! -f "$sim_dir/$package" ]; then
+		echo "cpz-cleanup: keeping $package (apt simulation did not run)"
+		continue
+	fi
+	planned=$(cat "$sim_dir/$package")
+	if [ "$planned" = "__FAILED__" ]; then
+		echo "cpz-cleanup: keeping $package (apt simulation failed)"
+		continue
+	fi
 	conflict=""
 	for other in $planned; do
 		other="${other%%:*}"

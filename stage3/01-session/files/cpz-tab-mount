@@ -1,0 +1,81 @@
+#!/bin/sh
+# Open or close the tmux tab that belongs to a hotplug mounted filesystem.
+#
+#   cpz-tab-mount open MOUNTPOINT LABEL
+#   cpz-tab-mount close MOUNTPOINT
+#
+# cpz-automount runs as root from a systemd unit, while tmux belongs to the
+# console user (uid 1000). This helper re-executes itself as that user so the
+# tmux socket, HOME and the server environment are the right ones. With no
+# session (udev coldplug at boot, SSH-only use) it does nothing.
+set -eu
+
+action=${1:-}
+mount=${2:-}
+label=${3:-}
+session=main
+tab_new=${CPZ_TAB_NEW:-/usr/local/bin/cpz-tab-new}
+
+if [ -z "$action" ] || [ -z "$mount" ]; then
+	printf 'Usage: cpz-tab-mount open MOUNTPOINT LABEL | close MOUNTPOINT\n' >&2
+	exit 2
+fi
+
+if [ "$(id -u)" -eq 0 ]; then
+	user=$(getent passwd 1000 | cut -d: -f1 || true)
+	[ -n "$user" ] || exit 0
+	home=$(getent passwd 1000 | cut -d: -f6 || true)
+	[ -n "$home" ] || home=/
+	runuser_bin=$(command -v runuser || true)
+	[ -n "$runuser_bin" ] || exit 0
+	exec "$runuser_bin" -u "$user" -- env HOME="$home" \
+		CPZ_TAB_NEW="$tab_new" "$0" "$action" "$mount" "$label"
+fi
+
+tmux has-session -t "=$session" 2>/dev/null || exit 0
+
+case $action in
+	open)
+		[ -d "$mount" ] || exit 0
+		# Window names share the narrow panel status bar; keep the label short.
+		name=$(printf '%.16s' "${label:-disk}")
+		CPZ_TAB_MOUNT=$mount
+		export CPZ_TAB_MOUNT
+		exec "$tab_new" "$session" "$mount" "$name"
+		;;
+	close)
+		windows=$(tmux list-windows -t "=$session" -F \
+			'#{window_id} #{@cpz_mount}' 2>/dev/null || true)
+		[ -n "$windows" ] || exit 0
+		closed=0
+		while read -r id tab_mount; do
+			[ -n "$id" ] || continue
+			[ "$tab_mount" = "$mount" ] || continue
+			# A tab that was moved out of the disk is not tied to it any more;
+			# leave the user's shell alone.
+			paths=$(tmux list-panes -t "$id" -F '#{pane_current_path}' 2>/dev/null || true)
+			on_mount=0
+			old_ifs=$IFS
+			IFS='
+'
+			for path in $paths; do
+				case $path in
+					"$mount" | "$mount"/*) on_mount=1 ;;
+				esac
+			done
+			IFS=$old_ifs
+			[ "$on_mount" -eq 1 ] || continue
+			tmux kill-window -t "$id" 2>/dev/null || continue
+			closed=$((closed + 1))
+		done <<EOF
+$windows
+EOF
+		if [ "$closed" -gt 0 ]; then
+			/usr/local/bin/cpz-tab-info "$session" 2>/dev/null || true
+		fi
+		;;
+	*)
+		printf 'cpz-tab-mount: unknown action %s\n' "$action" >&2
+		exit 2
+		;;
+esac

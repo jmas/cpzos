@@ -33,6 +33,11 @@ screens. Daily tmux actions are direct two-key `Alt+letter` bindings
 (`Alt+V` / `Alt+B` split, `Alt+N` / `Alt+P` switch pane, `Alt+Z` zoom and so
 on), so no tmux prefix is needed on the small CPZ keyboard.
 
+Settings confirms destructive actions and reports results in a centred modal.
+Successful results fade after a moment; errors stay until `Enter`/`Esc`.
+In-progress text such as `Scanning...` remains inline because the action is
+already blocking.
+
 Themes are switchable from Settings: Campbell (default), Homebrew, Ocean, Red
 Sands, Terminal Basic, Man Page, Novel and PaperColor Light, plus Mono and
 Light High Contrast for accessibility.
@@ -61,8 +66,8 @@ old APPLaunch/desktop UI. See [docs/CPZ-KMSCON.md](docs/CPZ-KMSCON.md) for the
 boot path, output policy and recovery/debug image details.
 
 USB hard disks, sticks and card readers are mounted automatically when they are
-plugged in and appear under `/media/<label>` (see
-[docs/CPZ-STORAGE.md](docs/CPZ-STORAGE.md)); unplugging unmounts them, and
+plugged in, appear under `/media/<label>` in a new tab, and are ready to use
+(see [docs/CPZ-STORAGE.md](docs/CPZ-STORAGE.md)); unplugging unmounts them, and
 `cpz-automount list` shows what is mounted.
 
 ## Dependencies
@@ -100,6 +105,35 @@ starting the CPZ session:
 ```
 
 Results are written to `deploy/`.
+
+### Fast local iterations
+
+A full build is needed for a release, but day-to-day changes usually touch only
+`stage2`, `stage3` or `export-image`. Keep the Docker work volume between runs
+and rebuild just the changed stage:
+
+```bash
+# once: full build into a named volume
+PIGEN_DOCKER_OPTS="--volume cpz-pigen-work:/pi-gen/work" ./build-docker.sh
+# (or ./tools/build-fast.sh stage0, which does the same into that volume)
+
+# after a stage3/export change: stage3 + export, from the cached stage2
+./tools/build-fast.sh stage3
+
+# after a stage2 change: stage2 + stage3 + export
+./tools/build-fast.sh stage2
+```
+
+`tools/build-fast.sh` removes only the rootfs directories it is about to
+rebuild, copies the previous stage fresh, and keeps `work/<IMG_NAME>/cache/`
+(including the pinned kernel `.deb` cache). It uses `DEPLOY_COMPRESSION=gz`
+for faster local exports; set `FAST_COMPRESSION=xz` for a release-shaped
+archive or `FAST_COMPRESSION=none` for a raw `.img`.
+
+For a release, do a clean full build without the cached work volume (or with
+`CLEAN=1`) and keep `DEPLOY_COMPRESSION=xz`; the fast profile is only for
+iteration. An `apt-cacher-ng` on the host (`APT_PROXY` in `config`) also
+removes repeated package downloads without changing package contents.
 
 ## Release
 
@@ -216,7 +250,9 @@ confirmation; the manager records its state in
 
 ## Search
 
-`Alt+O` opens the CPZ omnisearch in a tmux popup. It is a single fuzzy list:
+`Alt+O` opens the CPZ omnisearch in a tmux popup. It opens like Spotlight on a
+short list of common CPZ actions; typing anything loads the searchable
+providers:
 
 | Input | Provider |
 | --- | --- |
@@ -226,13 +262,15 @@ confirmation; the manager records its state in
 | `@` | Terminal Trove tools (installed tools run, others open Applications details) |
 | `$` | tmux paste buffers, searchable by name or content preview |
 
-`Enter` launches the selected command in a new tab, opens a file in `vim`
-(or `lf` for a directory), jumps straight to the selected Settings page, runs
-an installed Terminal Trove tool or opens its Applications details, and pastes
-a tmux buffer. `Ctrl+Y` copies the selected path/command/result to the tmux
+`Enter` acts on the highlighted row, including the first row before anything is
+typed. It launches a command in a new tab, opens a file in `vim` (or `lf` for a
+directory), opens the selected Settings page in the Settings tab, runs an
+installed Terminal Trove tool or opens its Applications details, and pastes a
+tmux buffer. `Ctrl+Y` copies the selected path/command/result to the tmux
 buffer, so `Alt+Y` pastes it; `Ctrl+O` opens the containing directory in `lf`
-(or the Trove details for a tool). Settings pages are opened in the same popup
-through `cpz-settings --page`, so `q` returns to the terminal.
+(or the Trove details for a tool). Settings targets are queued for the running
+Settings tab instead of starting a second TUI inside the popup, so the popup
+closes immediately and `q` behaves like normal Settings.
 
 The `@` provider uses the local Terminal Trove snapshot that Applications
 already maintains; the search itself never fetches from the network. The `$`
@@ -255,6 +293,7 @@ stage3/                      kmscon and tmux session
 export-image/                image finalisation
 scripts/                     pi-gen helpers
 VERSION                      release version (source of truth)
+tools/build-fast.sh          rebuild one stage from cached work (local Docker)
 tools/release.sh             bump VERSION, commit, tag and push
 tools/verify-stage.sh        host-side structural checks (no root)
 tools/verify-image.sh        full image content checks (Linux, root)

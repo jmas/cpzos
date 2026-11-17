@@ -183,7 +183,22 @@ else
 	systemctl disable kmsconvt@tty2.service kmsconvt@tty3.service 2>/dev/null || true
 	systemctl unmask getty@tty2.service getty@tty3.service || true
 	systemctl enable getty@tty2.service getty@tty3.service
-	systemctl enable console-setup.service 2>/dev/null || true
+	# tty2/tty3 are not drawn while fbcon=map:off, and kmscon renders with
+	# its own FreeType font and XKB layout. setupcon/loadkeys at boot only
+	# delay the kmscon critical path; the debug image keeps them for the
+	# visible fbcon consoles. cpz-keyboard-layout still loads the recovery
+	# keymap for tty2/tty3 itself.
+	systemctl disable console-setup.service keyboard-setup.service \
+		2>/dev/null || true
+fi
+
+# The normal image must not start the fbcon setup services even if a package
+# recreated their enablement links. The debug image keeps both for its
+# visible consoles.
+if [ ! -f /etc/cpz-debug-boot ]; then
+	rm -f \
+		/etc/systemd/system/multi-user.target.wants/console-setup.service \
+		/etc/systemd/system/sysinit.target.wants/keyboard-setup.service
 fi
 
 # /tmp is a tmpfs sized from RAM by systemd. On the small-RAM CM0 the default

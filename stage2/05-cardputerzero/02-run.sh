@@ -10,6 +10,12 @@
 # stage3.
 
 # Boot splash: firmware start.elf/fixup.dat + BMP splash.
+#
+# gpu_mem=64 is the minimum Raspberry Pi recommends for vc4-kms-v3d. The CPZ
+# image is console-only (kmscon, no desktop/compositor/video decode), and the
+# KMS scanout buffers live in the cma-64 reservation, so the firmware only
+# needs room for its own heap plus the 170x320 splash frame (~106 KiB).
+# Keeping the vendor's gpu_mem=128 wasted 64 MiB of the CM0's 512 MiB.
 install -m 644 files/start.elf "${ROOTFS_DIR}/boot/firmware/start.elf"
 install -m 644 files/fixup.dat "${ROOTFS_DIR}/boot/firmware/fixup.dat"
 install -m 644 files/splash.bmp "${ROOTFS_DIR}/boot/firmware/splash.bmp"
@@ -18,7 +24,7 @@ install -m 644 files/CardputerZero_splash_custom.bin \
 sed -i \
     -e '/^splash_screen=/d' \
     -e '/^gpu_mem=/d' \
-    -e '1i splash_screen=CardputerZero_splash_custom.bin\ngpu_mem=128\n' \
+    -e '1i splash_screen=CardputerZero_splash_custom.bin\ngpu_mem=64\n' \
     "${ROOTFS_DIR}/boot/firmware/config.txt"
 
 # fb_load comes from the m5stack driver's "make install". It draws the splash

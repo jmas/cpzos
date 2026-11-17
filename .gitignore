@@ -12,3 +12,4 @@ SKIP_IMAGES
 .venv/
 __pycache__/
 *.pyc
+.build-fast.*

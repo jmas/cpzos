@@ -63,6 +63,27 @@ sudo ./build.sh
 `apt-mark`. If the package disappears, build it from the pinned upstream
 tarball instead of falling back to kmscon 9.
 
+## Boot tuning
+
+The shipped initramfs is built with `MODULES=list`, not the default
+`MODULES=most`. Common root media (SD/eMMC on CM4, NVMe, USB storage) and ext4
+are built into the RPi kernel; the list only adds the CM5
+`sdhci_of_dwcmshc` controller, and the `rpi-sys-mods` initramfs hook adds the
+boot i2c modules. The `zz-cpz-trim` hook drops `/usr/lib/udev/hwdb.bin` from
+the initramfs; the full hardware database stays in the root filesystem, where
+udev uses it after `switch_root`. `COMPRESS=xz` keeps the resulting archive
+under 8 MiB. `MODULES=dep` is written back after the build for on-device
+kernel updates, where the running Pi is a reliable dependency source. The
+build fails if an initramfs grows past 8 MiB, so a regression back to
+`MODULES=most` or a reintroduced hwdb copy is caught immediately.
+
+The normal image disables `console-setup.service` and `keyboard-setup.service`
+for the invisible tty2/tty3 fbcon; kmscon uses its own FreeType font and XKB
+layout. `cardputerzero-keymap.service` also sets `CPZ_LAYOUT_SETTLE=0`, so the
+boot keymap load does not run a redundant `udevadm settle` before kmscon's
+first frame. The hotplug path keeps the settle. The debug image keeps the
+fbcon services because its consoles are visible.
+
 ## One working output
 
 kmscon uses `multi-monitor=largest`: it draws on the screen with the most
@@ -183,10 +204,12 @@ Restarts only happen for:
   changes (replug or monitor wake) or `--recover` is used. The monitor is
   never blinked in a loop.
 
-Switching *to* HDMI is debounced by two samples; returning to the panel is
-immediate. Once on HDMI, the session stays there while the connector is
-connected even if the EDID read fails for a moment, so a monitor in standby
-cannot bounce the session.
+Switching *to* HDMI with a readable EDID (or a pinned `video=` mode) is
+confirmed once after 0.2 s instead of waiting for the two-second timer sample.
+A monitor whose capabilities cannot be read keeps the two-sample debounce.
+Returning to the panel is immediate. Once on HDMI, the session stays there
+while the connector is connected even if the EDID read fails for a moment, so
+a monitor in standby cannot bounce the session.
 
 ## Generated kmscon config
 
@@ -305,6 +328,7 @@ image stay plain shells.
 /usr/local/bin/cpz-help                     # Alt+H key reference
 /usr/local/bin/cpz-search                   # Alt+O omnisearch popup
 /usr/local/bin/cpz-tab-info                 # status bar tab counters
+/usr/local/bin/cpz-tab-mount                # opens/closes the tab for a USB disk
 /usr/local/bin/cpz-font                     # Alt+Plus/Alt+Minus, persists font_size
 /usr/local/bin/cpz-layout-map               # language-aware Sym overlay generator
 /usr/local/bin/cpz-automount                # USB filesystem hotplug mounts
@@ -333,6 +357,10 @@ for tabs, `Alt+V` / `Alt+B` for splits, `Alt+N` / `Alt+P` for panes, `Alt+Z`
 for pane zoom, and so on. No tmux prefix is needed for the main UI. `C-a`
 remains only as an advanced fallback; the default `C-b` is hard to chord on
 the small CPZ keyboard.
+
+Plugging in a USB disk opens a tab in `/media/<label>` (see
+`docs/CPZ-STORAGE.md`). The tab is tagged with `@cpz_mount`, is not saved in
+the session layout, and is closed before the filesystem is unmounted.
 
 `Alt+O` opens `cpz-search`, a tmux popup with PATH commands, daily CPZ actions,
 Settings pages and files in one fzf list. `/` switches to file search, `=` to

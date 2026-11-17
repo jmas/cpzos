@@ -5,6 +5,32 @@ INFO_FILE="${STAGE_WORK_DIR}/${IMG_FILENAME}${IMG_SUFFIX}.info"
 SBOM_FILE="${STAGE_WORK_DIR}/${IMG_FILENAME}${IMG_SUFFIX}.sbom"
 BMAP_FILE="${STAGE_WORK_DIR}/${IMG_FILENAME}${IMG_SUFFIX}.bmap"
 
+# Build the shipped initramfs with an explicit module list and without the
+# large systemd hardware database. MODULES=most copies every storage/network
+# driver and its firmware; MODULES=list keeps only the root-media module below
+# and whatever the rpi-sys-mods hook adds. The full hwdb.bin is only needed by
+# udev after switch_root, so the zz-cpz-trim hook drops it from the initramfs.
+# xz is used instead of zstd because the hwdb-free archive is under 8 MiB with
+# xz, while zstd leaves it just above that target.
+# The Pi kernel has the SD/eMMC, NVMe, USB storage and ext4 drivers built in;
+# CM5 eMMC/SD needs sdhci_of_dwcmshc. MODULES=dep is intentionally set only
+# after the build: inside the chroot it would guess against the build host, not
+# the CM0.
+initramfs_conf="${ROOTFS_DIR}/etc/initramfs-tools/initramfs.conf"
+if [ -f "$initramfs_conf" ]; then
+	sed -i 's/^MODULES=.*/MODULES=list/' "$initramfs_conf"
+	sed -i 's/^COMPRESS=.*/COMPRESS=xz/' "$initramfs_conf"
+fi
+install -d "${ROOTFS_DIR}/etc/initramfs-tools"
+cat > "${ROOTFS_DIR}/etc/initramfs-tools/modules" <<'EOF'
+# CM5 eMMC/SD controller. All other root-media drivers used by the CPZ image
+# (CM4 sdhci/mmc, NVMe, USB storage, ext4) are built into the RPi kernel.
+sdhci_of_dwcmshc
+EOF
+install -d "${ROOTFS_DIR}/etc/initramfs-tools/hooks"
+install -m 0755 files/zz-cpz-trim \
+	"${ROOTFS_DIR}/etc/initramfs-tools/hooks/zz-cpz-trim"
+
 on_chroot <<- EOF
 	update-initramfs -k all -c
 	if hash hardlink 2>/dev/null; then
@@ -20,8 +46,23 @@ EOF
 
 if [ -f "${ROOTFS_DIR}/etc/initramfs-tools/update-initramfs.conf" ]; then
 	sed -i 's/^update_initramfs=.*/update_initramfs=yes/' "${ROOTFS_DIR}/etc/initramfs-tools/update-initramfs.conf"
-	sed -i 's/^MODULES=.*/MODULES=dep/' "${ROOTFS_DIR}/etc/initramfs-tools/initramfs.conf"
+	# On the device, dep is accurate: it sees the real root device. Keep the
+	# image's explicit list for the build, but make future updates automatic.
+	sed -i 's/^MODULES=.*/MODULES=dep/' "$initramfs_conf"
 fi
+
+# Guard the optimisation: a regression back to most/all modules is visible
+# here and fails the build instead of silently adding a second of boot time.
+for initramfs in initramfs8 initramfs_2712; do
+	initramfs_file="${ROOTFS_DIR}/boot/firmware/${initramfs}"
+	[ -f "$initramfs_file" ] || continue
+	initramfs_size=$(stat -c %s "$initramfs_file")
+	if [ "$initramfs_size" -gt $((8 * 1024 * 1024)) ]; then
+		echo "ERROR: ${initramfs} is ${initramfs_size} bytes; expected < 8 MiB." >&2
+		echo "ERROR: check MODULES=list, zz-cpz-trim and /etc/initramfs-tools/modules." >&2
+		exit 1
+	fi
+done
 
 rm -f "${ROOTFS_DIR}/usr/bin/qemu-arm-static"
 

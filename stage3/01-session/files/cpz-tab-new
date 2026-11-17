@@ -1,10 +1,22 @@
 #!/bin/sh
 # Create a new tab immediately before the Settings tab, so Settings stays last,
 # and switch the attached client to it.
+#
+#   cpz-tab-new [SESSION] [DIRECTORY] [NAME]
+#
+# DIRECTORY is the working directory of the new shell (default $HOME) and NAME
+# its initial title (default "shell"). CPZ_TAB_MOUNT tags the window with
+# @cpz_mount; cpz-tab-mount uses that tag to close the tab before the
+# filesystem is unmounted.
 set -eu
 
 session=${1:-main}
+directory=${2:-${HOME:-/}}
+name=${3:-shell}
 tmux has-session -t "=$session" 2>/dev/null || exit 0
+
+[ -d "$directory" ] || directory=${HOME:-/}
+[ -n "$name" ] || name=shell
 
 settings_id=$(tmux list-windows -t "=$session" -F \
 	'#{window_id} #{?@cpz_settings,1,0} #{window_name}' |
@@ -12,12 +24,19 @@ settings_id=$(tmux list-windows -t "=$session" -F \
 
 if [ -n "$settings_id" ]; then
 	new_id=$(tmux new-window -d -P -F '#{window_id}' -b -t "$settings_id" \
-		-c "${HOME:-/}" -n shell)
+		-c "$directory" -n "$name")
 else
 	next=$(tmux list-windows -t "=$session" -F '#{window_index}' |
 		awk '{ if ($1 + 0 > max) max = $1 + 0 } END { print max + 1 }')
 	new_id=$(tmux new-window -d -P -F '#{window_id}' -t "=$session:$next" \
-		-c "${HOME:-/}" -n shell)
+		-c "$directory" -n "$name")
+fi
+
+if [ -n "${CPZ_TAB_MOUNT:-}" ]; then
+	tmux set-option -w -t "$new_id" @cpz_mount "$CPZ_TAB_MOUNT" 2>/dev/null || true
+	# Keep the disk label visible instead of automatic-rename replacing it with
+	# the name of the program running inside the tab.
+	tmux set-option -w -t "$new_id" automatic-rename off 2>/dev/null || true
 fi
 
 # run-shell has no client context, so select the tab on the attached client.

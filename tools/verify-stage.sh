@@ -223,6 +223,7 @@ for file in \
 	stage3/01-session/files/cpz-tab-close \
 	stage3/01-session/files/cpz-tab-close-key \
 	stage3/01-session/files/cpz-tab-info \
+	stage3/01-session/files/cpz-tab-mount \
 	stage3/01-session/files/cpz-settings-open \
 	stage3/01-session/files/cpz-settings \
 	stage3/01-session/files/cpz-settings-shell \
@@ -311,6 +312,7 @@ for script in \
 	stage3/01-session/files/cpz-tab-close \
 	stage3/01-session/files/cpz-tab-close-key \
 	stage3/01-session/files/cpz-tab-info \
+	stage3/01-session/files/cpz-tab-mount \
 	stage3/01-session/files/cpz-settings-open \
 	stage3/01-session/files/cpz-settings \
 	stage3/01-session/files/cpz-settings-shell \
@@ -343,6 +345,19 @@ not_in_code stage2/05-cardputerzero/02-run.sh "APPLaunch"
 not_in_code stage2/05-cardputerzero/02-run.sh "LaunchWizard"
 not_in_code stage2/05-cardputerzero/02-run.sh "lightdm"
 
+echo "== boot tuning =="
+contains export-image/05-finalise/01-run.sh 'MODULES=list'
+contains export-image/05-finalise/01-run.sh 'COMPRESS=xz'
+contains export-image/05-finalise/01-run.sh 'sdhci_of_dwcmshc'
+contains export-image/05-finalise/01-run.sh 'initramfs_size'
+have export-image/05-finalise/files/zz-cpz-trim
+contains export-image/05-finalise/files/zz-cpz-trim 'hwdb.bin'
+contains stage3/01-session/files/cardputerzero-keymap.service 'CPZ_LAYOUT_SETTLE=0'
+contains stage3/01-session/files/cpz-keyboard-layout 'CPZ_LAYOUT_SETTLE'
+contains stage3/01-session/02-run.sh 'disable console-setup.service'
+contains stage3/01-session/files/cpz-conn-status.timer 'OnBootSec=10s'
+contains stage3/01-session/files/cpz-kmscon-output 'confirm_hdmi'
+
 echo "== console session =="
 contains stage3/01-session/files/tmux.conf "status-position top"
 contains stage3/01-session/files/tmux.conf '#{@cpz_tab_current} / #{@cpz_tab_total}'
@@ -355,6 +370,8 @@ contains stage3/01-session/files/cpz-session.sh 'cpz-first-login'
 contains stage3/01-session/files/cpz-session.sh '/run/cpz-kmscon/session.tty1.tty'
 contains stage3/01-session/files/cpz-login 'session.$vt.tty'
 contains stage3/01-session/files/cpz-first-login 'passwd'
+contains stage3/01-session/files/cpz-first-login 'CPZ_PASSWORD_PROMPT_TIMEOUT'
+contains stage3/01-session/files/cpz-first-login 'timeout'
 contains stage3/01-session/files/cpz-conn-status.timer 'OnUnitActiveSec=30s'
 contains stage3/01-session/files/cpz-session-save.timer 'OnUnitActiveSec=5min'
 contains stage3/01-session/files/cpz-kmscon-config 'get_setting font_size'
@@ -454,10 +471,19 @@ contains stage3/01-session/files/cpz-automount 'probe_filesystem'
 contains stage3/01-session/files/cpz-automount 'umask=0022'
 contains stage3/01-session/files/cpz-automount 'umount -l'
 contains stage3/01-session/files/cpz-automount 'findmnt --fstab'
+contains stage3/01-session/files/cpz-automount 'open_mount_tab'
+contains stage3/01-session/files/cpz-automount 'close_mount_tabs'
+contains stage3/01-session/files/cpz-automount 'delegate_to_systemd'
+contains stage3/01-session/files/cpz-tab-mount 'runuser'
+contains stage3/01-session/files/cpz-tab-mount '@cpz_mount'
+contains stage3/01-session/files/cpz-tab-new '@cpz_mount'
+contains stage3/01-session/files/cpz-session-save '@cpz_mount'
 contains stage3/01-session/01-run.sh '99-cpz-automount.rules'
 contains stage3/01-session/01-run.sh 'cpz-automount@.service'
 contains stage3/01-session/01-run.sh 'install -d -m 0755 "${ROOTFS_DIR}/media"'
+contains stage3/01-session/01-run.sh 'cpz-tab-mount'
 have tests/test_cpz_automount.py
+have tests/test_cpz_tab_mount.py
 contains stage3/01-session/02-run.sh 'CPZ_HDMI_VIDEO'
 contains build.sh 'CPZ_HDMI_VIDEO'
 contains config.cpz.example 'CPZ_HDMI_VIDEO'
@@ -473,7 +499,7 @@ contains stage3/01-session/02-run.sh "mask getty@tty1.service"
 contains stage3/01-session/02-run.sh 'mask tmp.mount'
 contains stage3/01-session/01-run.sh 'install -d -m 1777'
 have stage3/03-cleanup/00-run.sh
-contains stage3/03-cleanup/00-run.sh 'apt-get -s purge'
+contains stage3/03-cleanup/00-run.sh '-s purge "$package"'
 contains stage3/03-cleanup/00-run.sh 'cpz-cleanup: keeping'
 contains stage3/03-cleanup/00-run.sh 'apt-get autoremove --purge'
 contains stage3/03-cleanup/00-run.sh 'vim-tiny'
@@ -635,6 +661,11 @@ contains stage3/01-session/files/cpz-search 'DEFAULT_ROOTS'
 contains stage3/01-session/files/cpz-search 'safe_eval'
 contains stage3/01-session/files/cpz-search '--trove'
 contains stage3/01-session/files/cpz-search '--buffers'
+contains stage3/01-session/files/cpz-search 'home_items'
+contains stage3/01-session/files/cpz-search '--home'
+contains stage3/01-session/files/cpz-search 'open_settings'
+contains stage3/01-session/files/cpz-settings 'take_request'
+contains stage3/01-session/files/cpz-settings-open '--page'
 contains stage3/01-session/files/cpz-layout-next 'keyboard_layouts'
 contains stage3/01-session/files/cpz-layout-next 'cpz-layout-apply'
 contains stage3/01-session/files/cpz-layout-apply 'cpz-keyboard-layout.service'
@@ -806,7 +837,13 @@ echo "== host checks =="
 have tests/run.sh
 have tests/lint.sh
 have tests/test_cpz_settings.py
+have tests/test_build_fast.py
 absent tests/shell/test-hdmi-console.sh
+have tools/build-fast.sh
+contains tools/build-fast.sh 'PREV_ROOTFS_DIR'
+contains stage0/02-firmware/01-run.sh 'cache/kernel-debs'
+contains stage3/03-cleanup/00-run.sh 'xargs -r -P'
+contains README.md 'Fast local iterations'
 have .github/workflows/ci.yml
 contains .github/workflows/ci.yml 'pull_request'
 contains .github/workflows/ci.yml './tools/verify-stage.sh'

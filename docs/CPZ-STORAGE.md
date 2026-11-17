@@ -16,7 +16,9 @@ console user immediately; unplugging unmounts them.
 3. The helper mounts the filesystem at `/media/<label>` (the label is
    sanitised; an unlabelled filesystem uses `usb-<first UUID group>`). A second
    filesystem with the same label gets a `-2`, `-3`, ... suffix.
-4. Unplugging the disk deactivates the device unit. `BindsTo=dev-<dev>.device`
+4. The mounted directory is opened as a new tab in the console session and the
+   attached client switches to it, so the disk can be used immediately.
+5. Unplugging the disk deactivates the device unit. `BindsTo=dev-<dev>.device`
    stops the service, and its `ExecStop` unmounts the filesystem (lazy detach
    if a process still holds it open).
 
@@ -52,6 +54,16 @@ cpz-automount list                 # drives mounted by the helper
 cpz-automount umount /dev/sda1     # flush and unmount before unplugging
 ```
 
+Every hotplug mount opens a tab named after the label, with the shell already
+in `/media/<label>`. A tab that was moved somewhere else is left open, so its
+contents are not lost. Mount tabs are not part of the saved session layout:
+after a reboot they only come back when the disk is plugged in again.
+
+A manual mount (`sudo cpz-automount mount /dev/sda1`) opens a tab too, as long
+as the console session is running. At boot, udev coldplug runs before the
+console user logs in, so disks that are already attached are mounted without a
+tab.
+
 Mounted paths are included in the `Alt+O` omnisearch file provider, so a data
 directory can be opened without leaving the keyboard.
 
@@ -66,7 +78,13 @@ sync
 cpz-automount umount /dev/sda1
 ```
 
-Removing the cable without this step can lose the last few seconds of writes.
+The tab opened for the disk is closed before the filesystem is unmounted: its
+shell has the mount point as its working directory, and a busy mount would fall
+back to a lazy detach. A manual `cpz-automount umount` runs through the
+`cpz-automount@<dev>.service` unit, so closing the tab cannot interrupt the
+unmount, even when the command was typed in that tab. A tab that was moved out
+of the disk stays open. Removing the cable without this step can lose the last
+few seconds of writes.
 
 ## Troubleshooting
 
@@ -94,6 +112,7 @@ journalctl -b -u 'cpz-automount@*'
 
 ```text
 /usr/local/bin/cpz-automount                    # mount/umount/list helper
+/usr/local/bin/cpz-tab-mount                    # open/close the disk tab
 /etc/systemd/system/cpz-automount@.service      # one instance per device
 /etc/udev/rules.d/99-cpz-automount.rules        # hotplug trigger
 /media/<label>                                  # mount points

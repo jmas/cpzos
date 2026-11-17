@@ -249,6 +249,31 @@ class SettingsTUI(unittest.TestCase):
         rest = zones[len(common) :]
         self.assertEqual(rest, sorted(rest, key=str.lower))
 
+    def test_modal_text_wraps_and_keeps_paragraphs(self):
+        self.assertEqual(
+            self.mod.modal_text("one two three\n\nfour", 9),
+            ["one two", "three", "", "four"],
+        )
+        self.assertEqual(self.mod.modal_text("", 20), [""])
+
+    def test_result_severity_selects_waiting_dialog(self):
+        for message in (
+            "Install failed (try sudo apt update)",
+            "Cannot update manager state",
+            "Could not disable NTP",
+            "Not in apt; use the install instructions above",
+            "Refused: would remove core packages",
+        ):
+            self.assertTrue(self.mod.message_is_error(message), message)
+        for message in (
+            "Installed htop",
+            "Removed htop",
+            "Settings reset",
+            "Cancelled",
+            "connected",
+        ):
+            self.assertFalse(self.mod.message_is_error(message), message)
+
     def test_datetime_helpers(self):
         parts = self.mod.datetime_parts(datetime(2026, 1, 31, 23, 59, 58))
         self.assertEqual(parts, [2026, 1, 31, 23, 59, 58])

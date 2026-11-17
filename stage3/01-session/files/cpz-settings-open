@@ -1,8 +1,47 @@
 #!/bin/sh
 # Focus the Settings tab, re-creating it if it was closed.
+#
+#   cpz-settings-open [session]
+#   cpz-settings-open --page PAGE [session]
+#   cpz-settings-open --tool SLUG [session]
+#
+# The optional target is handed to the Settings TUI through a request file, so
+# cpz-search can close its popup and the tab keeps running after q.
 set -eu
 
-session=${1:-main}
+target_page=""
+target_tool=""
+session=""
+while [ $# -gt 0 ]; do
+	case $1 in
+		--page)
+			if [ $# -lt 2 ]; then
+				printf 'cpz-settings-open: --page needs a page\n' >&2
+				exit 2
+			fi
+			target_page=$2
+			shift 2
+			;;
+		--tool)
+			if [ $# -lt 2 ]; then
+				printf 'cpz-settings-open: --tool needs a slug\n' >&2
+				exit 2
+			fi
+			target_tool=$2
+			shift 2
+			;;
+		-*)
+			printf 'cpz-settings-open: unknown option %s\n' "$1" >&2
+			exit 2
+			;;
+		*)
+			session=$1
+			shift
+			;;
+	esac
+done
+session=${session:-main}
+
 tmux has-session -t "=$session" 2>/dev/null || exit 0
 
 /usr/local/bin/cpz-session-ensure "$session"
@@ -11,6 +50,32 @@ settings_id=$(tmux list-windows -t "=$session" -F \
 	'#{window_id} #{?@cpz_settings,1,0} #{window_name}' |
 	awk '$2 == 1 || $3 == "settings" { print $1; exit }')
 [ -n "$settings_id" ] || exit 0
+
+# The Settings tab runs cpz-settings-shell, which owns the TUI process. Queue
+# the target before waking that pane; cpz-settings claims the file atomically.
+request=""
+if [ -n "$target_page" ] || [ -n "$target_tool" ]; then
+	request_dir=${XDG_RUNTIME_DIR:-/tmp}/cpz
+	request=${CPZ_SETTINGS_REQUEST:-$request_dir/settings-request}
+	mkdir -p "$(dirname "$request")"
+	if [ -n "$target_tool" ]; then
+		kind=tool
+		value=$target_tool
+	else
+		kind=page
+		value=$target_page
+	fi
+	temp="$request.$$"
+	printf '%s\n%s\n' "$kind" "$value" >"$temp"
+	mv -f "$temp" "$request"
+fi
+
+pane_id=$(tmux list-panes -t "$settings_id" -F '#{pane_id}' | head -n 1)
+if [ -n "$request" ] && [ -n "$pane_id" ]; then
+	# Ctrl+L is ignored by every cpz-settings screen; its only job is to wake
+	# the TUI so it reads the request immediately instead of on the next key.
+	tmux send-keys -t "$pane_id" C-l 2>/dev/null || true
+fi
 
 # run-shell has no client context; switch the attached client explicitly.
 client=$(tmux list-clients -t "=$session" -F '#{client_name}' | head -n 1)

@@ -21,7 +21,7 @@ install -d -m 1777 "${ROOTFS_DIR}/tmp"
 # Status bar, Settings TUI and tab/session helpers.
 install -m 0755 \
 	files/cpz-session-ensure files/cpz-tab-new files/cpz-tab-close \
-	files/cpz-tab-close-key files/cpz-tab-info \
+	files/cpz-tab-close-key files/cpz-tab-info files/cpz-tab-mount \
 	files/cpz-settings-open \
 	files/cpz-settings files/cpz-settings-shell files/cpz-status \
 	files/cpz-apply-settings files/cpz-help files/cpz-hint \

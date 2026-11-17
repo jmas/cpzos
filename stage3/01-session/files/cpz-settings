@@ -22,6 +22,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 import urllib.error
 import urllib.request
@@ -54,6 +55,29 @@ NAV_UP = (curses.KEY_UP, ord("k"), ord("f"))
 NAV_DOWN = (curses.KEY_DOWN, ord("j"), ord("x"))
 NAV_LEFT = (curses.KEY_LEFT, ord("h"), ord("z"))
 NAV_RIGHT = (curses.KEY_RIGHT, ord("l"), ord("c"))
+# Dialogs are drawn in one compact centred frame. The internal panel is 53x14
+# at the default font, so the body wraps well before the edge. Routine results
+# stay on screen briefly; errors wait for Enter/Esc.
+MODAL_MAX_WIDTH = 46
+MODAL_TOAST_MS = 1500
+ERROR_MARKERS = (
+    "failed",
+    "failure",
+    "error",
+    "cannot",
+    "can't",
+    "could not",
+    "unable",
+    "refused",
+    "denied",
+    "unavailable",
+    "missing",
+    "timed out",
+    "too large",
+    "not in apt",
+    "not available",
+    "not installed",
+)
 # Console layouts. The full list comes from xkb-data so every layout packaged
 # for XKB is selectable without editing this file. The list is sorted by
 # language name so the picker stays easy to scan. Fall back to a small set when
@@ -255,6 +279,51 @@ def user_settings_path() -> str:
         os.path.expanduser("~"), ".config"
     )
     return os.path.join(base, "cpz", "settings.conf")
+
+
+def request_path() -> str:
+    """Where cpz-settings-open asks the running Settings tab to navigate.
+
+    Both processes run as the same user, so a runtime directory (or /tmp when
+    XDG_RUNTIME_DIR is not set) is enough. The override keeps the tests off the
+    real queue.
+    """
+    override = os.environ.get("CPZ_SETTINGS_REQUEST", "").strip()
+    if override:
+        return override
+    base = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    return os.path.join(base, "cpz", "settings-request")
+
+
+def take_request() -> tuple[str, str] | None:
+    """Claim a pending navigation request, if any.
+
+    rename(2) makes the claim atomic, so a second cpz-settings instance (for
+    example one started by hand) cannot handle the same request twice.
+    """
+    path = request_path()
+    claimed = f"{path}.{os.getpid()}"
+    try:
+        os.replace(path, claimed)
+    except OSError:
+        return None
+    try:
+        with open(claimed, "r", encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return None
+    finally:
+        try:
+            os.unlink(claimed)
+        except OSError:
+            pass
+    if len(lines) < 2:
+        return None
+    kind = lines[0].strip()
+    value = lines[1].strip()
+    if kind not in ("page", "tool") or not value:
+        return None
+    return kind, value
 
 
 def available_themes() -> list[str]:
@@ -901,10 +970,15 @@ def draw_datetime_editor(
         0,
         "  NTP: " + ("On (will be disabled)" if ntp else "Off"),
     )
-    put(screen, height - 3, 0, " Type or Up/Down to edit field")
-    put(screen, height - 2, 0, " Left/Right field  Enter apply  q cancel")
     if notice:
         put(screen, height - 1, 0, f" {notice}")
+    else:
+        put(
+            screen,
+            height - 1,
+            0,
+            "Type or F/X edit Z/C field Enter apply q cancel",
+        )
     screen.refresh()
 
 
@@ -1063,17 +1137,158 @@ def run_privileged(screen, command) -> int:
     return run_interactive(screen, ["sudo"] + command)
 
 
-def confirm(screen, question: str) -> bool:
-    height, width = screen.getmaxyx()
-    put(screen, 0, 0, " " + question, curses.A_BOLD)
-    put(screen, 2, 0, " Enter/y = yes    n/Esc = cancel")
-    screen.refresh()
-    while True:
-        key = screen.getch()
-        if key in (10, 13, ord("y"), ord("Y")):
-            return True
-        if key in (27, ord("n"), ord("N"), ord("q")):
-            return False
+def message_is_error(message: str) -> bool:
+    """True for result text that should stay up until the user dismisses it."""
+    lowered = str(message).casefold()
+    return any(marker in lowered for marker in ERROR_MARKERS)
+
+
+def modal_text(message: str, width: int) -> list[str]:
+    """Wrap a dialog body, keeping explicit line breaks."""
+    lines: list[str] = []
+    for paragraph in str(message).split("\n"):
+        if not paragraph.strip():
+            lines.append("")
+            continue
+        lines.extend(
+            textwrap.wrap(
+                paragraph,
+                max(8, width),
+                break_long_words=True,
+                break_on_hyphens=False,
+            )
+        )
+    return lines or [""]
+
+
+def modal_window(
+    screen,
+    title: str,
+    message: str,
+    hint: str = "",
+    error: bool = False,
+):
+    """Draw a centred modal frame over the current screen and return it."""
+    screen_height, screen_width = screen.getmaxyx()
+    available = max(10, screen_width - 4)
+    body_width = min(MODAL_MAX_WIDTH, max(8, available - 4))
+    body = modal_text(message, body_width)
+    longest = max((len(line) for line in body), default=0)
+    box_width = min(available, max(len(title) + 6, longest + 4, 24))
+    body_width = max(8, box_width - 4)
+    body = modal_text(message, body_width)
+
+    hint_rows = 1 if hint else 0
+    max_body_rows = max(1, screen_height - 2 - 4 - hint_rows)
+    if len(body) > max_body_rows:
+        body = body[:max_body_rows]
+        body[-1] = body[-1][: max(0, body_width - 3)] + "..."
+    box_height = min(screen_height - 2, len(body) + hint_rows + 4)
+    top = max(0, (screen_height - box_height) // 2)
+    left = max(0, (screen_width - box_width) // 2)
+
+    popup = curses.newwin(box_height, box_width, top, left)
+    popup.erase()
+    popup.attrset(0)
+    popup.box()
+    title_attr = curses.A_REVERSE | curses.A_BOLD if error else curses.A_BOLD
+    put(popup, 0, 2, f" {title} ", title_attr)
+    for offset, line in enumerate(body):
+        put(popup, 2 + offset, 2, line)
+    if hint:
+        put(
+            popup,
+            box_height - 2,
+            2,
+            hint[: max(0, box_width - 4)],
+            curses.A_DIM,
+        )
+    popup.keypad(True)
+    popup.refresh()
+    return popup
+
+
+def close_modal(screen, popup) -> None:
+    """Delete a dialog and repaint the screen content underneath it."""
+    del popup
+    try:
+        screen.touchwin()
+        screen.refresh()
+    except curses.error:
+        pass
+
+
+def show_message(
+    screen,
+    message: str,
+    title: str = "Done",
+    error: bool = False,
+    wait: bool = True,
+) -> None:
+    """Show a result message in a modal. Toasts dismiss on a timer or a key."""
+    if not message:
+        return
+    popup = modal_window(
+        screen,
+        title,
+        message,
+        " Enter/Esc close" if wait else "",
+        error=error,
+    )
+    try:
+        popup.timeout(-1 if wait else MODAL_TOAST_MS)
+        popup.getch()
+    finally:
+        close_modal(screen, popup)
+
+
+def notify(
+    screen,
+    message: str,
+    title: str | None = None,
+    error: bool | None = None,
+    wait: bool | None = None,
+) -> None:
+    """Show an action result as a modal.
+
+    Successes are toasts so repeated toggles keep their rhythm; errors and
+    anything the caller marks as important wait for Enter/Esc.
+    """
+    if not message:
+        return
+    if error is None:
+        error = message_is_error(message)
+    if wait is None:
+        wait = error
+    if title is None:
+        title = "Error" if error else "Done"
+    show_message(screen, message, title, error=error, wait=wait)
+
+
+def confirm(
+    screen,
+    question: str,
+    title: str = "Confirm",
+    detail: str = "",
+    danger: bool = False,
+) -> bool:
+    message = question if not detail else f"{question}\n\n{detail}"
+    popup = modal_window(
+        screen,
+        title,
+        message,
+        " Enter/y yes    n/Esc cancel",
+        error=danger,
+    )
+    try:
+        while True:
+            key = popup.getch()
+            if key in (curses.KEY_ENTER, 10, 13, ord("y"), ord("Y"), *NAV_RIGHT):
+                return True
+            if key in (27, ord("n"), ord("N"), ord("q"), ord("Q"), *NAV_LEFT):
+                return False
+    finally:
+        close_modal(screen, popup)
 
 
 def text_page(screen, title: str, lines) -> None:
@@ -1083,11 +1298,11 @@ def text_page(screen, title: str, lines) -> None:
         height, width = screen.getmaxyx()
         put(screen, 0, 0, f" {title}", curses.A_BOLD)
         put(screen, 1, 0, "-" * max(0, width - 1))
-        visible = max(1, height - 4)
+        visible = max(1, height - 3)
         for index in range(visible):
             line = lines[offset + index] if offset + index < len(lines) else ""
             put(screen, 2 + index, 0, line)
-        put(screen, height - 2, 0, " Up/Down scroll   q back")
+        put(screen, height - 1, 0, "F/X scroll PgUp/PgDn q back")
         screen.refresh()
         key = screen.getch()
         if key in (ord("q"), ord("Q"), 27):
@@ -1448,7 +1663,7 @@ def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: 
     top = 3
     for index, item in enumerate(items):
         y = top + index
-        if y >= height - 3:
+        if y >= height - 1:
             break
         if item == "power":
             mark = " "
@@ -1463,8 +1678,7 @@ def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: 
         attr = curses.A_REVERSE if index == selected else 0
         put(screen, y, 0, text.ljust(max(0, width - 1)), attr)
 
-    put(screen, height - 3, 0, " Up/Down move  Enter toggle/scan/pair")
-    put(screen, height - 2, 0, " r rescan  p power  d disconnect  q back")
+    put(screen, height - 1, 0, "F/X move Enter toggle p power r scan q back")
     screen.refresh()
 
 
@@ -1472,12 +1686,10 @@ def bluetooth_screen(screen) -> None:
     adapter = bt_adapter()
     devices = bt_devices()
     selected = 0
-    notice = ""
 
     while True:
-        draw_bluetooth(screen, adapter, devices, selected, notice)
+        draw_bluetooth(screen, adapter, devices, selected)
         key = screen.getch()
-        notice = ""
         count = 2 + len(devices)
 
         if key in (ord("q"), ord("Q"), 27):
@@ -1490,38 +1702,48 @@ def bluetooth_screen(screen) -> None:
             continue
         if key in (ord("r"), ord("R")):
             draw_bluetooth(screen, adapter, devices, selected, "Scanning...")
-            notice = bt_scan()
+            result = bt_scan()
+            if result:
+                notify(screen, result, title="Bluetooth")
             adapter = bt_adapter()
             devices = bt_devices()
             selected = min(selected, 1 + len(devices))
             continue
         if key in (ord("p"), ord("P")):
-            notice = bt_set_power(screen, not adapter["powered"])
+            result = bt_set_power(screen, not adapter["powered"])
+            if result:
+                notify(screen, result, title="Bluetooth")
             adapter = bt_adapter()
             devices = bt_devices()
             selected = min(selected, 1 + len(devices))
             continue
         if key in (ord("d"), ord("D")) and selected > 1:
             device = devices[selected - 2]
-            notice = bt_disconnect(device) if device["connected"] else "not connected"
+            if device["connected"]:
+                notify(screen, bt_disconnect(device), title="Bluetooth")
+            else:
+                notify(screen, "Not connected", title="Bluetooth", error=False)
             adapter = bt_adapter()
             devices = bt_devices()
             selected = min(selected, 1 + len(devices))
             continue
         if key in (*NAV_LEFT, *NAV_RIGHT, ord(" "), 10, 13):
+            result = ""
             if selected == 0:
-                notice = bt_set_power(screen, not adapter["powered"])
+                result = bt_set_power(screen, not adapter["powered"])
             elif selected == 1:
                 draw_bluetooth(screen, adapter, devices, selected, "Scanning...")
-                notice = bt_scan()
+                result = bt_scan()
             else:
                 device = devices[selected - 2]
                 if device["connected"]:
-                    notice = bt_disconnect(device)
+                    result = bt_disconnect(device)
                 elif device["paired"]:
-                    notice = bt_connect(device)
+                    result = bt_connect(device)
                 else:
-                    notice = bt_pair_connect(device)
+                    result = bt_pair_connect(device)
+            if result:
+                notify(screen, result, title="Bluetooth")
             adapter = bt_adapter()
             devices = bt_devices()
             selected = min(selected, 1 + len(devices))
@@ -1938,7 +2160,7 @@ def keyboard_layout_change(data: dict, step: int, screen) -> None:
     reload_keyboard_layout(screen)
 
 
-def draw_layouts(screen, data: dict, selected: int, notice: str) -> None:
+def draw_layouts(screen, data: dict, selected: int) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
     put(screen, 0, 0, " Layouts", curses.A_BOLD)
@@ -1947,7 +2169,7 @@ def draw_layouts(screen, data: dict, selected: int, notice: str) -> None:
     enabled = set(layout_codes(data))
     active = active_layout(data)
     top = 2
-    visible = max(1, height - 5)
+    visible = max(1, height - 3)
     first = 0
     if selected >= visible:
         first = selected - visible + 1
@@ -1966,10 +2188,7 @@ def draw_layouts(screen, data: dict, selected: int, notice: str) -> None:
     if first + visible < len(LAYOUTS):
         put(screen, 1, width - 2, "v" if first == 0 else "*")
 
-    put(screen, height - 3, 0, " Up/Down move  PgUp/PgDn  Space toggle")
-    put(screen, height - 2, 0, " Alt+Space switches  q back")
-    if notice:
-        put(screen, height - 1, 0, f" {notice}")
+    put(screen, height - 1, 0, "F/X move Space toggle Alt+Space switch q back")
     screen.refresh()
 
 
@@ -1979,13 +2198,11 @@ def layouts_screen(screen, data: dict) -> None:
         (index for index, (code, _label) in enumerate(LAYOUTS) if code == active),
         0,
     )
-    notice = ""
     changed = False
 
     while True:
-        draw_layouts(screen, data, selected, notice)
+        draw_layouts(screen, data, selected)
         key = screen.getch()
-        notice = ""
 
         if key in (ord("q"), ord("Q"), 27):
             if changed:
@@ -1997,7 +2214,7 @@ def layouts_screen(screen, data: dict) -> None:
         if key in NAV_DOWN:
             selected = (selected + 1) % len(LAYOUTS)
             continue
-        page = max(1, screen.getmaxyx()[0] - 5)
+        page = max(1, screen.getmaxyx()[0] - 3)
         if key in (curses.KEY_PPAGE,):
             selected = max(0, selected - page)
             continue
@@ -2013,11 +2230,16 @@ def layouts_screen(screen, data: dict) -> None:
         if key not in (ord(" "), 10, 13):
             continue
 
-        code, label = LAYOUTS[selected]
+        code, _label = LAYOUTS[selected]
         enabled = layout_codes(data)
         if code in enabled:
             if len(enabled) == 1:
-                notice = "keep at least one layout"
+                notify(
+                    screen,
+                    "Keep at least one layout enabled",
+                    title="Layouts",
+                    error=False,
+                )
                 continue
             enabled.remove(code)
         else:
@@ -2026,7 +2248,6 @@ def layouts_screen(screen, data: dict) -> None:
         data["keyboard_layout_active"] = active_layout(data)
         save_settings(data)
         changed = True
-        notice = f"{label}: {'On' if code in enabled else 'Off'}"
 
 
 def layouts_action(screen, data) -> None:
@@ -2856,9 +3077,10 @@ def trove_install_tool(
         return f"{name} is already installed"
     package = apt["package"]
     question = f"Install {name}?"
+    detail = ""
     if package != name:
-        question = f"Install {name} ({package})?"
-    if not confirm(screen, question):
+        detail = f"apt package: {package}"
+    if not confirm(screen, question, title="Install App", detail=detail):
         return "Cancelled"
     if apt.get("needs_update") == "1":
         draw_loading(screen, "Updating apt lists...")
@@ -2922,9 +3144,11 @@ def trove_uninstall_tool(screen, record: dict[str, Any]) -> str:
     extra = [item for item in planned if item != package]
     label = name if name == package else f"{name} ({package})"
     question = f"Remove {label}?"
+    detail = ""
     if extra:
         question = f"Remove {label} and {len(extra)} more package(s)?"
-    if not confirm(screen, question):
+        detail = "Also removes: " + ", ".join(extra)
+    if not confirm(screen, question, title="Remove App", detail=detail, danger=True):
         return "Cancelled"
     rc = run_privileged(
         screen,
@@ -2979,7 +3203,6 @@ def draw_trove_list(
     search_active: bool,
     managed: dict[str, dict[str, Any]],
     index_count: int,
-    notice: str,
     apt_only: bool = False,
 ) -> None:
     screen.erase()
@@ -3012,9 +3235,8 @@ def draw_trove_list(
     else:
         put(screen, 2, 0, "-" * max(0, width - 1))
 
-    hint_lines = 2 if height >= 12 else 1
     top = 3
-    list_bottom = max(top + 1, height - hint_lines - 1)
+    list_bottom = max(top + 1, height - 2)
     visible = max(1, list_bottom - top)
     first = 0
     if selected >= visible:
@@ -3057,25 +3279,16 @@ def draw_trove_list(
 
     chosen = tools[selected] if tools and selected < len(tools) else None
     summary_y = list_bottom
-    if chosen and summary_y < height - hint_lines:
+    if chosen and summary_y < height - 1:
         put(screen, summary_y, 1, str(chosen.get("summary", "")))
 
-    if mode == "browse":
-        first_hint = " Up/Down  / search  t cat  g lang  a apt"
-        second_hint = " Enter details   i install   u update   q back"
-    else:
-        first_hint = " Up/Down move   / search   Enter details   d remove"
-        second_hint = " r reload   Tab browse   q back"
     if search_active:
-        first_hint = " Type to filter   Enter keep   Esc clear search"
-    if notice:
-        put(screen, height - 2, 0, " " + notice)
-        put(screen, height - 1, 0, second_hint)
-    elif hint_lines == 2:
-        put(screen, height - 2, 0, first_hint)
-        put(screen, height - 1, 0, second_hint)
+        hint = "Type to filter Enter keep Esc clear"
+    elif mode == "browse":
+        hint = "F/X move / search Enter info i install q back"
     else:
-        put(screen, height - 1, 0, second_hint)
+        hint = "F/X move / search Enter info d remove q back"
+    put(screen, height - 1, 0, hint)
     screen.refresh()
 
 
@@ -3084,9 +3297,8 @@ def trove_details_screen(
     tool: dict[str, Any],
     record: dict[str, Any] | None,
     apt_names: set[str] | None = None,
-) -> str:
+) -> None:
     offset = 0
-    notice = ""
     if apt_names is None:
         apt_names = trove_apt_names()
     while True:
@@ -3106,18 +3318,17 @@ def trove_details_screen(
         for index in range(visible):
             line = lines[offset + index] if offset + index < len(lines) else ""
             put(screen, 2 + index, 0, line)
-        hint = " Up/Down scroll   i install   d remove   q back"
-        if notice:
-            put(screen, height - 2, 0, " " + notice)
-            put(screen, height - 1, 0, hint)
-        else:
-            put(screen, height - 1, 0, hint)
+        put(
+            screen,
+            height - 1,
+            0,
+            "F/X scroll i install d remove q back",
+        )
         screen.refresh()
 
         key = screen.getch()
-        notice = ""
         if key in (ord("q"), ord("Q"), 27):
-            return ""
+            return
         if key in NAV_UP:
             offset = max(0, offset - 1)
             continue
@@ -3132,17 +3343,39 @@ def trove_details_screen(
             continue
         if key in (ord("i"), ord("I")):
             if record:
-                notice = "Already installed through the manager"
+                notify(
+                    screen,
+                    "Already installed through the manager",
+                    title="Applications",
+                    error=False,
+                )
             elif apt["status"] == "missing":
-                notice = "Not in apt; use the install instructions above"
+                notify(
+                    screen,
+                    "Not in apt; use the install instructions above",
+                    title="Applications",
+                )
             else:
-                notice = trove_install_tool(screen, tool, apt_names)
+                notify(
+                    screen,
+                    trove_install_tool(screen, tool, apt_names),
+                    title="Applications",
+                )
             continue
         if key in (ord("d"), ord("D")):
             if record:
-                notice = trove_uninstall_tool(screen, record)
+                notify(
+                    screen,
+                    trove_uninstall_tool(screen, record),
+                    title="Applications",
+                )
             else:
-                notice = "Not installed through the manager"
+                notify(
+                    screen,
+                    "Not installed through the manager",
+                    title="Applications",
+                    error=False,
+                )
             continue
 
 
@@ -3226,11 +3459,21 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
     query = focus_slug or ""
     search_active = False
     row = {"browse": 0, "installed": 0}
-    notice = ""
     if not tools:
-        notice = "No catalog; press u to download it"
+        notify(
+            screen,
+            "No catalog; press u to download it",
+            title="Applications",
+            wait=True,
+        )
     elif not apt_available:
-        notice = "apt package list unavailable; showing all"
+        notify(
+            screen,
+            "apt package list unavailable; showing all",
+            title="Applications",
+            wait=True,
+            error=False,
+        )
 
     while True:
         if mode == "browse":
@@ -3262,11 +3505,9 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             search_active,
             managed,
             len(tools),
-            notice,
             apt_only=apt_only,
         )
         key = screen.getch()
-        notice = ""
 
         if key == 9:  # Tab
             mode = "installed" if mode == "browse" else "browse"
@@ -3300,12 +3541,23 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             continue
         if key in (ord("a"), ord("A")) and mode == "browse":
             if not apt_available:
-                notice = "apt package list unavailable"
+                notify(
+                    screen,
+                    "apt package list unavailable",
+                    title="Applications",
+                    wait=True,
+                    error=False,
+                )
                 continue
             apt_only = not apt_only
             row["browse"] = 0
-            notice = (
-                "Showing apt packages only" if apt_only else "Showing all catalog tools"
+            notify(
+                screen,
+                "Showing apt packages only"
+                if apt_only
+                else "Showing all catalog tools",
+                title="Applications",
+                error=False,
             )
             continue
         if key in (ord("q"), ord("Q"), 27):
@@ -3317,7 +3569,7 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
         if key in (ord("u"), ord("U")):
             draw_loading(screen, "Updating catalog...")
             ok, message = download_trove_index()
-            notice = message
+            notify(screen, message, title="Applications", error=not ok)
             if ok:
                 index = load_trove_index()
                 tools = index.get("tools", [])
@@ -3341,7 +3593,7 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             apt_available = bool(apt_names)
             if not apt_available:
                 apt_only = False
-            notice = "Reloaded"
+            notify(screen, "Reloaded", title="Applications", error=False)
             continue
         if key in (ord("t"), ord("T")) and mode == "browse":
             value = trove_filter_popup(screen, "Category", categories, category)
@@ -3396,11 +3648,15 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             record = tool.get("_record") if mode == "installed" else managed.get(
                 str(tool.get("slug", ""))
             )
-            notice = trove_details_screen(screen, tool, record, apt_names)
+            trove_details_screen(screen, tool, record, apt_names)
             managed = read_trove_apps()
             continue
         if key in (ord("i"), ord("I")) and mode == "browse" and shown:
-            notice = trove_install_tool(screen, shown[position], apt_names)
+            notify(
+                screen,
+                trove_install_tool(screen, shown[position], apt_names),
+                title="Applications",
+            )
             managed = read_trove_apps()
             continue
         if key in (ord("d"), ord("D")) and mode == "installed" and shown:
@@ -3408,7 +3664,11 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
                 str(shown[position].get("slug", ""))
             )
             if record:
-                notice = trove_uninstall_tool(screen, record)
+                notify(
+                    screen,
+                    trove_uninstall_tool(screen, record),
+                    title="Applications",
+                )
                 managed = read_trove_apps()
             continue
 
@@ -3448,9 +3708,10 @@ def timezone_action(zone: str):
     return action
 
 
-def power_action(action: str, question: str):
+def power_action(action: str, question: str, title: str):
     def run(screen, _data) -> None:
-        if not confirm(screen, question):
+        danger = action in ("poweroff", "reboot")
+        if not confirm(screen, question, title=title, danger=danger):
             return
         # logind allows the active local seat to reboot/power off/suspend
         # without a password. Fall back to sudo only if polkit denies it.
@@ -3465,7 +3726,13 @@ def password_action(screen, _data) -> None:
 
 
 def reset_settings_action(screen, data) -> str | None:
-    if not confirm(screen, "Reset all settings?"):
+    if not confirm(
+        screen,
+        "Reset all settings?",
+        title="Reset Settings",
+        detail="The factory defaults are restored.",
+        danger=True,
+    ):
         return None
     data.clear()
     data.update(DEFAULTS)
@@ -3827,17 +4094,17 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
             {
                 "label": "Reboot",
                 "kind": "action",
-                "action": power_action("reboot", "Reboot now?"),
+                "action": power_action("reboot", "Reboot now?", "Reboot"),
             },
             {
                 "label": "Shut Down",
                 "kind": "action",
-                "action": power_action("poweroff", "Shut down now?"),
+                "action": power_action("poweroff", "Shut down now?", "Shut Down"),
             },
             {
                 "label": "Suspend",
                 "kind": "action",
-                "action": power_action("suspend", "Suspend now?"),
+                "action": power_action("suspend", "Suspend now?", "Suspend"),
             },
         ]
     if name == "security":
@@ -3960,7 +4227,7 @@ def select_popup(screen, item: dict, data: dict):
         first = max(0, min(first, max(0, len(values) - visible)))
 
 
-def draw_page(screen, title: str, items: list, values: list, selected: int, data: dict, notice: str, issues: list[str], is_main: bool, hint: str = "") -> None:
+def draw_page(screen, title: str, items: list, values: list, selected: int, data: dict, issues: list[str], is_main: bool, hint: str = "") -> None:
     screen.erase()
     height, width = screen.getmaxyx()
     put(screen, 0, 0, f" {title}", curses.A_BOLD)
@@ -3977,7 +4244,7 @@ def draw_page(screen, title: str, items: list, values: list, selected: int, data
         put(screen, 1, 0, "-" * max(0, width - 1))
 
     top = 2
-    visible = max(1, (height - 3) - top)
+    visible = max(1, height - 1 - top)
     first = 0
     if selected >= visible:
         first = selected - visible + 1
@@ -3997,18 +4264,14 @@ def draw_page(screen, title: str, items: list, values: list, selected: int, data
     if first + visible < len(items):
         put(screen, 1, width - 2, "v" if first == 0 else "*")
 
-    put(screen, height - 3, 0, " Up/Down move  PgUp/PgDn  Left/Right change")
-    put(
-        screen,
-        height - 2,
-        0,
-        " Enter open/select  r refresh  q/Esc "
-        + ("close" if is_main else "back"),
-    )
-    if notice:
-        put(screen, height - 1, 0, f" {notice}")
-    elif hint:
-        put(screen, height - 1, 0, f" {hint}")
+    if hint:
+        footer = " " + hint
+    else:
+        footer = (
+            "F/X move Z/C change Enter open r refresh q "
+            + ("close" if is_main else "back")
+        )
+    put(screen, height - 1, 0, footer)
     screen.refresh()
 
 
@@ -4021,13 +4284,26 @@ def run(screen, start_page: str | None = None) -> None:
 
     data = load_settings()
     stack = initial_stack(start_page, data)
-    notice = ""
     items = []
     values = []
     issues = []
     dirty = True
 
     while True:
+        request = take_request()
+        if request:
+            request_kind, value = request
+            if request_kind == "page" and value in PAGE_TITLES:
+                start_page = value
+                data = load_settings()
+                stack = initial_stack(value, data)
+                dirty = True
+            elif request_kind == "tool":
+                # Applications is an action, not a page, so the catalog runs in
+                # place and the user returns to the page they came from.
+                trove_apps_screen(screen, value)
+                data = load_settings()
+                dirty = True
         page_name, selected = stack[-1]
         if dirty:
             items = page_items(page_name, data, screen)
@@ -4051,13 +4327,11 @@ def run(screen, start_page: str | None = None) -> None:
             values,
             selected,
             data,
-            notice,
             issues,
             page_name == "main" or (start_page is not None and len(stack) == 1),
             PAGE_HINTS.get(page_name, ""),
         )
         key = screen.getch()
-        notice = ""
 
         if key in (ord("q"), ord("Q"), 27):
             if len(stack) > 1:
@@ -4069,7 +4343,7 @@ def run(screen, start_page: str | None = None) -> None:
         if key in (ord("r"), ord("R")):
             data = load_settings()
             dirty = True
-            notice = "Settings refreshed"
+            notify(screen, "Settings refreshed", error=False)
             continue
         if key in NAV_UP:
             stack[-1] = (page_name, (selected - 1) % len(items))
@@ -4078,7 +4352,7 @@ def run(screen, start_page: str | None = None) -> None:
             stack[-1] = (page_name, (selected + 1) % len(items))
             continue
         if key in (curses.KEY_PPAGE, curses.KEY_NPAGE, curses.KEY_HOME, curses.KEY_END):
-            page = max(1, screen.getmaxyx()[0] - 5)
+            page = max(1, screen.getmaxyx()[0] - 3)
             if key == curses.KEY_PPAGE:
                 selected = max(0, selected - page)
             elif key == curses.KEY_NPAGE:
@@ -4104,7 +4378,7 @@ def run(screen, start_page: str | None = None) -> None:
             if key in (*NAV_RIGHT, ord(" "), 10, 13):
                 result = item["action"](screen, data)
                 if result:
-                    notice = result
+                    notify(screen, result)
                 dirty = True
             continue
         if kind == "info":

@@ -1,7 +1,7 @@
 # CPZ site
 
-Static site for the CPZ image: philosophy, install steps with release links,
-key reference and Settings. It is published with GitHub Pages by
+Static site for the CPZ image: why CPZ, install and first-boot steps, key
+reference, Settings and help. It is published with GitHub Pages by
 `.github/workflows/pages.yml`; there is no build step.
 
 ## Preview
@@ -44,4 +44,11 @@ cannot drift from `VERSION`.
 - Plain HTML, CSS and a small script. No frameworks, fonts or trackers.
 - English text lives in the HTML so the page is readable without JavaScript.
 - Key combinations stay literal; only their descriptions are translated.
-- Keep it short: philosophy, install, keys and Settings. Link out for details.
+- Keep it short: why CPZ, install, keys, Settings and help. Link out for details.
+- Write for someone who has never used Linux. Explain or drop jargon such as
+  `kmscon`, `tmux`, `TUI`, `apt` and `PipeWire`; keep it in the documentation.
+- In translations, translate the site chrome and descriptions but keep
+  on-device menu names in English (`Settings`, `Network`, `Power`, ...), so they
+  match what the device shows.
+- Keep the first-boot facts in sync with `config.cpz.example`: default login
+  `cpz` / `cpz` and Wi-Fi off until it is enabled in Settings.

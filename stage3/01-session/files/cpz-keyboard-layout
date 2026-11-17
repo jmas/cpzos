@@ -205,8 +205,15 @@ fi
 # A single unplug removes several devices (event node, input device, HID
 # interface) as separate udev events. Wait until the queue is empty so the
 # first run already sees the final keyboard set instead of a half-removed
-# keyboard that still looks external.
-if command -v udevadm >/dev/null 2>&1; then
+# keyboard that still looks external. The boot service sets
+# CPZ_LAYOUT_SETTLE=0: sysinit normally has the device set ready, and kmscon
+# should not wait for a redundant settle before its first frame. If no input
+# node exists yet, fall back to the full settle.
+if [ "${CPZ_LAYOUT_SETTLE:-1}" = 0 ] &&
+	! ls /dev/input/event* >/dev/null 2>&1; then
+	CPZ_LAYOUT_SETTLE=1
+fi
+if [ "${CPZ_LAYOUT_SETTLE:-1}" = 1 ] && command -v udevadm >/dev/null 2>&1; then
 	udevadm settle --timeout=2 >/dev/null 2>&1 || true
 fi
 

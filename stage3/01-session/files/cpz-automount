@@ -14,6 +14,7 @@ set -u
 STATE_DIR=${CPZ_AUTOMOUNT_STATE:-/run/cpz-automount}
 MOUNT_ROOT=${CPZ_AUTOMOUNT_ROOT:-/media}
 MOUNT_USER=${CPZ_AUTOMOUNT_USER:-cpz}
+TAB_HELPER=${CPZ_AUTOMOUNT_TABS:-/usr/local/bin/cpz-tab-mount}
 LOCK_WAIT=20
 
 MOUNT_ERROR=
@@ -24,9 +25,9 @@ Usage: cpz-automount mount DEVICE
        cpz-automount umount DEVICE
        cpz-automount list
 
-USB filesystems are mounted automatically under /media/<label>. Use "list" to
-see the drives mounted by this helper and "umount" before unplugging to flush
-pending writes safely.
+USB filesystems are mounted automatically under /media/<label> and opened as a
+tab in the console session. Use "list" to see the drives mounted by this helper
+and "umount" before unplugging to flush pending writes safely.
 EOF
 }
 
@@ -38,6 +39,28 @@ log() {
 die() {
 	log "$*"
 	exit 1
+}
+
+# Show the mounted directory as a tab in the console session, so the disk can be
+# used immediately. cpz-tab-mount drops root for tmux and is a no-op when
+# nobody is logged in on the console (udev coldplug at boot).
+open_mount_tab() {
+	local mnt=$1 name=$2
+	[ "${CPZ_AUTOMOUNT_TAB:-1}" = 1 ] || return 0
+	[ -x "$TAB_HELPER" ] || return 0
+	"$TAB_HELPER" open "$mnt" "$name" ||
+		log "could not open a tab for $mnt"
+}
+
+# Close that tab again before unmounting: its shell has the mount point as its
+# working directory, and a busy mount falls back to a lazy detach that can lose
+# pending writes. Tabs that the user moved out of the disk are left alone.
+close_mount_tabs() {
+	local mnt=$1
+	[ "${CPZ_AUTOMOUNT_TAB:-1}" = 1 ] || return 0
+	[ -x "$TAB_HELPER" ] || return 0
+	"$TAB_HELPER" close "$mnt" ||
+		log "could not close the tab for $mnt"
 }
 
 # Print "uid gid" for the console user. A user that does not exist (for
@@ -369,6 +392,7 @@ do_mount() {
 	else
 		log "mounted $dev ($fstype) on $mnt"
 	fi
+	open_mount_tab "$mnt" "$base"
 }
 
 do_umount() {
@@ -382,6 +406,7 @@ do_umount() {
 	mnt=$(head -n 1 "$state")
 	if [ -n "$mnt" ] &&
 		findmnt -n -o TARGET -S "$dev" 2>/dev/null | grep -qxF -- "$mnt"; then
+		close_mount_tabs "$mnt"
 		if ! output=$(umount -- "$mnt" 2>&1); then
 			log "umount $mnt failed ($output); detaching lazily"
 			if ! umount -l -- "$mnt" 2>/dev/null; then
@@ -422,6 +447,38 @@ take_lock() {
 	flock -w "$LOCK_WAIT" 9 || die "timed out waiting for another mount operation"
 }
 
+# A command typed in a terminal has no INVOCATION_ID. Run it through
+# cpz-automount@<dev>.service instead: the unmount closes the disk tab, which
+# may be the tab the command was typed in, so a direct umount would be killed
+# together with that tab. The service's ExecStop is outside the pane and
+# completes the unmount. Overrides keep the direct path for tests and manual
+# debugging.
+delegate_to_systemd() {
+	local action=$1 dev=$2 unit
+	[ -z "${INVOCATION_ID:-}" ] || return 1
+	[ -z "${CPZ_AUTOMOUNT_STATE:-}" ] || return 1
+	[ -z "${CPZ_AUTOMOUNT_ROOT:-}" ] || return 1
+	[ -z "${CPZ_AUTOMOUNT_USER:-}" ] || return 1
+	[ -z "${CPZ_AUTOMOUNT_TAB:-}" ] || return 1
+	[ -z "${CPZ_AUTOMOUNT_TABS:-}" ] || return 1
+	[ -d /run/systemd/system ] || return 1
+	command -v systemctl >/dev/null 2>&1 || return 1
+	unit=cpz-automount@${dev##*/}.service
+	case $action in
+		mount)
+			systemctl start "$unit"
+			;;
+		umount)
+			systemctl is-active --quiet "$unit" 2>/dev/null || return 1
+			systemctl stop "$unit"
+			;;
+		*)
+			return 1
+			;;
+	esac
+	exit $?
+}
+
 main() {
 	local action dev
 
@@ -450,10 +507,11 @@ main() {
 				usage >&2
 				exit 2
 			}
-			take_lock
 			dev=$(normalize_device "$1") || die "invalid device: $1"
 			is_usb_block "$dev" || die "$dev is not a USB block device"
 			on_system_disk "$dev" && die "$dev belongs to the running system disk"
+			delegate_to_systemd mount "$dev" || true
+			take_lock
 			do_mount "$dev"
 			;;
 		umount)
@@ -461,10 +519,11 @@ main() {
 				usage >&2
 				exit 2
 			}
-			take_lock
 			# The device node may already be gone when the disk is yanked;
 			# the mount table still has the path used to mount it.
 			dev=$(normalize_device "$1") || die "invalid device: $1"
+			delegate_to_systemd umount "$dev" || true
+			take_lock
 			do_umount "$dev"
 			;;
 		list)

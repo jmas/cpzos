@@ -7,6 +7,9 @@ ConditionPathExists=/usr/local/bin/cpz-keyboard-layout
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# At boot udev has already settled; only the hotplug path needs the extra
+# settle that avoids reading a half-removed keyboard set.
+Environment=CPZ_LAYOUT_SETTLE=0
 # Prefer the standard layout when a USB keyboard is attached; otherwise load
 # the vendor TCA8418 map for the internal keyboard.
 ExecStart=/usr/local/bin/cpz-keyboard-layout

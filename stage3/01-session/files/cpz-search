@@ -2,10 +2,10 @@
 """CPZ omnisearch: one fzf popup for commands, CPZ actions, Settings, files,
 Terminal Trove tools and tmux buffers.
 
-Started by Alt+O from /etc/tmux.conf. The default list is intentionally small:
-the commands in PATH, the daily CPZ tmux actions and one entry per Settings
-page. A leading prefix switches the provider, in the same spirit as Walker in
-Omarchy:
+Started by Alt+O from /etc/tmux.conf. The popup opens like Spotlight with only
+the daily CPZ tmux actions; typing anything loads the rest (PATH commands and
+one entry per Settings page). A leading prefix switches the provider, in the
+same spirit as Walker in Omarchy:
     /   files under $HOME and the small system configuration roots
     =   calculator
     @   Terminal Trove tools
@@ -193,6 +193,18 @@ def default_items() -> list[str]:
     for name in scan_apps():
         items.append(make_item("app", name, f"{name}  [app]"))
     return items
+
+
+def home_items() -> list[str]:
+    """The first screen: a short Spotlight-style list of CPZ actions.
+
+    Commands and Settings pages are only loaded once something is typed, so the
+    popup does not greet the user with thousands of rows.
+    """
+    return [
+        make_item("action", action_id, f"{label}  [act]")
+        for action_id, label in ACTIONS
+    ]
 
 
 def search_roots() -> list[str]:
@@ -556,6 +568,26 @@ def exec_settings(*arguments: str) -> None:
         notify(f"cpz-search: {error}")
 
 
+def open_settings(*arguments: str) -> None:
+    """Show Settings in its own tab, never inside the omnisearch popup.
+
+    cpz-settings-open focuses the existing Settings tab and passes the page or
+    tool target through a small request file, so the popup can close right away
+    and the tab keeps living after q. Outside tmux (host runs, tests) the
+    Settings TUI still runs in place.
+    """
+    helper_path = helper("cpz-settings-open")
+    if (
+        os.environ.get("TMUX")
+        and shutil.which("tmux")
+        and os.access(helper_path, os.X_OK)
+    ):
+        if not run_hidden([helper_path, *arguments, "main"]):
+            notify("cpz-search: cannot open Settings in its tab")
+        return
+    exec_settings(*arguments)
+
+
 def paste_buffer(name: str) -> None:
     if not (os.environ.get("TMUX") and shutil.which("tmux")):
         notify("cpz-search: not inside tmux")
@@ -577,19 +609,19 @@ def dispatch(kind: str, payload: str, key: str, cwd: str, extra: str = "") -> No
         elif kind == "app":
             open_directory(cwd)
         elif kind == "tool":
-            exec_settings("--tool", payload)
+            open_settings("--tool", payload)
         return
     if kind == "app":
         launch([payload], cwd)
     elif kind == "file":
         open_file(payload)
     elif kind == "settings":
-        exec_settings("--page", payload)
+        open_settings("--page", payload)
     elif kind == "tool":
         if extra:
             launch([extra], cwd)
         else:
-            exec_settings("--tool", payload)
+            open_settings("--tool", payload)
     elif kind == "buffer":
         paste_buffer(payload)
     elif kind == "action":
@@ -617,6 +649,7 @@ def mode_bind(temp_directory: str) -> str:
         'elif [ "$first" = "=" ]; then m=calc; '
         'elif [ "$first" = "@" ]; then m=trove; '
         "elif [ \"$first\" = '$' ]; then m=buffers; "
+        'elif [ -z "$q" ]; then m=home; '
         "else m=default; fi; "
         'if [ "$m" = calc ]; then '
         f'printf %s "$m" > {state}; '
@@ -631,6 +664,8 @@ def mode_bind(temp_directory: str) -> str:
         f"printf 'reload-sync(%s --trove)\\n' {executable}; "
         'elif [ "$m" = buffers ]; then '
         f"printf 'reload-sync(%s --buffers)\\n' {executable}; "
+        'elif [ "$m" = home ]; then '
+        f"printf 'reload(%s --home)\\n' {executable}; "
         "else "
         f"printf 'reload-sync(%s --default)\\n' {executable}; "
         "fi"
@@ -657,9 +692,7 @@ def fzf_args(temp_directory: str) -> list[str]:
         f"--delimiter={UNIT}",
         "--with-nth=3",
         "--expect=ctrl-y,ctrl-o",
-        "--header= / files  = calc  @ tools  $ bufs  ^Y copy",
-        "--bind",
-        'enter:transform:[ -z "$FZF_QUERY" ] && echo ignore || echo accept',
+        "--header= type to search   / files  = calc  @ tools  $ bufs",
         "--bind",
         mode_bind(temp_directory),
     ]
@@ -682,7 +715,7 @@ def run_tui() -> int:
         with open(
             os.path.join(temp_directory, "mode"), "w", encoding="utf-8"
         ) as handle:
-            handle.write("default")
+            handle.write("home")
 
         environment = os.environ.copy()
         environment.pop("FZF_DEFAULT_OPTS", None)
@@ -691,7 +724,7 @@ def run_tui() -> int:
 
         result = subprocess.run(
             [fzf, *fzf_args(temp_directory)],
-            input="\n".join(default_items()) + "\n",
+            input="\n".join(home_items()) + "\n",
             text=True,
             stdout=subprocess.PIPE,
             env=environment,
@@ -730,6 +763,15 @@ def check() -> int:
         if kind not in kinds:
             errors.append(f"missing {kind} items")
 
+    home = home_items()
+    if len(home) != len(ACTIONS):
+        errors.append("home list must hold one row per action")
+    for line in home:
+        parsed = parse_item(line)
+        if parsed is None or parsed[0] != "action":
+            errors.append("home list must contain only actions")
+            break
+
     cases = (("=2+2", "4"), ("=10/4", "2.5"), ("=2**10", "1024"))
     for expression, expected in cases:
         parsed = parse_item(calc_item(expression))
@@ -763,7 +805,10 @@ def check() -> int:
         for message in errors:
             print(f"cpz-search: {message}", file=sys.stderr)
         return 1
-    print(f"cpz-search: {len(items)} items, calculator and Trove OK")
+    print(
+        f"cpz-search: {len(home)} home actions, {len(items)} search items, "
+        "calculator and Trove OK"
+    )
     return 0
 
 
@@ -771,6 +816,9 @@ def main() -> int:
     arguments = sys.argv[1:]
     if "--check" in arguments:
         return check()
+    if "--home" in arguments:
+        emit(home_items())
+        return 0
     if "--default" in arguments:
         emit(default_items())
         return 0

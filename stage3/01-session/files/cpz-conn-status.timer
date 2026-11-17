@@ -2,7 +2,9 @@
 Description=Periodically update CPZ connection indicators
 
 [Timer]
-OnBootSec=3s
+# Do not compete with the kmscon/tmux first frame: nmcli and bluetoothctl in
+# the service can block for up to 15 s while NetworkManager/BlueZ start.
+OnBootSec=10s
 OnUnitActiveSec=30s
 Unit=cpz-conn-status.service
 

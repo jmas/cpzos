@@ -1,0 +1,25 @@
+#!/bin/sh
+# Drop systemd's hardware database from the shipped initramfs.
+#
+# The initramfs only needs udev to discover and mount the root device. Device
+# properties from hwdb.bin are used by the real root filesystem after
+# switch_root, where the full file remains installed. Keeping a copy in the
+# initramfs adds several MiB to the compressed image without helping boot.
+
+PREREQ="udev"
+
+prereqs() {
+	echo "$PREREQ"
+}
+
+case "$1" in
+	prereqs)
+		prereqs
+		exit 0
+		;;
+esac
+
+# shellcheck source=/dev/null
+. /usr/share/initramfs-tools/hook-functions
+
+rm -f "$DESTDIR/usr/lib/udev/hwdb.bin"

@@ -110,6 +110,16 @@ hdmi_probe() {
 	done
 }
 
+confirm_hdmi() {
+	# A readable EDID (or a pinned mode) means the monitor is ready, but HPD
+	# can still pulse while it powers up. Confirm the connector after a short
+	# delay rather than waiting for the next two-second timer sample.
+	sleep 0.2
+	hdmi_probe
+	[ "$hdmi_connected" = 1 ] &&
+		{ [ "$hdmi_edid" -ge 128 ] || [ "$hdmi_pinned" = 1 ]; }
+}
+
 nudge_drm() {
 	# vc4 sends connector hotplug uevents on card0-HDMI-A-1. kmscon only
 	# reacts to HOTPLUG=1 on the card device itself, so re-emit a card-level
@@ -283,18 +293,29 @@ if [ "${last_conn:-}" != "$conn_fingerprint" ]; then
 fi
 
 # Debounce the HDMI direction in auto mode. A forced panel/HDMI choice and a
-# --force/--recover run are explicit and apply immediately.
+# --force/--recover run are explicit and apply immediately. A readable EDID
+# or a pinned mode is a strong readiness signal, so one short confirmation
+# replaces the two timer samples; the sample counter remains the fallback for
+# a monitor whose capabilities we cannot read.
 if [ "$target" = hdmi ] && [ "$configured_target" != hdmi ] &&
 	[ "$force" = 0 ] && [ "$mode" = auto ]; then
-	count=$(cat "$pending_file" 2>/dev/null || printf 0)
-	case "$count" in
-		'' | *[!0-9]*) count=0 ;;
-	esac
-	count=$((count + 1))
-	printf '%s\n' "$count" >"$pending_file" 2>/dev/null || true
-	if [ "$count" -lt "$hdmi_debounce" ]; then
-		log "pending HDMI switch ($count/$hdmi_debounce)"
-		exit 0
+	if [ "$hdmi_edid" -ge 128 ] || [ "$hdmi_pinned" = 1 ]; then
+		if ! confirm_hdmi; then
+			rm -f "$pending_file"
+			log "HDMI disappeared during confirmation"
+			exit 0
+		fi
+	else
+		count=$(cat "$pending_file" 2>/dev/null || printf 0)
+		case "$count" in
+			'' | *[!0-9]*) count=0 ;;
+		esac
+		count=$((count + 1))
+		printf '%s\n' "$count" >"$pending_file" 2>/dev/null || true
+		if [ "$count" -lt "$hdmi_debounce" ]; then
+			log "pending HDMI switch ($count/$hdmi_debounce)"
+			exit 0
+		fi
 	fi
 fi
 rm -f "$pending_file"

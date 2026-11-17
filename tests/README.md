@@ -31,19 +31,26 @@ pull request (`.github/workflows/ci.yml`).
 - `test_cpz_output.py` runs a copy of `cpz-kmscon-output` against a fake
   sysfs/settings tree and checks that `display=panel` is honoured both by the
   systemd unit and by `--auto`, and that kmscon disables `use-original-mode`.
-- `test_cpz_search.py` checks the `cpz-search` providers (commands, actions,
-  Settings, files, calculator, Terminal Trove and tmux buffers), item format,
-  file roots/pruning, safe calculator and the `cpz-settings` entry points used
-  by the omnisearch popup (`--page`, `--tool`, `--list-pages`, `--list-tools`).
+- `test_cpz_search.py` checks the `cpz-search` providers (the short action
+  home list, commands, actions, Settings, files, calculator, Terminal Trove and
+  tmux buffers), item format, file roots/pruning, safe calculator, dispatch to
+  the Settings tab and the `cpz-settings` entry points used by the omnisearch
+  popup (`--page`, `--tool`, `--list-pages`, `--list-tools`, request queue).
 - `test_cpz_automount.py` sources `cpz-automount` and checks label sanitising
-  (no path traversal), per-filesystem mount options, mount-point selection and
-  device-path validation.
+  (no path traversal), per-filesystem mount options, mount-point selection,
+  device-path validation and the disk tab hooks around mount/unmount.
+- `test_cpz_tab_mount.py` runs `cpz-tab-mount` against a fake tmux and checks
+  that a disk tab opens in the mount point and only tabs still on the disk are
+  closed before unmounting.
 - `test_cpz_layout_map.py` checks the language-aware CPZ Sym overlay: letter
   detection (Unicode/ASCII/function keysyms), the unchanged Latin table, the
   removed letter keycodes and the relocated ASCII punctuation on Shift+Sym.
 - `test_update_os_list.py` checks the os-list naming rules used by the release
   workflow: SemVer tags (`v0.1.0`), prerelease suffixes and legacy timestamp
   tags.
+- `test_build_fast.py` runs `tools/build-fast.sh` against a fake Docker binary
+  and checks the generated `STAGE_LIST`, `PREV_ROOTFS_DIR` and compression
+  config for stage2/stage3.
 
 The tests are intentionally host-only. Hardware behaviour (DRM modesets,
 kmscon hotplug, backlight) still needs the debug image on a device; see

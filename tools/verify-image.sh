@@ -4,7 +4,11 @@
 # Exit 0 = all checks pass, Exit 1 = failure (breaks CI)
 # shellcheck disable=SC2016  # grep patterns intentionally contain a literal $
 
-set -euo pipefail
+# debugfs streams file contents into grep -q below. grep exits at the first
+# match, which sends SIGPIPE to debugfs; with pipefail that makes a successful
+# check look like a failure. The checks care about grep's exit status, so keep
+# errexit and nounset without pipefail here.
+set -eu
 
 IMG="${1:?Usage: $0 <image.img>}"
 ERRORS=0
@@ -64,6 +68,20 @@ for firmware_file in start.elf splash.bmp; do
     fi
 done
 
+# The initramfs is built with MODULES=list, not the default MODULES=most.
+# The uncompressed module payload alone was ~4.5 MiB on the old image.
+for initramfs in initramfs8 initramfs_2712; do
+    if [ ! -e "$TMPDIR/boot/$initramfs" ]; then
+        continue
+    fi
+    initramfs_size=$(stat -c%s "$TMPDIR/boot/$initramfs" 2>/dev/null || stat -f%z "$TMPDIR/boot/$initramfs")
+    if [ "$initramfs_size" -le $((8 * 1024 * 1024)) ]; then
+        pass "$initramfs is minimal ($initramfs_size bytes)"
+    else
+        fail "$initramfs is too large ($initramfs_size bytes, expected <= 8 MiB)"
+    fi
+done
+
 if grep -Eq '^[[:space:]]*kernel[[:space:]]*=[[:space:]]*u-boot\.bin([[:space:]]*(#.*)?)?$' \
     "$TMPDIR/boot/config.txt" 2>/dev/null; then
     fail "config.txt: U-Boot kernel override should be removed"
@@ -109,6 +127,14 @@ if grep -q "dtparam=i2c_arm=on" "$TMPDIR/boot/config.txt" 2>/dev/null; then
     pass "config.txt: dtparam=i2c_arm=on"
 else
     fail "config.txt: missing dtparam=i2c_arm=on"
+fi
+
+# Console-only image: gpu_mem=64 is the vc4-kms-v3d minimum. The vendor value
+# (128) wasted 64 MiB of the CM0's 512 MiB on a GPU heap nothing uses.
+if grep -qx "gpu_mem=64" "$TMPDIR/boot/config.txt" 2>/dev/null; then
+    pass "config.txt: gpu_mem=64"
+else
+    fail "config.txt: expected gpu_mem=64"
 fi
 
 
@@ -255,6 +281,7 @@ for file in usr/local/bin/cpz-first-login \
     usr/local/bin/cpz-search usr/bin/fzf \
     usr/local/bin/cpz-session-save usr/local/bin/cpz-session-restore \
     usr/local/bin/cpz-tab-info usr/local/bin/cpz-tab-close-key \
+    usr/local/bin/cpz-tab-mount \
     usr/local/bin/cpz-session-save-as-user usr/local/bin/cpz-conn-status \
     usr/local/bin/cpz-brightness usr/local/bin/cpz-font \
     usr/local/bin/cpz-keyboard-layout \
@@ -506,6 +533,35 @@ if debugfs -R "cat etc/systemd/system/cpz-keyboard-layout.path" "$TMPDIR/root.ex
     pass "keyboard removal watcher present"
 else
     fail "keyboard removal watcher MISSING"
+fi
+
+if debugfs -R "cat etc/systemd/system/cardputerzero-keymap.service" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "CPZ_LAYOUT_SETTLE=0"; then
+    pass "boot keymap load skips the redundant udev settle"
+else
+    fail "boot keymap load still settles udev"
+fi
+
+if [ "$DEBUG_IMAGE" = 1 ]; then
+    if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null |
+        grep -q "console-setup"; then
+        pass "debug image keeps console-setup"
+    else
+        fail "debug image lost console-setup"
+    fi
+else
+    if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null |
+        grep -q "console-setup"; then
+        fail "normal image still starts console-setup"
+    else
+        pass "normal image skips console-setup"
+    fi
+    if debugfs -R "ls etc/systemd/system/sysinit.target.wants" "$TMPDIR/root.ext4" 2>/dev/null |
+        grep -q "keyboard-setup"; then
+        fail "normal image still starts keyboard-setup"
+    else
+        pass "normal image skips keyboard-setup"
+    fi
 fi
 
 if debugfs -R "ls etc/systemd/system/timers.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-kmscon-output.timer"; then
@@ -821,6 +877,13 @@ else
     fail "cpz-kmscon-output debounce MISSING"
 fi
 
+if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "confirm_hdmi"; then
+    pass "cpz-kmscon-output confirms readable-EDID hotplug quickly"
+else
+    fail "cpz-kmscon-output fast HDMI confirmation MISSING"
+fi
+
 if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "dpms-timeout=%s"; then
     pass "cpz-kmscon-config renders the screen timeout"
@@ -917,6 +980,20 @@ if debugfs -R "cat usr/local/bin/cpz-automount" "$TMPDIR/root.ext4" 2>/dev/null 
     pass "automount refuses the running system disk"
 else
     fail "automount system-disk guard MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-automount" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "cpz-tab-mount"; then
+    pass "automount opens a tab for the mounted disk"
+else
+    fail "automount disk tab hook MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-tab-mount" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "@cpz_mount"; then
+    pass "disk tab is tagged for closing before unmount"
+else
+    fail "cpz-tab-mount @cpz_mount tag MISSING"
 fi
 
 if debugfs -R "stat media" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then

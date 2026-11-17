@@ -169,6 +169,13 @@ class MountFlowTest(unittest.TestCase):
                 path.chmod(0o755)
 
             record = root / "mount.args"
+            tab_calls = root / "tab.calls"
+            tab_helper = root / "cpz-tab-mount"
+            tab_helper.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$*" >>"$FAKE_TAB_CALLS"\n',
+                encoding="utf-8",
+            )
+            tab_helper.chmod(0o755)
             fake("findmnt", "exit 1\n")
             fake("logger", "exit 0\n")
             fake(
@@ -191,6 +198,8 @@ class MountFlowTest(unittest.TestCase):
                     "CPZ_AUTOMOUNT_STATE": str(root / "state"),
                     "CPZ_AUTOMOUNT_USER": "cpz-user-that-does-not-exist",
                     "FAKE_MOUNT_ARGS": str(record),
+                    "CPZ_AUTOMOUNT_TABS": str(tab_helper),
+                    "FAKE_TAB_CALLS": str(tab_calls),
                 },
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -200,11 +209,140 @@ class MountFlowTest(unittest.TestCase):
             self.assertIn("uid=1000,gid=1000", record.read_text(encoding="utf-8"))
             self.assertIn(mountpoint, record.read_text(encoding="utf-8"))
             self.assertEqual(
+                tab_calls.read_text(encoding="utf-8").strip(),
+                f"open {mountpoint} USB_STICK",
+            )
+            self.assertEqual(
                 (root / "state" / "fake.mountpoint")
                 .read_text(encoding="utf-8")
                 .strip(),
                 mountpoint,
             )
+
+
+class MountTabHookTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.calls = self.root / "tab.calls"
+        self.helper = self.root / "cpz-tab-mount"
+        self.helper.write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$*" >>"$FAKE_TAB_CALLS"\n',
+            encoding="utf-8",
+        )
+        self.helper.chmod(0o755)
+
+    def hook_env(self, **values):
+        environment = {
+            "CPZ_AUTOMOUNT_TABS": str(self.helper),
+            "FAKE_TAB_CALLS": str(self.calls),
+        }
+        environment.update(values)
+        return environment
+
+    def test_open_and_close_call_the_tab_helper(self):
+        call(
+            "open_mount_tab",
+            "/media/USB",
+            "USB",
+            env=self.hook_env(),
+        )
+        call("close_mount_tabs", "/media/USB", env=self.hook_env())
+        self.assertEqual(
+            self.calls.read_text(encoding="utf-8").splitlines(),
+            ["open /media/USB USB", "close /media/USB"],
+        )
+
+    def test_tabs_can_be_disabled(self):
+        call(
+            "open_mount_tab",
+            "/media/USB",
+            "USB",
+            env=self.hook_env(CPZ_AUTOMOUNT_TAB="0"),
+        )
+        call(
+            "close_mount_tabs",
+            "/media/USB",
+            env=self.hook_env(CPZ_AUTOMOUNT_TAB="0"),
+        )
+        self.assertFalse(self.calls.exists())
+
+    def test_missing_helper_is_ignored(self):
+        environment = self.hook_env(CPZ_AUTOMOUNT_TABS="/nonexistent/helper")
+        call("open_mount_tab", "/media/USB", "USB", env=environment)
+        call("close_mount_tabs", "/media/USB", env=environment)
+        self.assertFalse(self.calls.exists())
+
+    def test_unmount_closes_the_tab_before_unmounting(self):
+        fakebin = self.root / "bin"
+        fakebin.mkdir()
+        mountpoint = self.root / "media" / "USB"
+        mountpoint.mkdir(parents=True)
+        state = self.root / "state"
+        state.mkdir()
+        (state / "fake.mountpoint").write_text(
+            str(mountpoint) + "\n", encoding="utf-8"
+        )
+        events = self.root / "events"
+
+        def fake(name, body):
+            path = fakebin / name
+            path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+            path.chmod(0o755)
+
+        fake("logger", "exit 0\n")
+        fake("findmnt", f'echo "{mountpoint}"\n')
+        fake("umount", 'printf "umount %s\\n" "$*" >>"$FAKE_EVENTS"\n')
+        self.helper.write_text(
+            '#!/bin/sh\nprintf "tab %s\\n" "$*" >>"$FAKE_EVENTS"\n',
+            encoding="utf-8",
+        )
+        self.helper.chmod(0o755)
+
+        result = run(
+            "do_umount",
+            "/dev/fake",
+            env={
+                "PATH": f"{fakebin}:{os.environ['PATH']}",
+                "CPZ_AUTOMOUNT_STATE": str(state),
+                "CPZ_AUTOMOUNT_TABS": str(self.helper),
+                "FAKE_EVENTS": str(events),
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            events.read_text(encoding="utf-8").splitlines(),
+            [f"tab close {mountpoint}", f"umount -- {mountpoint}"],
+        )
+        self.assertFalse((state / "fake.mountpoint").exists())
+
+
+class DelegationTest(unittest.TestCase):
+    def test_overrides_disable_systemd_delegation(self):
+        for key in (
+            "CPZ_AUTOMOUNT_STATE",
+            "CPZ_AUTOMOUNT_ROOT",
+            "CPZ_AUTOMOUNT_USER",
+            "CPZ_AUTOMOUNT_TAB",
+            "CPZ_AUTOMOUNT_TABS",
+        ):
+            result = run(
+                "delegate_to_systemd",
+                "umount",
+                "/dev/sda1",
+                env={key: "test"},
+            )
+            self.assertEqual(result.returncode, 1, key)
+
+    def test_service_execs_do_not_delegate_again(self):
+        result = run(
+            "delegate_to_systemd",
+            "umount",
+            "/dev/sda1",
+            env={"INVOCATION_ID": "abc123"},
+        )
+        self.assertEqual(result.returncode, 1)
 
 
 class DeviceValidationTest(unittest.TestCase):
