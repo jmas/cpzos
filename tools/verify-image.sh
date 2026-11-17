@@ -161,16 +161,16 @@ else
     pass "cmdline.txt: console=serial0,115200 removed"
 fi
 
-if grep -q "fbcon=map:off" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
-    pass "cmdline.txt: fbcon is mapped off (kmscon owns DRM)"
+if grep -q "fbcon=map:10" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
+    pass "cmdline.txt: fbcon gives the panel a mode at boot"
 else
-    fail "cmdline.txt: fbcon=map:off missing"
+    fail "cmdline.txt: fbcon=map:10 missing"
 fi
 
-if grep -q "fbcon=map:10" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
-    fail "cmdline.txt: fbcon still claims the panel (map:10)"
+if grep -q "fbcon=map:off" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
+    fail "cmdline.txt: fbcon is mapped off (panel has no mode at boot)"
 else
-    pass "cmdline.txt: fbcon does not claim the panel"
+    pass "cmdline.txt: fbcon is not mapped off"
 fi
 
 if grep -q "vt.global_cursor_default=0" "$TMPDIR/boot/cmdline.txt" 2>/dev/null; then
@@ -372,21 +372,25 @@ else
     fail "kmsconvt@tty1 NOT enabled"
 fi
 
-for vt in tty1 tty2 tty3; do
-    if debugfs -R "stat etc/systemd/system/getty@$vt.service" "$TMPDIR/root.ext4" 2>/dev/null |
-        grep -q "/dev/null"; then
-        pass "getty@$vt masked (fbcon is off)"
-    else
-        fail "getty@$vt NOT masked"
-    fi
-done
+if debugfs -R "stat etc/systemd/system/getty@tty1.service" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "/dev/null"; then
+    pass "getty@tty1 masked (kmscon owns tty1)"
+else
+    fail "getty@tty1 NOT masked"
+fi
 
 for vt in tty2 tty3; do
     if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null |
-        grep -q "kmsconvt@$vt"; then
-        pass "kmsconvt@$vt recovery login enabled"
+        grep -q "getty@$vt"; then
+        pass "getty@$vt fbcon recovery login enabled"
     else
-        fail "kmsconvt@$vt NOT enabled"
+        fail "getty@$vt NOT enabled"
+    fi
+    if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null |
+        grep -q "kmsconvt@$vt"; then
+        fail "kmsconvt@$vt should not run a second kmscon"
+    else
+        pass "kmsconvt@$vt not enabled"
     fi
 done
 

@@ -363,8 +363,8 @@ not_contains stage3/01-session/files/cpz-apply-settings 'cpz-screen-timeout'
 absent stage3/01-session/files/cpz-screen-timeout
 not_contains stage3/01-session/files/cpz-settings '-powerdown'
 contains stage3/01-session/files/kmscon.conf 'dpms-timeout'
-contains stage3/01-session/files/cmdline.append 'fbcon=map:off'
-contains stage3/01-session/02-run.sh "mask getty@tty1.service getty@tty2.service getty@tty3.service"
+contains stage3/01-session/files/cmdline.append 'fbcon=map:10'
+contains stage3/01-session/02-run.sh "mask getty@tty1.service"
 contains stage3/01-session/02-run.sh 'mask tmp.mount'
 contains stage3/01-session/01-run.sh 'install -d -m 1777'
 contains stage3/01-session/files/settings.conf 'theme=cpz-campbell'
@@ -513,7 +513,7 @@ contains stage3/01-session/02-run.sh "enable getty@tty1.service"
 not_contains stage3/01-session/01-run.sh 'cpz-getty'
 absent stage3/01-session/files/cpz-getty
 absent stage3/01-session/files/getty@tty1.service.d
-contains stage3/01-session/02-run.sh 'enable kmsconvt@tty1.service kmsconvt@tty2.service'
+contains stage3/01-session/02-run.sh 'enable kmsconvt@tty1.service'
 contains stage2/05-cardputerzero/02-run.sh "fb_load.service"
 contains build.sh 'STAGE_LIST=${STAGE_LIST:-${BASE_DIR}/stage*}'
 not_contains config.cpz.example 'STAGE_LIST='

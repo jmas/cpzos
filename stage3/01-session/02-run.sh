@@ -165,25 +165,23 @@ if [ -f /etc/cpz-debug-boot ]; then
 	# Debug image: keep tty1/tty2 as visible getty consoles so the
 	# kernel/systemd log and a login prompt are available. kmscon must not
 	# take the VT, otherwise the logs would be hidden.
-	systemctl disable kmsconvt@tty1.service kmsconvt@tty2.service \
-		kmsconvt@tty3.service 2>/dev/null || true
-	systemctl mask kmsconvt@tty1.service kmsconvt@tty2.service \
-		kmsconvt@tty3.service || true
+	systemctl disable kmsconvt@tty1.service 2>/dev/null || true
+	systemctl mask kmsconvt@tty1.service || true
 	systemctl disable cpz-kmscon-output.timer 2>/dev/null || true
 	systemctl unmask getty@tty1.service getty@tty2.service getty@tty3.service || true
 	systemctl enable getty@tty1.service getty@tty2.service getty@tty3.service || true
 	systemctl enable console-setup.service 2>/dev/null || true
 else
-	# kmscon on tty1/tty2/tty3. The getty units are masked: with fbcon=map:off
-	# they could not draw anything, and a stray enable would take the VT back.
-	systemctl disable getty@tty1.service getty@tty2.service getty@tty3.service 2>/dev/null || true
-	systemctl mask getty@tty1.service getty@tty2.service getty@tty3.service || true
-	systemctl unmask kmsconvt@tty1.service kmsconvt@tty2.service \
-		kmsconvt@tty3.service || true
-	systemctl enable kmsconvt@tty1.service kmsconvt@tty2.service \
-		kmsconvt@tty3.service
-	# fbcon is off, so there is no console font or VT keymap to apply.
-	systemctl disable console-setup.service 2>/dev/null || true
+	# kmscon owns tty1. tty2/tty3 stay fbcon recovery logins: fbcon gives the
+	# panel card a valid mode at boot, and tty2/tty3 keep a text console when
+	# kmscon is unavailable.
+	systemctl disable getty@tty1.service 2>/dev/null || true
+	systemctl mask getty@tty1.service || true
+	systemctl enable kmsconvt@tty1.service
+	systemctl disable kmsconvt@tty2.service kmsconvt@tty3.service 2>/dev/null || true
+	systemctl unmask getty@tty2.service getty@tty3.service || true
+	systemctl enable getty@tty2.service getty@tty3.service
+	systemctl enable console-setup.service 2>/dev/null || true
 fi
 
 # /tmp is a tmpfs sized from RAM by systemd. On the small-RAM CM0 the default

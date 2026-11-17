@@ -2,7 +2,7 @@
 
 The regular CPZ image is a terminal system: kmscon owns the DRM/KMS console and
 runs tmux with the CPZ status bar and Settings TUI. There is no compositor,
-desktop or launcher, and fbcon is mapped off.
+desktop or launcher. fbcon stays mapped to the panel before kmscon takes over.
 
 ```text
 firmware splash
@@ -11,35 +11,34 @@ firmware splash
   → HDMI usable: kmscon draws on HDMI and disables the panel screen,
     cpz-kmscon-output switches the panel backlight off
   → HDMI removed: kmscon re-enables the panel, backlight on
-  → tty2/tty3: kmscon recovery logins (no tmux)
+  → tty2/tty3: fbcon recovery logins
 ```
 
 The fbcon backend lives on the `main` branch (`docs/CPZ-FBCON.md` there).
 
-## Why fbcon is off
+## Why fbcon stays mapped
 
-kmscon and fbcon cannot own the same framebuffer. The panel is a second DRM
-card (`panel-mipi-dbi`, fb1); with `fbcon=map:10` the kernel keeps fbcon bound
-to fb1, kmscon cannot drive the panel card, and the panel shows the kernel VT
-(blank, blinking cursor) while the session appears on HDMI only.
-`cmdline.append` therefore sets:
+kmscon needs the panel card to have an **active CRTC** when it starts. With
+`fbcon=map:off` nothing sets a panel mode at boot, kmscon's "original" mode is
+0x0, and its first atomic commit fails with
 
 ```text
-fbcon=map:off vt.global_cursor_default=0
+Error: drm_shared: test-only atomic commit failed, -13
 ```
 
-The tty1 instance also starts with `--switchvt`: activating the VT is what
-runs `vt_enter()`, sets `KD_GRAPHICS` and makes the console layer release the
-DRM device. The tty2/tty3 recovery instances keep `--no-switchvt` so they
-cannot fight over the foreground VT at boot.
+after which the panel display is dropped and never re-added.
 
-Consequences:
+`cmdline.append` therefore keeps fbcon mapped to the panel:
 
-- there is no framebuffer text console; tty2/tty3 run kmscon instances
-  (plain login, no tmux) for local recovery, and SSH/serial remain available;
-- the tty gettys are masked in the normal image;
-- the debug image removes `fbcon=map:off`, adds `fbcon=map:10` and enables
-  the gettys so kernel logs are visible.
+```text
+fbcon=map:10 consoleblank=0 vt.global_cursor_default=0
+```
+
+fbcon sets the 320x170 mode on the panel at boot, so kmscon finds a valid mode.
+kmscon starts with `--switchvt`: activating the VT runs `vt_enter()`, sets
+`KD_GRAPHICS` and releases the framebuffer to kmscon. tty2/tty3 stay fbcon
+recovery consoles (tty2 on HDMI, tty3 on the panel, following `map:10`), and
+`getty@tty1` is masked because kmscon owns tty1.
 
 ## Build
 
@@ -117,8 +116,9 @@ journalctl -u kmsconvt@tty1 -b | grep -E 'Display|master|drm'
 ```
 
 `Display [HDMI-A-1] ...` is the monitor. A working panel adds a second line
-with the panel connector (`SPI-1`). If only HDMI appears, kmscon did not bind
-the panel connector; check what the kernel reports:
+with the panel connector (`SPI-1`). If only HDMI appears, look for
+`test-only atomic commit failed` in the same log; check what the kernel
+reports:
 
 ```sh
 for d in /sys/class/drm/card*-*; do
@@ -225,14 +225,14 @@ the debug image stay plain shells.
 /etc/tmux.conf
 ```
 
-Enabled: `kmsconvt@tty1`, `kmsconvt@tty2`, `kmsconvt@tty3`,
+Enabled: `kmsconvt@tty1`, `getty@tty2`, `getty@tty3`, `console-setup`,
 `cpz-kmscon-output.timer`,
 `cpz-conn-status.timer`, `cpz-session-save.timer`,
 `cardputerzero-keymap.service`, `cpz-keyboard-layout.path`,
 `cpz-bt-agent.service`, `bluetooth.service`, `NetworkManager.service`,
 `rpi-preseed.service`.
 
-Masked/disabled: `getty@tty1`, `getty@tty2`, `getty@tty3` (fbcon is off),
+Masked/disabled: `getty@tty1` (kmscon owns tty1),
 `userconfig.service`, `NetworkManager-wait-online.service`,
 `apt-daily.timer`, `apt-daily-upgrade.timer`, `man-db.timer`,
 `unattended-upgrade.service`.
@@ -246,11 +246,11 @@ sudo ./build.sh
 ./build-docker.sh -c config.debug.example
 ```
 
-The debug image removes the splash, `quiet`, `loglevel=3`, `fbcon=map:off`
-and `vt.global_cursor_default=0`, adds `fbcon=map:10 consoleblank=0` plus
-`console=serial0,115200 console=tty1 loglevel=8`, masks `kmsconvt@tty1`/`tty2`
-and enables `getty@tty1`/`tty2`/`tty3`. If it shows nothing, the failure is
-before kmscon.
+The debug image removes the splash, `quiet`, `loglevel=3` and
+`vt.global_cursor_default=0`, keeps `fbcon=map:10 consoleblank=0`, adds
+`console=serial0,115200 console=tty1 loglevel=8`, masks `kmsconvt@tty1` and
+enables `getty@tty1`/`tty2`/`tty3`. If it shows nothing, the failure is before
+kmscon.
 
 ## Known limitations
 
@@ -265,8 +265,8 @@ before kmscon.
   a crash loop.
 - **Theme changes restart the session** to rebuild the palette (about 1–2 s,
   tmux reattaches).
-- **No framebuffer recovery console.** tty2/tty3 are separate kmscon
-  instances; if kmscon itself cannot start, use SSH or the serial console.
+- **tty1 is graphics-only.** tty2/tty3 keep framebuffer consoles; if kmscon
+  itself cannot start, use those, SSH or the serial console.
 - kmscon is pinned from `trixie-backports`; keep `KMSCON_VERSION` in
   `stage3/00-kmscon/00-run.sh` in step with the image.
 
@@ -278,7 +278,7 @@ sudo cpz-kmscon-output --status
 journalctl -t cpz-kmscon-output -b
 journalctl -u kmsconvt@tty1 -b     # look for "Cannot set drm master"
 # unplug: panel returns without an HDMI blink
-# Ctrl+Alt+F2 / Ctrl+Alt+F3: kmscon recovery logins
+# Ctrl+Alt+F2 / Ctrl+Alt+F3: fbcon recovery logins
 # Alt+D: panel comes back while HDMI stays attached
 # suspend/resume: output and backlight are re-applied
 sudo evtest                 # verify Fn key codes

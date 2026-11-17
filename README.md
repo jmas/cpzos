@@ -40,9 +40,10 @@ in standby). Settings changes that kmscon can only read at startup (font,
 theme, timeout, forced panel) restart the session; tmux runs as a detached
 server, so tabs, panes and running programs survive the restart.
 
-fbcon is mapped off because it cannot share the panel framebuffer with kmscon.
-The gettys are masked; tty2 and tty3 run kmscon instances with a plain
-login for local recovery, and SSH/serial remain available.
+fbcon stays mapped to the panel (`fbcon=map:10`) because kmscon needs an
+active panel mode at startup; `--switchvt` then puts the VT in `KD_GRAPHICS`
+and releases the framebuffer to kmscon. `getty@tty1` is masked; tty2 and tty3
+stay fbcon recovery logins, and SSH/serial remain available.
 
 The hardware stage still supports the CM0 panel, keyboard, audio, battery,
 backlight, WiFi/Bluetooth and boot splash. The terminal session replaces the
