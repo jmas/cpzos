@@ -242,11 +242,25 @@ localed change reaches kmscon at runtime, so plugging or unplugging a keyboard
 does not restart the session.
 
 The CPZ layout maps the TCA8418 Sym layer to punctuation (`Sym+B` is `.`).
-For the internal keyboard `cpz-keyboard-layout` generates a language-specific
-overlay (`cpz_us`, `cpz_ua`, ...) from `symbols/cpz` and the selected standard
-layout, so switching between US, Ukrainian, Russian and the other enabled
-layouts works on the internal keyboard as well. An external keyboard uses the
-plain standard layout. kmscon has one keymap, so the overlay is active only
+The driver's Sym layer reuses ordinary punctuation keycodes, and national
+layouts put their extra letters on exactly those keycodes. `cpz-layout-map`
+therefore generates a language-aware overlay (`cpz_us`, `cpz_ua`, ...): a
+keycode that carries a letter in the selected layout is left alone, so
+`Sym+key` types that letter and `Shift+Sym+key` its uppercase form. The ASCII
+punctuation that would have been on that keycode moves to `Shift+Sym` of a
+punctuation-only keycode. Layouts that only put punctuation there (US, GB,
+...) keep the full static table. `cpz-layout-map` builds both the XKB layout and
+the VT overlay from the same `ckbcomp` output, so kmscon and the recovery
+consoles agree.
+
+The vendor FSM blocks Shift while the sticky Sym layer is latched; the build
+patches `tca8418_fsm_can_activate()` in the pinned driver so Shift may activate
+during Sym. Tap Sym, then hold Shift and press the key (the FSM treats a short
+Shift tap as a one-shot modifier). Fn and Sym stay mutually exclusive.
+
+Switching between US, Ukrainian, Russian and the other enabled layouts now
+keeps the full alphabet on the internal keyboard. An external keyboard uses
+the plain standard layout; kmscon has one keymap, so the overlay is active only
 while the internal keyboard is selected.
 
 The font size is shared by both screens, so HDMI gets more columns at the same
@@ -292,11 +306,15 @@ image stay plain shells.
 /usr/local/bin/cpz-search                   # Alt+O omnisearch popup
 /usr/local/bin/cpz-tab-info                 # status bar tab counters
 /usr/local/bin/cpz-font                     # Alt+Plus/Alt+Minus, persists font_size
+/usr/local/bin/cpz-layout-map               # language-aware Sym overlay generator
+/usr/local/bin/cpz-automount                # USB filesystem hotplug mounts
 /etc/systemd/system/kmsconvt@.service.d/10-cpz.conf
 /etc/systemd/system/cpz-kmscon-output.service
 /etc/systemd/system/cpz-kmscon-output.timer
+/etc/systemd/system/cpz-automount@.service
 /etc/udev/rules.d/99-cpz-kmscon-output.rules
 /etc/udev/rules.d/99-cpz-kmscon-nudge.rules
+/etc/udev/rules.d/99-cpz-automount.rules
 /etc/udev/rules.d/99-cpz-display.rules       # panel DRM card stays on seat0
 /usr/share/X11/xkb/symbols/cpz              # CPZ Sym/Fn template for kmscon
 /usr/share/X11/xkb/symbols/cpz_<lang>       # generated per-language overlay
@@ -368,13 +386,15 @@ If it shows nothing, the failure is before kmscon.
 ## Known limitations
 
 - **The CPZ Sym/Fn overlay is an XKB layout for kmscon.** The TCA8418 driver
-  emits otherwise unused keycodes for the Sym layer; the console keymap
-  (`loadkeys`) maps them to punctuation for VTs, but kmscon uses libxkbcommon
-  and never reads the VT keymap. `cpz-keyboard-layout` generates
-  `symbols/cpz_<language>` from the static template so the overlay sits on top
-  of the selected language. An external USB/Bluetooth keyboard switches the
-  session to the plain standard XKB layout, so the internal overlay and an
-  external keyboard cannot use different layouts at the same time.
+  reuses ordinary punctuation keycodes for the Sym layer; the console keymap
+  (`loadkeys`) and kmscon's XKB layout are both generated from the same
+  language-aware table by `cpz-layout-map`. It leaves a keycode alone when the
+  selected layout carries a letter there, so national alphabets keep their
+  letters (`Sym+key`, `Shift+Sym+key` for uppercase) and only the displaced
+  ASCII punctuation moves to `Shift+Sym`. An external USB/Bluetooth keyboard
+  switches the session to the plain standard XKB layout, so the internal
+  overlay and an external keyboard cannot use different layouts at the same
+  time.
 - **Screen timeout is DPMS, not blank-only.** kmscon's `dpms-timeout` powers
   the output down. A monitor that renegotiates on wake may change the mode;
   pin `CPZ_HDMI_VIDEO` (`video=HDMI-A-1:1920x1080@60`) if that happens. Set

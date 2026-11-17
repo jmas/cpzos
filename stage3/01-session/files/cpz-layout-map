@@ -1,0 +1,212 @@
+#!/usr/bin/python3
+"""Generate the language-aware CPZ keyboard overlay.
+
+The TCA8418 driver has a separate keymap for the Sym layer, but it reuses
+ordinary Linux keycodes for it (KEY_LEFTBRACE, KEY_SEMICOLON, ...). National
+layouts use exactly those keycodes for their extra letters (for example
+Ukrainian puts "х" on KEY_LEFTBRACE). A fixed punctuation overlay therefore
+destroys those letters.
+
+This helper reads the CPZ punctuation table from the XKB template and the
+symbols the selected layout really has on those keycodes (from ckbcomp's
+console keymap). For every keycode that carries a letter in the selected
+layout:
+
+* the XKB/console overlay leaves the keycode alone, so Sym produces the
+  layout's letter (and Shift+Sym its uppercase form);
+* the ASCII punctuation that the overlay would have put there is moved to
+  level 2 (Shift+Sym) of a keycode that does not carry a letter.
+
+The result is a complete layout: every letter of the selected language, both
+cases, plus every ASCII punctuation mark. Layouts that only use those keycodes
+for punctuation (US, GB, ...) keep the static table unchanged.
+
+Usage:
+    cpz-layout-map <template> <include> <layout> <base.map|-> <xkb_out> <vt_out>
+
+`base.map` is the console keymap produced by `ckbcomp -layout <layout>`.
+Pass "-" when it is unavailable; the output then matches the template.
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from collections import namedtuple
+from pathlib import Path
+
+Entry = namedtuple("Entry", "name first second linux")
+
+ENTRY_RE = re.compile(
+    r"^\s*key\s+<([A-Za-z0-9_]+)>\s*\{\s*\[\s*([A-Za-z0-9_+]+)\s*,"
+    r"\s*([A-Za-z0-9_+]+)\s*\]\s*\}\s*;\s*//\s*(\d+)"
+)
+INCLUDE_RE = re.compile(r'^(\s*)include\s+"[^"]*"\s*$')
+NAME_RE = re.compile(r'^(\s*)name\[Group1\]\s*=\s*"[^"]*"\s*;\s*$')
+KEYCODE_RE = re.compile(r"^keycode\s+(\d+)\s*=\s*(.*)$")
+UNICODE_RE = re.compile(r"^U\+([0-9A-Fa-f]{4,6})$")
+
+
+def read_template(path: Path) -> tuple[list[str], list[Entry], list[str]]:
+    """Return the header lines, the punctuation table and the trailer lines."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    header: list[str] = []
+    entries: list[Entry] = []
+    trailer: list[str] = []
+    seen_key = False
+    for line in lines:
+        match = ENTRY_RE.match(line)
+        if match:
+            seen_key = True
+            entries.append(
+                Entry(match.group(1), match.group(2), match.group(3), int(match.group(4)))
+            )
+        elif seen_key:
+            trailer.append(line)
+        else:
+            header.append(line)
+    if not entries:
+        raise ValueError(f"{path}: no CPZ punctuation entries found")
+    return header, entries, trailer
+
+
+def read_base(path: Path) -> dict[int, str]:
+    """Return the first symbol ckbcomp assigned to each console keycode."""
+    symbols: dict[int, str] = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = KEYCODE_RE.match(line)
+        if not match:
+            continue
+        fields = match.group(2).split()
+        if fields:
+            symbols[int(match.group(1))] = fields[0]
+    return symbols
+
+
+def is_letter(symbol: str | None) -> bool:
+    """True when ckbcomp's symbol is a letter, not punctuation or a function."""
+    if not symbol:
+        return False
+    symbol = symbol.removeprefix("+")
+    match = UNICODE_RE.match(symbol)
+    if match:
+        return chr(int(match.group(1), 16)).isalpha()
+    # ckbcomp prints ASCII letters as bare symbols ("q"), everything else
+    # (exclam, KP_Home, Henkan_Mode, ...) as a named keysym.
+    return len(symbol) == 1 and symbol.isalpha()
+
+
+def build(entries: list[Entry], base: dict[int, str] | None) -> tuple[list[Entry], dict[str, str]]:
+    """Split the table and assign displaced punctuation to other keycodes.
+
+    Returns the entries that stay in the overlay and the level-2 symbols that
+    replace a duplicate punctuation mark.
+    """
+    if not base:
+        return list(entries), {}
+
+    letters = [entry for entry in entries if is_letter(base.get(entry.linux))]
+    if not letters:
+        return list(entries), {}
+
+    letter_names = {entry.name for entry in letters}
+    displaced = [entry.first for entry in letters]
+    kept = [entry for entry in entries if entry.name not in letter_names]
+
+    extra: dict[str, str] = {}
+    for index, symbol in enumerate(displaced):
+        if index >= len(kept):
+            print(
+                "cpz-layout-map: too few punctuation keycodes for the "
+                f"displaced symbols ({len(displaced)} > {len(kept)}); "
+                "extra symbols dropped",
+                file=sys.stderr,
+            )
+            break
+        extra[kept[index].name] = symbol
+
+    return kept, extra
+
+
+def render_xkb(
+    header: list[str], entries: list[Entry], extra: dict[str, str], include: str, layout: str
+) -> str:
+    out: list[str] = []
+    for line in header:
+        if INCLUDE_RE.match(line):
+            indent = INCLUDE_RE.match(line).group(1)  # type: ignore[union-attr]
+            out.append(f'{indent}include "{include}"')
+        elif NAME_RE.match(line):
+            indent = NAME_RE.match(line).group(1)  # type: ignore[union-attr]
+            out.append(
+                f'{indent}name[Group1] = "CardputerZero internal ({layout})";'
+            )
+        else:
+            out.append(line)
+
+    if not entries:
+        # A layout that only has symbols on the punctuation keycodes (no
+        # letters there) must keep the static table; build() never returns an
+        # empty list in that case, but keep the output valid.
+        out.append("};")
+        return "\n".join(out) + "\n"
+
+    for entry in entries:
+        second = extra.get(entry.name, entry.second)
+        out.append(
+            f"    key <{entry.name}> {{ [ {entry.first}, {second} ] }};"
+            f"  // {entry.linux}"
+        )
+    out.append("};")
+    return "\n".join(out) + "\n"
+
+
+def render_vt(entries: list[Entry], extra: dict[str, str]) -> str:
+    out = [
+        "# Generated by cpz-layout-map: Sym punctuation that does not clash",
+        "# with the letters of the selected layout.",
+    ]
+    for entry in entries:
+        second = extra.get(entry.name, entry.second)
+        out.append(f"keycode {entry.linux} = {entry.first} {second}")
+    return "\n".join(out) + "\n"
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 7:
+        print(
+            "usage: cpz-layout-map <template> <include> <layout> "
+            "<base.map|-> <xkb_out> <vt_out>",
+            file=sys.stderr,
+        )
+        return 2
+
+    template = Path(argv[1])
+    include = argv[2]
+    layout = argv[3]
+    base_path = argv[4]
+    xkb_out = Path(argv[5])
+    vt_out = Path(argv[6])
+
+    layout = layout.strip()
+    if not layout or not re.fullmatch(r"[A-Za-z0-9_-]+", layout):
+        print(f"cpz-layout-map: invalid layout {layout!r}", file=sys.stderr)
+        return 2
+
+    header, entries, _trailer = read_template(template)
+    base: dict[int, str] | None = None
+    if base_path != "-":
+        try:
+            base = read_base(Path(base_path))
+        except OSError as error:
+            print(f"cpz-layout-map: cannot read {base_path}: {error}", file=sys.stderr)
+            base = None
+
+    kept, extra = build(entries, base)
+    xkb_out.write_text(render_xkb(header, kept, extra, include, layout), encoding="utf-8")
+    vt_out.write_text(render_vt(kept, extra), encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

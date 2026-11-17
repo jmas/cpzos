@@ -1860,6 +1860,8 @@ def help_lines() -> list:
         "Alt+H             key help",
         "Alt+Plus/Minus    font size (persisted)",
         "Alt+I / Alt+Space switch input layout",
+        "Sym+key           punctuation or the layout's extra letters",
+        "Shift+Sym+key     uppercase, or a moved ASCII symbol",
         "Alt+D             CPZ panel / auto display",
         "In Settings       Z/X/C/F move (Fn off)",
     ]

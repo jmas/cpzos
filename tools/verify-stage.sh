@@ -212,6 +212,9 @@ for file in \
 	stage3/01-session/files/cpz-kmscon-sleep \
 	stage3/01-session/files/99-cpz-kmscon-output.rules \
 	stage3/01-session/files/99-cpz-kmscon-nudge.rules \
+	stage3/01-session/files/99-cpz-automount.rules \
+	stage3/01-session/files/cpz-automount \
+	stage3/01-session/files/cpz-automount@.service \
 	stage3/01-session/files/kmsconvt@.service.d/10-cpz.conf \
 	stage3/01-session/files/cpz-session.sh \
 	stage3/01-session/files/tmux.conf \
@@ -238,6 +241,7 @@ for file in \
 	stage3/01-session/files/cpz-brightness \
 	stage3/01-session/files/cpz-font \
 	stage3/01-session/files/cpz-keyboard-layout \
+	stage3/01-session/files/cpz-layout-map \
 	stage3/01-session/files/cpz-layout-next \
 	stage3/01-session/files/cpz-layout-apply \
 	stage3/01-session/files/cpz-display-toggle \
@@ -321,6 +325,7 @@ for script in \
 	stage3/01-session/files/cpz-brightness \
 	stage3/01-session/files/cpz-font \
 	stage3/01-session/files/cpz-keyboard-layout \
+	stage3/01-session/files/cpz-layout-map \
 	stage3/01-session/files/cpz-layout-next \
 	stage3/01-session/files/cpz-layout-apply \
 	stage3/01-session/files/cpz-display-toggle \
@@ -437,6 +442,22 @@ contains stage3/01-session/files/cpz-kmscon-output 'systemctl restart'
 contains stage3/01-session/files/cpz-kmscon-output 'nudge_drm'
 not_contains stage3/01-session/files/cpz-kmscon-output 'vt_nudge'
 contains stage3/01-session/files/99-cpz-kmscon-nudge.rules 'ENV{HOTPLUG}="1"'
+contains stage3/01-session/files/99-cpz-automount.rules 'SUBSYSTEMS=="usb"'
+contains stage3/01-session/files/99-cpz-automount.rules 'DEVTYPE}=="partition"'
+contains stage3/01-session/files/99-cpz-automount.rules 'ID_PART_TABLE_TYPE}!="?*"'
+contains stage3/01-session/files/99-cpz-automount.rules 'ENV{SYSTEMD_WANTS}+="cpz-automount@%k.service"'
+contains stage3/01-session/files/cpz-automount@.service 'BindsTo=dev-%i.device'
+contains stage3/01-session/files/cpz-automount@.service 'After=local-fs.target'
+contains stage3/01-session/files/cpz-automount@.service 'ExecStop=-/usr/local/bin/cpz-automount umount'
+contains stage3/01-session/files/cpz-automount 'on_system_disk'
+contains stage3/01-session/files/cpz-automount 'probe_filesystem'
+contains stage3/01-session/files/cpz-automount 'umask=0022'
+contains stage3/01-session/files/cpz-automount 'umount -l'
+contains stage3/01-session/files/cpz-automount 'findmnt --fstab'
+contains stage3/01-session/01-run.sh '99-cpz-automount.rules'
+contains stage3/01-session/01-run.sh 'cpz-automount@.service'
+contains stage3/01-session/01-run.sh 'install -d -m 0755 "${ROOTFS_DIR}/media"'
+have tests/test_cpz_automount.py
 contains stage3/01-session/02-run.sh 'CPZ_HDMI_VIDEO'
 contains build.sh 'CPZ_HDMI_VIDEO'
 contains config.cpz.example 'CPZ_HDMI_VIDEO'
@@ -619,6 +640,16 @@ contains stage3/01-session/files/cpz-layout-next 'cpz-layout-apply'
 contains stage3/01-session/files/cpz-layout-apply 'cpz-keyboard-layout.service'
 contains stage3/01-session/01-run.sh '50-cpz-layout'
 contains stage3/01-session/01-run.sh 'cpz-layout-next'
+contains stage3/01-session/01-run.sh 'cpz-layout-map'
+contains stage3/01-session/files/cpz-keyboard-layout 'cpz-layout-map'
+contains stage3/01-session/files/cpz-keyboard-layout 'prepare_cpz_maps'
+contains stage3/01-session/files/cpz-keyboard-layout 'cpz_base_map'
+contains stage3/01-session/files/cpz-layout-map 'is_letter'
+contains stage3/01-session/files/cpz-layout-map 'render_vt'
+contains stage2/05-cardputerzero/01-run.sh 'tca8418_fsm_can_activate'
+contains stage2/05-cardputerzero/01-run.sh 'if (device->id == 1)'
+contains stage3/01-session/files/cpz-help 'Shift+Sym'
+have tests/test_cpz_layout_map.py
 contains stage3/01-session/files/cpz-settings 'evdev.lst'
 contains stage3/01-session/files/cpz-settings 'LAYOUTS'
 contains stage3/01-session/files/cpz-settings 'layouts_screen'

@@ -37,10 +37,11 @@ shellcheck -x $(cat "$list")
 
 echo "== ruff =="
 ruff check scripts tools tests stage3/01-session/files/cpz-settings \
-	stage3/01-session/files/cpz-search
+	stage3/01-session/files/cpz-search stage3/01-session/files/cpz-layout-map
 
 echo "== mypy =="
 mypy --ignore-missing-imports scripts/*.py tools/*.py tests/*.py \
 	stage3/01-session/files/cpz-settings
 # Extension-less scripts are both seen as "__main__"; check them separately.
 mypy --ignore-missing-imports stage3/01-session/files/cpz-search
+mypy --ignore-missing-imports stage3/01-session/files/cpz-layout-map

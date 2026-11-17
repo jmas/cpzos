@@ -1,0 +1,19 @@
+# Mount USB filesystems automatically when a disk is plugged in.
+#
+# The work is done by cpz-automount@<dev>.service, not RUN+=: mounting takes a
+# moment and udev must not block its event queue. The service BindsTo the
+# device unit, so unplugging the disk stops it and ExecStop unmounts the
+# filesystem.
+#
+# SUBSYSTEMS=="usb" walks the parent chain. That is more reliable than
+# ENV{ID_BUS}=="usb": a USB-SATA bridge can be identified as ata/scsi by
+# ata_id/scsi_id, while the chain still contains the USB interface.
+#
+# Partitions are started unconditionally: udev's first blkid can miss a disk
+# that is still spinning up. The helper probes again, retries on a slow device,
+# and skips empty partitions, LUKS, RAID and swap itself.
+ACTION=="add", SUBSYSTEM=="block", SUBSYSTEMS=="usb", KERNEL=="sd*[0-9]", ENV{DEVTYPE}=="partition", TAG+="systemd", ENV{SYSTEMD_WANTS}+="cpz-automount@%k.service"
+
+# Whole-disk filesystems (sticks without a partition table). A disk that has a
+# partition table is covered by the partition events above.
+ACTION=="add", SUBSYSTEM=="block", SUBSYSTEMS=="usb", KERNEL=="sd*[!0-9]", ENV{ID_PART_TABLE_TYPE}!="?*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="cpz-automount@%k.service"

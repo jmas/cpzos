@@ -1,0 +1,482 @@
+#!/bin/bash
+# Mount a USB filesystem on hotplug and unmount it when the disk goes away.
+#
+# 99-cpz-automount.rules starts cpz-automount@<dev>.service for every USB
+# partition and every whole-disk filesystem (a stick without a partition
+# table). The unit BindsTo the device unit, so systemd calls the "umount"
+# action when the disk is unplugged or the system shuts down.
+#
+# Mounting is done by mount(8), not udisks2: udisks2 is a D-Bus service that
+# mounts on request, it does not watch for hotplug. Direct mounts also keep the
+# mount point predictable (/media/<label>) and independent of a logind session.
+set -u
+
+STATE_DIR=${CPZ_AUTOMOUNT_STATE:-/run/cpz-automount}
+MOUNT_ROOT=${CPZ_AUTOMOUNT_ROOT:-/media}
+MOUNT_USER=${CPZ_AUTOMOUNT_USER:-cpz}
+LOCK_WAIT=20
+
+MOUNT_ERROR=
+
+usage() {
+	cat <<'EOF'
+Usage: cpz-automount mount DEVICE
+       cpz-automount umount DEVICE
+       cpz-automount list
+
+USB filesystems are mounted automatically under /media/<label>. Use "list" to
+see the drives mounted by this helper and "umount" before unplugging to flush
+pending writes safely.
+EOF
+}
+
+log() {
+	logger -t cpz-automount -- "$*" 2>/dev/null || true
+	printf 'cpz-automount: %s\n' "$*" >&2
+}
+
+die() {
+	log "$*"
+	exit 1
+}
+
+# Print "uid gid" for the console user. A user that does not exist (for
+# example a renamed first user) falls back to 1000, the image's console uid;
+# mounting as root with files owned by nobody would be worse.
+mount_ids() {
+	local uid=1000 gid=1000
+	if [ -n "$MOUNT_USER" ]; then
+		uid=$(id -u "$MOUNT_USER" 2>/dev/null) || uid=1000
+		gid=$(id -g "$MOUNT_USER" 2>/dev/null) || gid=1000
+	fi
+	printf '%s %s\n' "$uid" "$gid"
+}
+
+# Labels are filesystem-controlled data. Keep them to one safe path component:
+# no slashes, no leading dot, no "." / ".." and a bounded length.
+sanitize_label() {
+	local label=$1 cleaned
+	cleaned=$(printf '%s' "$label" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-48)
+	while [ "${cleaned#.}" != "$cleaned" ]; do
+		cleaned=${cleaned#.}
+	done
+	case $cleaned in
+		'' | . | ..) cleaned=usb ;;
+	esac
+	printf '%s\n' "$cleaned"
+}
+
+filesystem_types() {
+	case $1 in
+		# Prefer the in-kernel ntfs3 driver and fall back to ntfs-3g
+		# (mount.ntfs). Both honour uid/gid/umask.
+		ntfs) printf '%s\n' "ntfs3 ntfs" ;;
+		*) printf '%s\n' "$1" ;;
+	esac
+}
+
+mount_options() {
+	case $1 in
+		vfat | msdos | fat)
+			printf '%s\n' "uid=$2,gid=$3,umask=0022,iocharset=utf8,noatime"
+			;;
+		exfat)
+			printf '%s\n' "uid=$2,gid=$3,umask=0022,iocharset=utf8,noatime"
+			;;
+		ntfs | ntfs3)
+			printf '%s\n' "uid=$2,gid=$3,umask=0022,noatime"
+			;;
+		*)
+			# ext4/btrfs/xfs/iso9660 keep the on-disk ownership and
+			# their own mount options.
+			printf '%s\n' "noatime"
+			;;
+	esac
+}
+
+# udev starts the helper for every USB partition, so probe again here.
+# `blkid -o udev` reports the same usage class udev uses: "filesystem" only for
+# a mountable filesystem. A slow disk gets a few retries; an empty partition,
+# LUKS, RAID or swap stops early.
+PROBED_TYPE=
+PROBED_OK=0
+probe_filesystem() {
+	local dev=$1 output usage fstype i=0
+	PROBED_TYPE=
+	PROBED_OK=0
+	while [ "$i" -lt 6 ]; do
+		i=$((i + 1))
+		output=$(blkid -p -o udev -- "$dev" 2>/dev/null) || output=""
+		usage=$(printf '%s\n' "$output" | sed -n 's/^ID_FS_USAGE=//p')
+		fstype=$(printf '%s\n' "$output" | sed -n 's/^ID_FS_TYPE=//p')
+		if [ "$usage" = filesystem ] && [ -n "$fstype" ]; then
+			PROBED_TYPE=$fstype
+			PROBED_OK=1
+			return 0
+		fi
+		if [ -n "$fstype" ]; then
+			# crypto_LUKS, linux_raid_member, swap, ...
+			PROBED_TYPE=$fstype
+			return 0
+		fi
+		sleep 0.5
+	done
+	return 0
+}
+
+# Resolve /dev/... or sda1 to an absolute device path. Never return a path
+# outside /dev even when the caller passes "../../etc/shadow".
+normalize_device() {
+	local dev=$1 dir base
+	case $dev in
+		/dev/*) ;;
+		*) dev=/dev/$dev ;;
+	esac
+	dir=$(dirname -- "$dev") || return 1
+	base=$(basename -- "$dev") || return 1
+	case $base in
+		'' | . | ..) return 1 ;;
+	esac
+	# Canonicalise the directory first: this catches ".." components even when
+	# the device node itself is already gone.
+	dir=$(cd -- "$dir" 2>/dev/null && pwd -P) || return 1
+	dev=$dir/$base
+	case $dev in
+		/dev/?*) ;;
+		*) return 1 ;;
+	esac
+	if [ -e "$dev" ] || [ -L "$dev" ]; then
+		dev=$(readlink -f -- "$dev" 2>/dev/null) || return 1
+	fi
+	printf '%s\n' "$dev"
+}
+
+# The udev rule already matches USB, but a manual invocation must not mount the
+# eMMC/SD system disk. The sysfs chain of a USB disk always contains usbN.
+is_usb_block() {
+	local dev=$1 path
+	[ -b "$dev" ] || return 1
+	path=$(readlink -f -- "/sys/class/block/${dev##*/}" 2>/dev/null) || return 1
+	case $path in
+		*/usb[0-9]*/*) return 0 ;;
+	esac
+	return 1
+}
+
+disk_name() {
+	local dev=$1 parent
+	parent=$(lsblk -dn -o PKNAME "$dev" 2>/dev/null | head -n 1)
+	printf '%s\n' "${parent:-${dev##*/}}"
+}
+
+# Never touch the disk that carries the running system. This also covers a
+# CPZ system booted from a USB SSD: none of that disk's partitions is mounted
+# into /media.
+on_system_disk() {
+	local dev=$1 disk target source
+	disk=$(disk_name "$dev")
+	for target in / /boot/firmware; do
+		source=$(findmnt -n -o SOURCE --target "$target" 2>/dev/null | head -n 1) || continue
+		[ -n "$source" ] || continue
+		[ -b "$source" ] || source=$(readlink -f -- "$source" 2>/dev/null) || continue
+		[ -n "$source" ] || continue
+		if [ "$(disk_name "$source")" = "$disk" ]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# A device can be mounted from /dev/sda1 or from a /dev/disk/by-* symlink; the
+# mount table keeps the path that was used, so compare resolved sources.
+mounted_target() {
+	local dev=$1 target source resolved
+	dev=$(readlink -f -- "$dev" 2>/dev/null) || dev=$1
+	while read -r target source; do
+		[ -n "$target" ] || continue
+		[ -n "$source" ] || continue
+		# btrfs subvolumes are shown as /dev/sda1[/@data].
+		source=${source%%\[*}
+		resolved=$source
+		if [ -b "$source" ]; then
+			resolved=$(readlink -f -- "$source" 2>/dev/null) || resolved=$source
+		fi
+		if [ "$source" = "$dev" ] || [ "$resolved" = "$dev" ]; then
+			printf '%s\n' "$target"
+			return 0
+		fi
+	done <<EOF
+$(findmnt -rno TARGET,SOURCE 2>/dev/null)
+EOF
+	return 1
+}
+
+# Filesystems listed in /etc/fstab are mounted by systemd; mounting them twice
+# would create a second copy under /media. Unresolvable fstab entries must not
+# stop the comparison: findmnt --evaluate keeps them in the output and only the
+# matching, resolvable entry matters.
+listed_in_fstab() {
+	local dev=$1 target source resolved
+	dev=$(readlink -f -- "$dev" 2>/dev/null) || dev=$1
+	while read -r target source; do
+		[ -n "$source" ] || continue
+		source=${source%%\[*}
+		resolved=$source
+		if [ -b "$source" ]; then
+			resolved=$(readlink -f -- "$source" 2>/dev/null) || resolved=$source
+		fi
+		if [ "$source" = "$dev" ] || [ "$resolved" = "$dev" ]; then
+			return 0
+		fi
+	done <<EOF
+$(findmnt --fstab --evaluate -n -o TARGET,SOURCE 2>/dev/null)
+EOF
+	return 1
+}
+
+# Reuse an empty directory left by a crash; never mount over an existing
+# filesystem or a symlink.
+choose_mountpoint() {
+	local base=$1 name candidate n=1
+	name=$base
+	while [ "$n" -le 99 ]; do
+		candidate=$MOUNT_ROOT/$name
+		if [ ! -e "$candidate" ] && [ ! -L "$candidate" ]; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+		if [ -d "$candidate" ] && [ ! -L "$candidate" ] &&
+			! mountpoint -q -- "$candidate" &&
+			[ -z "$(find "$candidate" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+		n=$((n + 1))
+		name="$base-$n"
+	done
+	return 1
+}
+
+state_file() {
+	printf '%s/%s.mountpoint\n' "$STATE_DIR" "${1##*/}"
+}
+
+try_mount() {
+	local output
+	output=$(mount -t "$1" -o "$2" "$3" "$4" 2>&1) && return 0
+	MOUNT_ERROR=$output
+	return 1
+}
+
+mount_with_retry() {
+	local type=$1 opts=$2 dev=$3 mnt=$4 tries=$5 i=0
+	while [ "$i" -lt "$tries" ]; do
+		i=$((i + 1))
+		try_mount "$type" "$opts" "$dev" "$mnt" && return 0
+		if [ "$i" -lt "$tries" ]; then
+			# Partition scanning and slow USB bridges need a moment.
+			sleep 0.4
+		fi
+	done
+	return 1
+}
+
+do_mount() {
+	local dev=$1 target fstype label uuid base mnt ids uid gid opts ro_opts
+	local first_opts type mounted=0 read_only=0 tries state
+
+	if target=$(mounted_target "$dev"); then
+		log "$dev is already mounted on $target; leaving it alone"
+		return 0
+	fi
+	if listed_in_fstab "$dev"; then
+		log "$dev is configured in /etc/fstab; leaving it to systemd"
+		return 0
+	fi
+
+	probe_filesystem "$dev"
+	if [ "$PROBED_OK" -ne 1 ]; then
+		if [ -n "$PROBED_TYPE" ]; then
+			log "$dev: $PROBED_TYPE is not a mountable filesystem; skipping"
+		else
+			log "$dev: no filesystem detected; skipping"
+		fi
+		return 0
+	fi
+	fstype=$PROBED_TYPE
+
+	label=$(blkid -p -o value -s LABEL "$dev" 2>/dev/null || true)
+	if [ -z "$label" ]; then
+		uuid=$(blkid -p -o value -s UUID "$dev" 2>/dev/null || true)
+		if [ -n "$uuid" ]; then
+			label="usb-${uuid%%-*}"
+		else
+			label="usb-${dev##*/}"
+		fi
+	fi
+	base=$(sanitize_label "$label")
+
+	mnt=$(choose_mountpoint "$base") || die "no free mount point for $dev under $MOUNT_ROOT"
+	mkdir -p -- "$mnt" || die "cannot create $mnt"
+	if [ ! -d "$mnt" ] || [ -L "$mnt" ]; then
+		die "$mnt is not a plain directory"
+	fi
+
+	ids=$(mount_ids)
+	uid=${ids%% *}
+	gid=${ids##* }
+	opts=$(mount_options "$fstype" "$uid" "$gid")
+	ro_opts="$opts,ro"
+	case $fstype in
+		iso9660 | udf | squashfs) first_opts=$ro_opts ;;
+		*) first_opts=$opts ;;
+	esac
+	set -- "$first_opts"
+	[ "$first_opts" = "$ro_opts" ] || set -- "$@" "$ro_opts"
+
+	MOUNT_ERROR=
+	for opts in "$@"; do
+		tries=4
+		case $opts in
+			*,ro) tries=2 ;;
+		esac
+		# shellcheck disable=SC2046  # ntfs has a two-entry type list
+		for type in $(filesystem_types "$fstype"); do
+			if mount_with_retry "$type" "$opts" "$dev" "$mnt" "$tries"; then
+				mounted=1
+				case ",$opts," in
+					*,ro,*) read_only=1 ;;
+				esac
+				break 2
+			fi
+		done
+	done
+
+	if [ "$mounted" -ne 1 ]; then
+		rmdir -- "$mnt" 2>/dev/null || true
+		die "cannot mount $dev on $mnt: ${MOUNT_ERROR:-unknown error}"
+	fi
+
+	state=$(state_file "$dev")
+	if ! printf '%s\n' "$mnt" >"$state"; then
+		umount -- "$mnt" 2>/dev/null || umount -l -- "$mnt" 2>/dev/null || true
+		rmdir -- "$mnt" 2>/dev/null || true
+		die "cannot record the mount point for $dev"
+	fi
+
+	if [ "$read_only" -eq 1 ]; then
+		log "mounted $dev ($fstype) on $mnt, read-only"
+	else
+		log "mounted $dev ($fstype) on $mnt"
+	fi
+}
+
+do_umount() {
+	local dev=$1 state mnt output
+	state=$(state_file "$dev")
+	# Only unmount filesystems this helper mounted. An fstab/udisks mount that
+	# happened to share the device is left to its owner.
+	if [ ! -f "$state" ]; then
+		return 0
+	fi
+	mnt=$(head -n 1 "$state")
+	if [ -n "$mnt" ] &&
+		findmnt -n -o TARGET -S "$dev" 2>/dev/null | grep -qxF -- "$mnt"; then
+		if ! output=$(umount -- "$mnt" 2>&1); then
+			log "umount $mnt failed ($output); detaching lazily"
+			if ! umount -l -- "$mnt" 2>/dev/null; then
+				log "cannot detach $mnt; keeping the mount state for a retry"
+				return 1
+			fi
+		fi
+	fi
+	rmdir -- "$mnt" 2>/dev/null || true
+	rm -f -- "$state"
+	log "unmounted $dev from $mnt"
+}
+
+list_mounted() {
+	local state name dev mnt fstype avail
+	local found=0
+	shopt -s nullglob
+	printf '%-12s %-8s %-8s %s\n' DEVICE TYPE AVAIL MOUNTPOINT
+	for state in "$STATE_DIR"/*.mountpoint; do
+		name=${state##*/}
+		name=${name%.mountpoint}
+		dev=/dev/$name
+		mnt=$(head -n 1 "$state")
+		[ -n "$mnt" ] || continue
+		fstype=$(lsblk -dno FSTYPE "$dev" 2>/dev/null || true)
+		avail=$(df -h --output=avail "$mnt" 2>/dev/null | tail -n 1 | tr -d ' ')
+		printf '%-12s %-8s %-8s %s\n' "$dev" "${fstype:-?}" "${avail:-?}" "$mnt"
+		found=1
+	done
+	if [ "$found" -eq 0 ]; then
+		printf 'no USB filesystems mounted by cpz-automount\n'
+	fi
+}
+
+take_lock() {
+	command -v flock >/dev/null 2>&1 || return 0
+	exec 9>>"$STATE_DIR/lock"
+	flock -w "$LOCK_WAIT" 9 || die "timed out waiting for another mount operation"
+}
+
+main() {
+	local action dev
+
+	[ $# -ge 1 ] || {
+		usage >&2
+		exit 2
+	}
+	action=$1
+	shift
+
+	case $MOUNT_ROOT in
+		/*) ;;
+		*) die "CPZ_AUTOMOUNT_ROOT must be an absolute path" ;;
+	esac
+
+	case $action in
+		mount | umount)
+			[ "$(id -u)" -eq 0 ] || die "must run as root (use sudo)"
+			mkdir -p -- "$STATE_DIR" || die "cannot create $STATE_DIR"
+			;;
+	esac
+
+	case $action in
+		mount)
+			[ $# -eq 1 ] || {
+				usage >&2
+				exit 2
+			}
+			take_lock
+			dev=$(normalize_device "$1") || die "invalid device: $1"
+			is_usb_block "$dev" || die "$dev is not a USB block device"
+			on_system_disk "$dev" && die "$dev belongs to the running system disk"
+			do_mount "$dev"
+			;;
+		umount)
+			[ $# -eq 1 ] || {
+				usage >&2
+				exit 2
+			}
+			take_lock
+			# The device node may already be gone when the disk is yanked;
+			# the mount table still has the path used to mount it.
+			dev=$(normalize_device "$1") || die "invalid device: $1"
+			do_umount "$dev"
+			;;
+		list)
+			list_mounted
+			;;
+		*)
+			usage >&2
+			exit 2
+			;;
+	esac
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+	main "$@"
+fi

@@ -76,6 +76,41 @@ path.write_text(text.replace(old, new))
 PY
 fi
 
+# The vendor FSM blocks the Shift key while the Sym layer is latched, so a
+# sticky Sym tap (tap Sym, then Shift+key) can never reach level 2 of an XKB
+# key. Allow Shift to activate while Sym is active; it still reports the base
+# KEY_LEFTSHIFT keycode, so the uppercase level and the language-aware CPZ
+# overlay work. Fn and Sym remain mutually exclusive.
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path("/tmp/dtoverlays/modules/tca8418-1.0/tca8418_keypad_m5stack.c")
+text = path.read_text()
+old = """	if (device->id == 0)
+		return !keypad_data->shift_key.fsm.layer_active &&
+			!keypad_data->fn_key.fsm.layer_active;
+
+	return !keypad_data->sym_key.fsm.layer_active;
+"""
+new = """	if (device->id == 0)
+		return !keypad_data->shift_key.fsm.layer_active &&
+			!keypad_data->fn_key.fsm.layer_active;
+
+	/* CPZ: Shift may be pressed while a sticky Sym layer is active, so
+	 * Shift+Sym selects the uppercase level of the CPZ layout.
+	 */
+	if (device->id == 1)
+		return true;
+
+	return !keypad_data->sym_key.fsm.layer_active;
+"""
+if text.count(old) != 1:
+    raise SystemExit(
+        "CPZ: tca8418_fsm_can_activate block not found; upstream source changed"
+    )
+path.write_text(text.replace(old, new))
+PY
+
 KVER=$(basename "$(ls -d /lib/modules/*-rpi-v8 | sort -V | tail -n 1)")
 export KERNELDIR="/lib/modules/${KVER}/build"
 export EXTRADIR="/lib/modules/${KVER}/extra"

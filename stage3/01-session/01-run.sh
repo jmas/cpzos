@@ -31,15 +31,22 @@ install -m 0755 \
 	files/cpz-session-save-as-user files/cpz-conn-status \
 	files/cpz-brightness files/cpz-font \
 	files/cpz-keyboard-layout \
+	files/cpz-layout-map \
 	files/cpz-layout-next files/cpz-layout-apply files/cpz-display-toggle \
+	files/cpz-automount \
 	"${ROOTFS_DIR}/usr/local/bin/"
 install -d -m 0755 "${ROOTFS_DIR}/etc/udev/rules.d"
 install -m 0644 files/99-cpz-backlight.rules files/99-cpz-keyboard.rules \
 	files/99-cpz-kmscon-output.rules files/99-cpz-kmscon-nudge.rules \
+	files/99-cpz-automount.rules \
 	"${ROOTFS_DIR}/etc/udev/rules.d/"
 install -m 0644 files/cpz-keyboard-layout.service \
 	files/cpz-keyboard-layout.path \
+	files/cpz-automount@.service \
 	"${ROOTFS_DIR}/etc/systemd/system/"
+
+# USB filesystems are mounted here by cpz-automount/99-cpz-automount.rules.
+install -d -m 0755 "${ROOTFS_DIR}/media"
 
 # kmscon uses libxkbcommon, not the VT keymap, so the TCA8418 Sym/Fn overlay
 # needs an XKB layout. cpz-kmscon-config selects this layout while the internal

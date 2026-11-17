@@ -258,8 +258,10 @@ for file in usr/local/bin/cpz-first-login \
     usr/local/bin/cpz-session-save-as-user usr/local/bin/cpz-conn-status \
     usr/local/bin/cpz-brightness usr/local/bin/cpz-font \
     usr/local/bin/cpz-keyboard-layout \
+    usr/local/bin/cpz-layout-map \
     usr/local/share/cpz/xkb/cpz.template \
     usr/local/bin/cpz-layout-next usr/local/bin/cpz-display-toggle \
+    usr/local/bin/cpz-automount \
     usr/bin/kmscon \
     etc/kmscon/kmscon.conf \
     etc/systemd/system/kmsconvt@.service.d/10-cpz.conf \
@@ -267,6 +269,8 @@ for file in usr/local/bin/cpz-first-login \
     etc/udev/rules.d/99-cpz-keyboard.rules \
     etc/udev/rules.d/99-cpz-kmscon-output.rules \
     etc/udev/rules.d/99-cpz-kmscon-nudge.rules \
+    etc/udev/rules.d/99-cpz-automount.rules \
+    etc/systemd/system/cpz-automount@.service \
     etc/systemd/system/cpz-keyboard-layout.service \
     etc/systemd/system/cpz-keyboard-layout.path \
     etc/systemd/system/cardputerzero-keymap.service \
@@ -660,6 +664,20 @@ else
     fail "per-language CPZ XKB template MISSING"
 fi
 
+if debugfs -R "cat usr/local/bin/cpz-keyboard-layout" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "cpz-layout-map"; then
+    pass "language-aware CPZ overlay generator wired"
+else
+    fail "cpz-layout-map not used by cpz-keyboard-layout"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-layout-map" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "is_letter"; then
+    pass "language-aware CPZ overlay generator installed"
+else
+    fail "cpz-layout-map MISSING"
+fi
+
 if debugfs -R "cat usr/local/bin/cpz-keyboard-layout" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cached_UTF-8_del.kmap.gz"; then
     pass "standard keymap fallback present"
 else
@@ -878,6 +896,33 @@ if debugfs -R "cat etc/systemd/system/cpz-kmscon-output.timer" "$TMPDIR/root.ext
     pass "cpz-kmscon-output timer keeps sub-second accuracy"
 else
     fail "cpz-kmscon-output timer accuracy MISSING"
+fi
+
+if debugfs -R "cat etc/udev/rules.d/99-cpz-automount.rules" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q 'ENV{SYSTEMD_WANTS}+="cpz-automount@%k.service"'; then
+    pass "USB hotplug starts the automount helper"
+else
+    fail "USB automount udev rule MISSING"
+fi
+
+if debugfs -R "cat etc/systemd/system/cpz-automount@.service" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "BindsTo=dev-%i.device"; then
+    pass "automount stops (and unmounts) when the disk is removed"
+else
+    fail "cpz-automount@.service BindsTo MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-automount" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "on_system_disk"; then
+    pass "automount refuses the running system disk"
+else
+    fail "automount system-disk guard MISSING"
+fi
+
+if debugfs -R "stat media" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
+    pass "/media mount root present"
+else
+    fail "/media mount root MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-login" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "getent passwd 1000"; then

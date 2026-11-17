@@ -1,11 +1,14 @@
 // CardputerZero internal keyboard (TCA8418).
 //
 // The base layer is the selected standard layout (US by default). The Sym
-// layer does not emit shifted standard keysyms: the kernel driver replaces the
-// keycodes with otherwise unused punctuation/Japanese keycodes, and the
-// console keymap maps them to symbols. kmscon uses libxkbcommon and never
-// reads the VT keymap, so the same mapping has to exist here as an XKB layout.
-// cpz-keyboard-layout rewrites the include below to the active language.
+// layer reuses ordinary punctuation/Japanese keycodes, and national layouts put
+// their extra letters on the very same keycodes. This file is the static
+// US/punctuation table (and the template cpz-layout-map reads): on a layout
+// that carries a letter there, cpz-layout-map omits that key so the layout's
+// letter survives, and moves the displaced ASCII punctuation to the second
+// level of a punctuation-only key. Sym gives the letter, Shift+Sym its
+// uppercase form. cpz-keyboard-layout rewrites the include below to the active
+// language.
 //
 // This layout is selected only while the internal keyboard is active. An
 // external USB/Bluetooth keyboard keeps the user-selected standard layout.

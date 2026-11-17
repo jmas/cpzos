@@ -38,6 +38,12 @@
 # internal keyboard the CPZ overlay is generated on top of the selected
 # language, with one layout name per language (cpz_us, cpz_ua, ...) so a
 # language change is visible to localed even though the prefix stays "cpz".
+# The overlay is language-aware: the driver's Sym layer reuses ordinary
+# punctuation keycodes, and national layouts put their extra letters on exactly
+# those keycodes. cpz-layout-map keeps the layout's letters on the Sym layer
+# (Shift+Sym gives the uppercase form) and moves the displaced ASCII
+# punctuation to Shift+Sym of punctuation-only keycodes. Latin layouts keep the
+# full static punctuation table.
 set -eu
 
 tty_list="/dev/tty1 /dev/tty2 /dev/tty3"
@@ -47,7 +53,10 @@ cached_keymap=/etc/console-setup/cached_UTF-8_del.kmap.gz
 cpz_map=/usr/share/keymaps/tca8418_keypad_m5stack_keymap.map
 xkb_dir=/usr/share/X11/xkb/symbols
 cpz_xkb_template=/usr/local/share/cpz/xkb/cpz.template
+cpz_layout_map=/usr/local/bin/cpz-layout-map
 cpz_xkb_layout=
+cpz_base_map=
+cpz_vt_overlay=
 internal_link=/dev/input/cardputer-zero-internal
 internal_path=3f804000.i2c
 internal_bustype=0018
@@ -265,10 +274,11 @@ xkb_include() {
 	fi
 }
 
-# Generate the CPZ overlay for the selected language. The template is the
-# static symbols/cpz file; only the base include and the group name change.
-# A distinct layout name per language makes localed notify kmscon when the
-# language changes (cpz_ua -> cpz_ru), while still keeping one overlay.
+# Generate the CPZ overlay for the selected language. The static template is
+# the US/punctuation table; cpz-layout-map rewrites the include and keeps the
+# letters the selected layout puts on the Sym keycodes (see the helper). This
+# fallback only runs when ckbcomp or the helper is unavailable, so it keeps the
+# old behaviour: US bases plus the full punctuation table.
 write_cpz_xkb() {
 	code=$1
 	[ -r "$cpz_xkb_template" ] || return 1
@@ -297,21 +307,83 @@ write_cpz_xkb() {
 	return 1
 }
 
+# Build the console base keymap once and let cpz-layout-map derive both the
+# language-aware XKB layout and the matching VT overlay. The driver's Sym layer
+# reuses ordinary keycodes, so on Cyrillic/Greek and other layouts those
+# keycodes carry letters. cpz-layout-map leaves those keycodes to the base
+# layout (Sym types the letter, Shift+Sym its uppercase form) and moves the
+# displaced ASCII punctuation to Shift+Sym of punctuation-only keycodes.
+prepare_cpz_maps() {
+	code=$1
+	case "$code" in
+		'' | *[!a-z0-9_-]*) return 1 ;;
+	esac
+
+	cpz_base_map=$(mktemp 2>/dev/null || true)
+	cpz_vt_overlay=
+	cpz_xkb_layout=
+
+	if [ -n "$cpz_base_map" ]; then
+		if ! command -v ckbcomp >/dev/null 2>&1 ||
+			! ckbcomp -layout "$code" >"$cpz_base_map" 2>/dev/null; then
+			rm -f "$cpz_base_map"
+			cpz_base_map=
+		fi
+	fi
+
+	[ -x "$cpz_layout_map" ] || return 1
+	[ -r "$cpz_xkb_template" ] || return 1
+	command -v python3 >/dev/null 2>&1 || return 1
+
+	if [ -r "$xkb_dir/$code" ]; then
+		include=$(xkb_include "$code")
+	else
+		include="us(basic)"
+	fi
+
+	safe_code=$(printf '%s' "$code" | tr '-' '_')
+	dest=$xkb_dir/cpz_$safe_code
+	xkb_tmp=$(mktemp "$xkb_dir/.cpz_$safe_code.XXXXXX" 2>/dev/null || true)
+	vt_tmp=$(mktemp 2>/dev/null || true)
+	if [ -z "$xkb_tmp" ] || [ -z "$vt_tmp" ]; then
+		if [ -n "$xkb_tmp" ]; then
+			rm -f "$xkb_tmp"
+		fi
+		if [ -n "$vt_tmp" ]; then
+			rm -f "$vt_tmp"
+		fi
+		return 1
+	fi
+
+	base_arg=$cpz_base_map
+	[ -n "$base_arg" ] || base_arg=-
+
+	if "$cpz_layout_map" "$cpz_xkb_template" "$include" "$code" \
+		"$base_arg" "$xkb_tmp" "$vt_tmp"; then
+		chmod 0644 "$xkb_tmp" 2>/dev/null || true
+		if mv "$xkb_tmp" "$dest" 2>/dev/null; then
+			cpz_xkb_layout=cpz_$safe_code
+			cpz_vt_overlay=$vt_tmp
+			return 0
+		fi
+	fi
+
+	rm -f "$xkb_tmp" "$vt_tmp"
+	log "cpz-layout-map failed for layout $code"
+	return 1
+}
+
 # Push the layout to systemd-localed. kmscon listens to Locale1 and replaces
 # the live keymap in place, so the session, DRM master and HDMI link stay
-# untouched. An unchanged value is skipped so keyboard plug/unplug events do
-# not needlessly reset the XKB state.
+# untouched. localed itself ignores an unchanged RMLVO, so this is safe to call
+# on every keyboard event. Do not read /etc/default/keyboard here: Debian links
+# /etc/vconsole.conf to it, localed replaces that link on its first write, and
+# the two then diverge from the layout localed actually has.
 publish_xkb() {
 	code=$1
 	case "$code" in
 		'' | *[!a-zA-Z0-9_-]*) return 1 ;;
 	esac
-	current=
-	if [ -r /etc/default/keyboard ]; then
-		current=$(sed -n 's/^XKBLAYOUT="\([^"]*\)".*/\1/p' \
-			/etc/default/keyboard 2>/dev/null | head -n 1)
-	fi
-	[ "$current" = "$code" ] && return 0
 	if command -v localectl >/dev/null 2>&1; then
 		if timeout 5 localectl --no-convert set-x11-keymap "$code" \
 			>/dev/null 2>&1; then
@@ -378,9 +450,23 @@ load_standard() {
 }
 
 load_internal() {
-	# Load the selected language first, then the vendor Sym/Fn overlay. The
-	# base map is complete, so nothing from a previous layout leaks through;
-	# the overlay is partial and only replaces the dedicated Sym keycodes.
+	# The prepared base map is the selected language compiled by ckbcomp, and
+	# the generated overlay only touches the Sym keycodes that do not carry a
+	# letter in that language. The base map is complete, so nothing from a
+	# previous layout leaks through.
+	if [ -n "$cpz_base_map" ] && apply_map "$cpz_base_map" "$layout"; then
+		if [ -n "$cpz_vt_overlay" ]; then
+			apply_map "$cpz_vt_overlay" cpz || log "CPZ overlay failed"
+		elif [ -r "$cpz_map" ]; then
+			# cpz-layout-map is unavailable, but ckbcomp worked. Keep the
+			# vendor punctuation overlay rather than leaving the base layout
+			# without any Sym mapping.
+			apply_map "$cpz_map" cpz || log "CPZ overlay failed"
+		fi
+		return 0
+	fi
+	# Fallback: no ckbcomp/helper. Load the selected language then the vendor
+	# overlay; national layouts with letters on the Sym keycodes stay partial.
 	if ! load_standard "$layout"; then
 		log "no usable base keymap before the CPZ overlay"
 	fi
@@ -405,14 +491,25 @@ apply_external() {
 }
 
 apply_internal() {
+	prepare_cpz_maps "$layout" || true
 	load_internal
-	if write_cpz_xkb "$layout"; then
+	if [ -n "$cpz_xkb_layout" ]; then
+		publish_xkb "$cpz_xkb_layout" || true
+	elif write_cpz_xkb "$layout"; then
 		publish_xkb "$cpz_xkb_layout" || true
 	else
 		log "cannot generate CPZ XKB layout for $layout"
 		# The static layout is a US-based fallback installed by the image.
 		publish_xkb cpz || true
 	fi
+	if [ -n "$cpz_base_map" ]; then
+		rm -f "$cpz_base_map"
+	fi
+	if [ -n "$cpz_vt_overlay" ]; then
+		rm -f "$cpz_vt_overlay"
+	fi
+	cpz_base_map=
+	cpz_vt_overlay=
 	publish cpz
 	log "internal keyboard: cpz ($layout)"
 }

@@ -60,6 +60,11 @@ backlight, WiFi/Bluetooth and boot splash. The terminal session replaces the
 old APPLaunch/desktop UI. See [docs/CPZ-KMSCON.md](docs/CPZ-KMSCON.md) for the
 boot path, output policy and recovery/debug image details.
 
+USB hard disks, sticks and card readers are mounted automatically when they are
+plugged in and appear under `/media/<label>` (see
+[docs/CPZ-STORAGE.md](docs/CPZ-STORAGE.md)); unplugging unmounts them, and
+`cpz-automount list` shows what is mounted.
+
 ## Dependencies
 
 Build on a Debian-based system newer than 2017. On other systems use Docker.

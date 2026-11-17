@@ -41,6 +41,8 @@ Every action below is a direct Alt+key binding: no tmux prefix is needed.
  Ctrl+Plus / Ctrl+Minus  larger / smaller font
                        the size is saved in Settings
  Alt+I / Alt+Space     switch input layout
+ Sym+key               punctuation, or an extra letter of the layout
+ Shift+Sym+key         uppercase of that letter, or a moved symbol
  Alt+D                 CPZ panel / auto display
  In Settings           Z/X/C/F move (Fn off)
 ==== Search (Alt+O) ====

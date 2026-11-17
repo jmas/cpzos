@@ -35,6 +35,12 @@ pull request (`.github/workflows/ci.yml`).
   Settings, files, calculator, Terminal Trove and tmux buffers), item format,
   file roots/pruning, safe calculator and the `cpz-settings` entry points used
   by the omnisearch popup (`--page`, `--tool`, `--list-pages`, `--list-tools`).
+- `test_cpz_automount.py` sources `cpz-automount` and checks label sanitising
+  (no path traversal), per-filesystem mount options, mount-point selection and
+  device-path validation.
+- `test_cpz_layout_map.py` checks the language-aware CPZ Sym overlay: letter
+  detection (Unicode/ASCII/function keysyms), the unchanged Latin table, the
+  removed letter keycodes and the relocated ASCII punctuation on Shift+Sym.
 - `test_update_os_list.py` checks the os-list naming rules used by the release
   workflow: SemVer tags (`v0.1.0`), prerelease suffixes and legacy timestamp
   tags.
