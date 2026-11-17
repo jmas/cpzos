@@ -628,6 +628,13 @@ else
     fail "cpz-session-restore invalid or MISSING"
 fi
 
+if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "vt_nudge"; then
+    pass "cpz-kmscon-output activates the fbdev panel display"
+else
+    fail "cpz-kmscon-output fbdev activation MISSING"
+fi
+
 if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "hdmi_probe"; then
     pass "cpz-kmscon-output probes the HDMI connector"
 else
