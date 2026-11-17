@@ -1,8 +1,10 @@
 name: Build and publish CPZ image
 
+# Publishing a GitHub release starts the build; the workflow uploads the image
+# to that release. Pushing a tag alone does not build anything.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag:
@@ -19,7 +21,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: cpz-image-${{ inputs.tag || github.ref_name }}
+  group: cpz-image-${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -27,7 +29,7 @@ env:
 
 jobs:
   build-image:
-    name: Build and publish ${{ inputs.tag || github.ref_name }}
+    name: Build and publish ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 180
 
@@ -35,14 +37,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
           fetch-depth: 0
 
       - name: Resolve release metadata
         id: meta
         env:
-          REQUESTED_TAG: ${{ inputs.tag || github.ref_name }}
+          REQUESTED_TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
           CHANNEL: ${{ inputs.release_channel || 'auto' }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           set -euo pipefail
           # Manual runs may check out a tag by name without creating a local
@@ -67,22 +70,33 @@ jobs:
             exit 1
           fi
 
-          case "$CHANNEL" in
-            Stable) PRERELEASE=false ;;
-            Beta) PRERELEASE=true ;;
-            *)
-              case "$TAG" in
-                *-*) PRERELEASE=true ;;
-                *) PRERELEASE=false ;;
-              esac
-              ;;
-          esac
+          if [ -n "${RELEASE_PRERELEASE:-}" ]; then
+            # A published GitHub release decides the channel via its own
+            # prerelease flag.
+            PRERELEASE="$RELEASE_PRERELEASE"
+          else
+            case "$CHANNEL" in
+              Stable) PRERELEASE=false ;;
+              Beta) PRERELEASE=true ;;
+              *)
+                case "$TAG" in
+                  *-*) PRERELEASE=true ;;
+                  *) PRERELEASE=false ;;
+                esac
+                ;;
+            esac
+          fi
+
+          # GITHUB_SHA is the default-branch commit for release events, so
+          # record the commit the tag actually points at.
+          COMMIT="$(git rev-parse --verify "${TAG}^{commit}")"
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
           echo "image=${IMG_BASENAME}-${TAG}.img.xz" >> "$GITHUB_OUTPUT"
-          echo "Building $TAG (version $VERSION, prerelease=$PRERELEASE)"
+          echo "Building $TAG (version $VERSION, prerelease=$PRERELEASE, commit=$COMMIT)"
 
       - name: Free disk space
         run: |
@@ -199,6 +213,7 @@ jobs:
           OSS_NAME: ${{ steps.meta.outputs.image }}
           KERNEL_VER: ${{ steps.components.outputs.kernel_version }}
           DRIVER_COMMIT: ${{ steps.components.outputs.driver_commit }}
+          PIGEN_COMMIT: ${{ steps.meta.outputs.commit }}
         run: |
           set -euo pipefail
           DRIVER_SHORT="${DRIVER_COMMIT:0:7}"
@@ -208,7 +223,7 @@ jobs:
           {
             "version": "${VERSION}",
             "tag": "${TAG}",
-            "pigen_commit": "${GITHUB_SHA}",
+            "pigen_commit": "${PIGEN_COMMIT}",
             "ui": "terminal-first",
             "kernel_version": "${KERNEL_VER}",
             "driver_commit": "${DRIVER_COMMIT}",
@@ -224,7 +239,7 @@ jobs:
             echo "- **Version:** ${VERSION}"
             echo "- **Kernel:** ${KERNEL_VER}"
             echo "- **Driver overlay:** m5stack/m5stack-linux-dtoverlays @ ${DRIVER_SHORT}"
-            echo "- **pi-gen commit:** ${GITHUB_SHA}"
+            echo "- **pi-gen commit:** ${PIGEN_COMMIT}"
             echo "- **CONFIG_CARDPUTERO_V0_5:** y"
             echo ""
             echo "**OSS download:** [${OSS_NAME}](${OSS_URL})"
@@ -236,7 +251,7 @@ jobs:
 
           cat release-notes.md
 
-      - name: Create or update GitHub release
+      - name: Upload assets to the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
@@ -259,10 +274,8 @@ jobs:
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" \
-              --title "$TAG" \
-              --notes-file release-notes.md \
-              "${FLAGS[@]}"
+            # Release published from GitHub: keep its notes and only attach the
+            # built artifacts.
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
             gh release create "$TAG" "${ASSETS[@]}" \
@@ -326,7 +339,7 @@ jobs:
             --extract-sha256 "$EXTRACT_SHA" \
             --kernel-version "$KERNEL_VER" \
             --driver-commit "$DRIVER_COMMIT" \
-            --pigen-commit "$GITHUB_SHA"
+            --pigen-commit "${{ steps.meta.outputs.commit }}"
 
           ossutil cp -f os-list.json "oss://cardputer-zero-repo/os-list.json"
 

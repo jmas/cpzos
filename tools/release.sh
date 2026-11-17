@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Bump VERSION, commit it, create an annotated tag and push.
 #
-# Pushing the tag starts .github/workflows/build.yml, which builds the image,
-# creates the GitHub Release and publishes the artifact to OSS/os-list.
+# The tag alone builds nothing: publish a GitHub Release for it and
+# .github/workflows/build.yml builds the image, attaches it to that release
+# and publishes it to OSS/os-list.
 #
 # Usage:
 #   ./tools/release.sh                 # bump patch: 0.1.0 -> 0.1.1
@@ -26,7 +27,7 @@ skip_checks=0
 
 usage() {
 	cat <<'EOF'
-Bump VERSION, commit, tag and push (the tag triggers the image build).
+Bump VERSION, commit, tag and push (publish the GitHub Release to build).
 
 Usage: tools/release.sh [patch|minor|major|X.Y.Z[-prerelease]] [options]
 
@@ -224,10 +225,16 @@ git tag -a "$tag" -m "$tag"
 if [ "$push" = 1 ]; then
 	git push origin "HEAD:refs/heads/$BRANCH"
 	git push origin "refs/tags/$tag"
-	printf '\nPushed %s. The image build starts automatically.\n' "$tag"
-	printf 'Watch it with: gh run list --workflow build.yml --limit 1\n'
+	repo_slug="$(git remote get-url origin)"
+	repo_slug="${repo_slug%.git}"
+	repo_slug="${repo_slug#*github.com}"
+	repo_slug="${repo_slug#[:/]}"
+	printf '\nPushed %s.\n' "$tag"
+	printf 'Publish a GitHub Release for %s to start the image build:\n' "$tag"
+	printf '  https://github.com/%s/releases/new?tag=%s\n' "$repo_slug" "$tag"
 else
 	printf '\nCreated %s locally. Push it with:\n' "$tag"
 	printf '  git push origin HEAD:refs/heads/%s\n' "$BRANCH"
 	printf '  git push origin refs/tags/%s\n' "$tag"
+	printf 'The image build starts when the GitHub Release for %s is published.\n' "$tag"
 fi

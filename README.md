@@ -110,18 +110,22 @@ creates a `chore(release): vX.Y.Z` commit, adds an annotated tag and pushes
 both. It runs `tools/verify-stage.sh` and `tests/run.sh` before tagging; use
 `--skip-checks` to bypass that or `--no-push` to keep the commit and tag local.
 
-The tag push starts `.github/workflows/build.yml`, which:
+Pushing a tag does not build anything. Publishing the GitHub Release for the
+tag (`Releases → Draft a new release`, pick the tag, write the notes, then
+*Publish release*) starts `.github/workflows/build.yml`, which:
 
 - builds `cardputerzero-trixie-arm64-<tag>.img.xz`;
 - verifies the image contents;
-- creates or updates the GitHub Release for that tag;
+- attaches the image to the published GitHub Release without rewriting the
+  notes you wrote there;
 - uploads the image to OSS and refreshes the `-stable.img.xz` alias for stable
   tags;
 - updates `os-list.json` for M5 Imager.
 
-A tag with a prerelease suffix (`v0.2.0-beta.1`) is published as a GitHub
-prerelease. To rebuild an existing tag, run the workflow manually
-(`workflow_dispatch`) and pass the tag.
+The release's *pre-release* checkbox decides the channel when the build comes
+from a published release. Manual rebuilds derive it from the tag: a tag with a
+prerelease suffix (`v0.2.0-beta.1`) is treated as a prerelease. To rebuild an
+existing tag, run the workflow manually (`workflow_dispatch`) and pass the tag.
 
 ## Configuration
 
