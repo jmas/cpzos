@@ -3,7 +3,7 @@
 Fast checks that need no root, no Docker and no Raspberry Pi hardware.
 
 ```sh
-./tests/run.sh    # unit tests for cpz-settings
+./tests/run.sh    # unit tests for cpz-settings and output policy
 ./tests/lint.sh   # shellcheck + ruff + mypy
 ```
 
@@ -25,8 +25,16 @@ pull request (`.github/workflows/ci.yml`).
 
 - `test_cpz_settings.py` loads the extension-less `cpz-settings` file as a
   module and checks settings precedence, defaults/clamping, save/load
-  round-trip, layout normalization, the date/time editor helpers and the
-  internal submenu graph (`--check-pages`).
+  round-trip, layout normalization, the date/time editor helpers, the
+  internal submenu graph (`--check-pages`) and the Terminal Trove catalog
+  filters/apt parsing/manager state.
+- `test_cpz_output.py` runs a copy of `cpz-kmscon-output` against a fake
+  sysfs/settings tree and checks that `display=panel` is honoured both by the
+  systemd unit and by `--auto`, and that kmscon disables `use-original-mode`.
+- `test_cpz_search.py` checks the `cpz-search` providers (commands, actions,
+  Settings, files, calculator, Terminal Trove and tmux buffers), item format,
+  file roots/pruning, safe calculator and the `cpz-settings` entry points used
+  by the omnisearch popup (`--page`, `--tool`, `--list-pages`, `--list-tools`).
 - `test_update_os_list.py` checks the os-list naming rules used by the release
   workflow: SemVer tags (`v0.1.0`), prerelease suffixes and legacy timestamp
   tags.

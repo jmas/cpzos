@@ -252,11 +252,13 @@ for file in usr/local/bin/cpz-first-login \
     usr/local/bin/cpz-kmscon usr/local/bin/cpz-kmscon-config \
     usr/local/bin/cpz-kmscon-output usr/local/bin/cpz-login \
     usr/local/bin/cpz-hint usr/local/bin/cpz-help \
+    usr/local/bin/cpz-search usr/bin/fzf \
     usr/local/bin/cpz-session-save usr/local/bin/cpz-session-restore \
     usr/local/bin/cpz-tab-info usr/local/bin/cpz-tab-close-key \
     usr/local/bin/cpz-session-save-as-user usr/local/bin/cpz-conn-status \
-    usr/local/bin/cpz-brightness \
+    usr/local/bin/cpz-brightness usr/local/bin/cpz-font \
     usr/local/bin/cpz-keyboard-layout \
+    usr/local/share/cpz/xkb/cpz.template \
     usr/local/bin/cpz-layout-next usr/local/bin/cpz-display-toggle \
     usr/bin/kmscon \
     etc/kmscon/kmscon.conf \
@@ -281,6 +283,7 @@ for file in usr/local/bin/cpz-first-login \
     etc/systemd/system/cpz-bt-agent.service \
     etc/profile.d/cpz-session.sh etc/tmux.conf \
     etc/cpz/settings.conf etc/cpz/shadow-mtime etc/default/console-setup \
+    etc/cpz/trove-index.url \
     etc/cpz/themes/cpz-campbell.palette \
     etc/cpz/themes/cpz-homebrew.palette \
     etc/cpz/themes/cpz-ocean.palette \
@@ -333,10 +336,16 @@ else
     fail "cpz-settings: Bluetooth entry MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "/var/lib/dpkg/status"; then
-    pass "cpz-settings: Applications (package browser)"
+if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Terminal Trove"; then
+    pass "cpz-settings: Applications (Terminal Trove)"
 else
     fail "cpz-settings: Applications entry MISSING"
+fi
+
+if debugfs -R "stat usr/share/cpz/trove-index.json" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
+    pass "Terminal Trove catalog snapshot present"
+else
+    echo "WARN: Terminal Trove catalog snapshot missing (Applications will offer a download)"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q 'run_interactive(screen, \["htop"\])'; then
@@ -373,6 +382,30 @@ if debugfs -R "cat etc/tmux.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "win
     pass "tmux: window-size largest"
 else
     fail "tmux: window-size largest MISSING"
+fi
+
+if debugfs -R "cat etc/tmux.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-search"; then
+    pass "tmux: Alt+O omnisearch binding"
+else
+    fail "tmux: Alt+O omnisearch binding MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-search" "$TMPDIR/root.ext4" 2>/dev/null | grep -q -- "--with-nth=3"; then
+    pass "cpz-search: fzf providers present"
+else
+    fail "cpz-search: fzf providers MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-search" "$TMPDIR/root.ext4" 2>/dev/null | grep -q -- "--trove"; then
+    pass "cpz-search: Terminal Trove provider present"
+else
+    fail "cpz-search: Terminal Trove provider MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q -- "--list-tools"; then
+    pass "cpz-settings: cpz-search tool list present"
+else
+    fail "cpz-settings: cpz-search tool list MISSING"
 fi
 
 if debugfs -R "stat etc/systemd/system/tmp.mount" "$TMPDIR/root.ext4" 2>/dev/null | grep -q 'Fast link dest:.*/dev/null'; then
@@ -524,17 +557,17 @@ else
     fail "settings: display mode MISSING"
 fi
 
-if debugfs -R "cat etc/cpz/settings.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "font_panel=6x12"; then
-    pass "settings: panel font size present"
+if debugfs -R "cat etc/cpz/settings.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "font_size=12"; then
+    pass "settings: font size present"
 else
-    fail "settings: panel font size MISSING"
+    fail "settings: font size MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "get_setting font_panel"; then
-    pass "cpz-kmscon-config reads the panel font setting"
+    grep -q "get_setting font_size"; then
+    pass "cpz-kmscon-config reads the font size setting"
 else
-    fail "cpz-kmscon-config panel font setting MISSING"
+    fail "cpz-kmscon-config font size setting MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null |
@@ -612,11 +645,18 @@ else
     fail "xkb-data <ZENK> keycode MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -qF 'cpz-layout.active'; then
-    pass "kmscon selects the CPZ XKB layout for the internal keyboard"
+if debugfs -R "cat usr/local/bin/cpz-keyboard-layout" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "set-x11-keymap"; then
+    pass "keyboard layout is pushed to systemd-localed"
 else
-    fail "kmscon CPZ XKB layout selection MISSING"
+    fail "systemd-localed layout update MISSING"
+fi
+
+if debugfs -R "cat usr/local/share/cpz/xkb/cpz.template" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -qF 'key <HIRA> { [ period'; then
+    pass "per-language CPZ XKB template installed"
+else
+    fail "per-language CPZ XKB template MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-keyboard-layout" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cached_UTF-8_del.kmap.gz"; then
@@ -776,11 +816,18 @@ else
     fail "kmscon multi-monitor config MISSING"
 fi
 
-if debugfs -R "cat etc/kmscon/kmscon.conf" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -qF '<Alt>plus'; then
-    pass "runtime font zoom shortcuts configured"
+if debugfs -R "cat usr/local/bin/cpz-font" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "font_size"; then
+    pass "persistent font zoom helper installed"
 else
-    fail "runtime font zoom shortcuts MISSING"
+    fail "persistent font zoom helper MISSING"
+fi
+
+if debugfs -R "cat etc/tmux.conf" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "cpz-font up"; then
+    pass "font zoom key bindings configured"
+else
+    fail "font zoom key bindings MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-hint" "$TMPDIR/root.ext4" 2>/dev/null |
@@ -909,6 +956,12 @@ if grep -q "^Package: tmux$" "$TMPDIR/dpkg_status"; then
     pass "tmux installed"
 else
     fail "tmux NOT installed"
+fi
+
+if grep -q "^Package: mc$" "$TMPDIR/dpkg_status"; then
+    pass "mc installed"
+else
+    fail "mc NOT installed"
 fi
 
 if grep -q "^Package: python3$" "$TMPDIR/dpkg_status"; then

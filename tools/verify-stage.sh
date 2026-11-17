@@ -61,6 +61,23 @@ import sys
 conf_path, palette_path = sys.argv[1:3]
 text = open(conf_path, encoding="utf-8").read()
 
+required_styles = {
+    "status",
+    "window",
+    "window-active",
+    "status-left",
+    "status-right",
+    "window-status",
+    "window-status-current",
+    "window-status-activity",
+    "pane-border",
+    "pane-active-border",
+    "message",
+    "message-command",
+    "mode",
+    "copy-mode-match",
+}
+
 
 def luminance(value):
     value = value.lstrip("#")
@@ -80,6 +97,7 @@ def contrast(one, two):
 
 
 errors = []
+styles = {}
 for line in text.splitlines():
     match = re.match(r'set -g ([\w-]+)-style "([^"]*)"', line)
     if not match:
@@ -87,8 +105,61 @@ for line in text.splitlines():
     name, spec = match.groups()
     fg = re.search(r"fg=(#[0-9a-fA-F]{6})", spec)
     bg = re.search(r"bg=(#[0-9a-fA-F]{6})", spec)
-    if fg and bg and contrast(fg.group(1), bg.group(1)) < 4.5:
-        errors.append(f"{name} {contrast(fg.group(1), bg.group(1)):.2f}")
+    styles[name] = (
+        fg.group(1) if fg else None,
+        bg.group(1) if bg else None,
+    )
+
+if not any(
+    line.startswith("# name:") and line.split(":", 1)[1].strip()
+    for line in text.splitlines()
+):
+    errors.append("missing # name")
+
+missing = required_styles - set(styles)
+if missing:
+    errors.append("missing styles: " + ", ".join(sorted(missing)))
+
+
+def background(name):
+    _, bg = styles.get(name, (None, None))
+    return bg
+
+
+status_bg = background("status")
+window_bg = background("window")
+if not status_bg:
+    errors.append("missing status background")
+if not window_bg:
+    errors.append("missing window background")
+
+for name, (fg, bg) in styles.items():
+    if not fg:
+        continue
+    if bg:
+        limit, against = 4.5, bg
+    elif name.startswith("status-") and status_bg:
+        limit, against = 4.5, status_bg
+    elif name.startswith("pane-") and window_bg:
+        limit, against = 3.0, window_bg
+    else:
+        continue
+    ratio = contrast(fg, against)
+    if ratio < limit:
+        errors.append(f"{name} {ratio:.2f} < {limit}")
+
+metadata = {}
+for line in text.splitlines():
+    match = re.match(r"# (alert|warn)=([0-9a-fA-F]{6})$", line)
+    if match:
+        metadata[match.group(1)] = "#" + match.group(2)
+
+for key in ("alert", "warn"):
+    value = metadata.get(key)
+    if not value:
+        errors.append(f"missing # {key}")
+    elif status_bg and contrast(value, status_bg) < 4.5:
+        errors.append(f"{key} {contrast(value, status_bg):.2f}")
 
 embedded = {}
 for line in text.splitlines():
@@ -105,10 +176,9 @@ with open(palette_path, encoding="utf-8") as handle:
 
 if sorted(embedded) != list(range(16)) or embedded != external:
     errors.append("palette 0..15 does not match the .palette file")
-else:
-    background = "#" + embedded[0]
+elif window_bg:
     for index in range(1, 16):
-        ratio = contrast("#" + embedded[index], background)
+        ratio = contrast("#" + embedded[index], window_bg)
         if ratio < 4.5:
             errors.append(f"palette {index} {ratio:.2f}")
 
@@ -119,7 +189,7 @@ PY
 	then
 		ok
 	else
-		bad "$1: low contrast or palette mismatch"
+		bad "$1: theme check failed"
 	fi
 }
 
@@ -156,6 +226,7 @@ for file in \
 	stage3/01-session/files/cpz-status \
 	stage3/01-session/files/cpz-apply-settings \
 	stage3/01-session/files/cpz-help \
+	stage3/01-session/files/cpz-search \
 	stage3/01-session/files/cpz-session-save \
 	stage3/01-session/files/cpz-session-restore \
 	stage3/01-session/files/cpz-session-save-as-user \
@@ -165,6 +236,7 @@ for file in \
 	stage3/01-session/files/cpz-conn-status.service \
 	stage3/01-session/files/cpz-conn-status.timer \
 	stage3/01-session/files/cpz-brightness \
+	stage3/01-session/files/cpz-font \
 	stage3/01-session/files/cpz-keyboard-layout \
 	stage3/01-session/files/cpz-layout-next \
 	stage3/01-session/files/cpz-layout-apply \
@@ -184,6 +256,7 @@ for file in \
 	config.debug.example \
 	docs/M5-IMAGER.md \
 	docs/CPZ-KMSCON.md \
+	docs/APPS.md \
 	tools/make-m5stack-entry.py; do
 	have "$file"
 done
@@ -240,11 +313,13 @@ for script in \
 	stage3/01-session/files/cpz-status \
 	stage3/01-session/files/cpz-apply-settings \
 	stage3/01-session/files/cpz-help \
+	stage3/01-session/files/cpz-search \
 	stage3/01-session/files/cpz-session-save \
 	stage3/01-session/files/cpz-session-restore \
 	stage3/01-session/files/cpz-session-save-as-user \
 	stage3/01-session/files/cpz-conn-status \
 	stage3/01-session/files/cpz-brightness \
+	stage3/01-session/files/cpz-font \
 	stage3/01-session/files/cpz-keyboard-layout \
 	stage3/01-session/files/cpz-layout-next \
 	stage3/01-session/files/cpz-layout-apply \
@@ -277,9 +352,10 @@ contains stage3/01-session/files/cpz-login 'session.$vt.tty'
 contains stage3/01-session/files/cpz-first-login 'passwd'
 contains stage3/01-session/files/cpz-conn-status.timer 'OnUnitActiveSec=30s'
 contains stage3/01-session/files/cpz-session-save.timer 'OnUnitActiveSec=5min'
+contains stage3/01-session/files/cpz-kmscon-config 'get_setting font_size'
 contains stage3/01-session/files/cpz-kmscon-config 'get_setting font_panel'
 contains stage3/01-session/files/cpz-kmscon-config 'get_setting screen_timeout'
-contains stage3/01-session/files/cpz-kmscon-config 'get_setting keyboard_layout_active'
+not_contains stage3/01-session/files/cpz-kmscon-config "printf 'xkb-layout"
 contains stage3/01-session/files/cpz-kmscon-config 'palette-background'
 contains stage3/01-session/files/cpz-kmscon-config 'multi_monitor=clone'
 contains stage3/01-session/files/cpz-kmscon '--configdir /run/cpz-kmscon'
@@ -293,10 +369,14 @@ contains stage3/01-session/files/cpz-kmscon-output 'restart_session'
 contains stage3/01-session/files/cpz-kmscon-output '--status'
 contains stage3/01-session/files/cpz-kmscon-output '--recover'
 contains stage3/01-session/files/kmscon.conf 'multi-monitor=largest'
+contains stage3/01-session/files/kmscon.conf 'no-use-original-mode'
 contains stage3/01-session/files/kmscon.conf 'term=xterm-256color'
-contains stage3/01-session/files/cpz-settings 'Panel Text Size'
+not_contains stage3/01-session/files/cpz-kmscon-output.service '--auto'
+contains stage3/01-session/files/cpz-kmscon-output '--auto) override=""'
+contains stage3/01-session/files/cpz-settings 'Font Size'
+not_contains stage3/01-session/files/cpz-settings 'Panel Text Size'
 not_contains stage3/01-session/files/cpz-settings 'HDMI Text Size'
-contains stage3/01-session/files/settings.conf 'font_panel=6x12'
+contains stage3/01-session/files/settings.conf 'font_size=12'
 contains stage3/01-session/files/99-cpz-kmscon-output.rules 'HOTPLUG'
 contains stage3/01-session/files/99-cpz-kmscon-output.rules 'systemctl --no-block start'
 contains stage3/01-session/01-run.sh 'cpz-kmscon-output.timer'
@@ -308,6 +388,9 @@ contains stage3/01-session/files/cpz-status '/sys/class/backlight'
 contains stage3/01-session/files/cpz-status 'DEFAULT_AUDIO_SINK'
 contains stage3/01-session/files/cpz-status '#[fg=red]'
 contains stage3/01-session/files/cpz-status '#[fg=yellow]'
+contains stage3/01-session/files/cpz-status "'# alert'"
+contains stage3/01-session/files/cpz-status "'# warn'"
+contains stage3/01-session/files/cpz-status 'alert_style'
 contains stage3/01-session/files/cpz-status '#[default]'
 contains stage3/01-session/files/cpz-apply-settings 'show_volume'
 contains stage3/01-session/files/cpz-apply-settings 'show_brightness'
@@ -405,9 +488,18 @@ contains stage3/01-session/files/cpz-settings 'Output Volume'
 contains stage3/01-session/files/cpz-settings 'Change Password'
 contains stage3/01-session/files/cpz-settings 'VPN'
 contains stage3/01-session/files/cpz-settings 'status_interval'
-contains stage3/01-session/files/cpz-settings 'read_installed_packages'
-contains stage3/01-session/files/cpz-settings 'read_available_packages'
+contains stage3/01-session/files/cpz-settings 'Terminal Trove'
+contains stage3/01-session/files/cpz-settings 'trove_apps_screen'
+contains stage3/01-session/files/cpz-settings 'filter_trove_tools'
+contains stage3/01-session/files/cpz-settings 'apt_command_package'
 contains stage3/01-session/files/cpz-settings 'apt-get'
+not_contains stage3/01-session/files/cpz-settings 'read_available_packages'
+not_contains stage3/01-session/files/cpz-settings 'dumpavail'
+contains stage3/01-session/files/cpz-settings 'TROVE_INDEX_DEFAULT_URL'
+contains stage3/01-session/01-run.sh 'trove-index'
+contains config.cpz.example 'CPZ_TROVE_INDEX_URL'
+contains build.sh 'CPZ_TROVE_INDEX_URL'
+contains docs/APPS.md 'apt-get purge'
 not_contains stage3/01-session/files/cpz-settings 'Aptitude::Delete-Unused'
 not_contains stage3/01-session/00-packages 'aptitude'
 contains stage3/01-session/files/cpz-apply-settings 'cpz-brightness'
@@ -437,19 +529,45 @@ contains stage3/01-session/files/xkb/symbols/cpz 'key <HIRA> { [ period'
 contains stage3/01-session/files/xkb/symbols/cpz 'key <ZENK> { [ greater'
 contains stage3/01-session/01-run.sh 'xkb/symbols/cpz'
 contains stage3/01-session/01-run.sh '<ZENK> = 93;'
-contains stage3/01-session/files/cpz-kmscon-config 'cpz-layout.active'
-contains stage3/01-session/files/cpz-kmscon-config 'layout=cpz'
+not_contains stage3/01-session/files/cpz-kmscon-config 'cpz-layout.active'
+not_contains stage3/01-session/files/cpz-kmscon-config 'xkb-layout='
 contains stage3/01-session/files/cpz-keyboard-layout 'publish cpz'
-contains stage3/01-session/files/kmscon.conf 'grab-zoom-in='
-contains stage3/01-session/files/kmscon.conf '<Alt>plus'
-contains stage3/01-session/files/kmscon.conf 'grab-zoom-out='
-contains stage3/01-session/files/kmscon.conf '<Alt>minus'
+contains stage3/01-session/files/cpz-keyboard-layout 'localectl'
+contains stage3/01-session/files/cpz-keyboard-layout 'set-x11-keymap'
+contains stage3/01-session/files/cpz-keyboard-layout 'cpz_xkb_template'
+contains stage3/01-session/files/cpz-keyboard-layout 'write_cpz_xkb'
+have stage3/01-session/files/cpz-font
+contains stage3/01-session/files/cpz-font 'font_size'
+contains stage3/01-session/files/tmux.conf 'prefix C-a'
+contains stage3/01-session/files/tmux.conf 'cpz-font up'
+contains stage3/01-session/files/tmux.conf 'cpz-font down'
+contains stage3/01-session/files/tmux.conf 'bind -n M-v split-window -h'
+contains stage3/01-session/files/tmux.conf 'bind -n M-b split-window -v'
+contains stage3/01-session/files/tmux.conf 'bind -n M-n select-pane'
+contains stage3/01-session/files/tmux.conf 'bind -n M-p select-pane'
+contains stage3/01-session/files/tmux.conf 'bind -n M-z resize-pane -Z'
+contains stage3/01-session/files/tmux.conf 'bind -n M-x confirm-before'
+contains stage3/01-session/files/tmux.conf 'bind -n M-r command-prompt'
+contains stage3/01-session/files/tmux.conf 'bind -n M-l choose-tree'
+contains stage3/01-session/files/tmux.conf 'bind -n M-q detach-client'
+contains stage3/01-session/files/tmux.conf 'bind -n M-i run-shell'
+contains stage3/01-session/files/tmux.conf 'bind -n M-c copy-mode'
+contains stage3/01-session/files/tmux.conf 'bind -n M-y paste-buffer'
+not_contains stage3/01-session/files/kmscon.conf 'grab-zoom-in='
+not_contains stage3/01-session/files/kmscon.conf 'grab-zoom-out='
+not_contains stage3/01-session/files/kmscon.conf '<Alt>plus'
+not_contains stage3/01-session/files/kmscon.conf '<Alt>minus'
 have stage3/01-session/files/cpz-hint
 contains stage3/01-session/files/cpz-hint 'display-message -c'
-contains stage3/01-session/files/cpz-hint 'Up/Down scroll'
+contains stage3/01-session/files/cpz-hint 'V/B split'
 contains stage3/01-session/files/tmux.conf 'cpz-hint'
 contains stage3/01-session/01-run.sh 'cpz-hint'
 contains stage3/01-session/files/cpz-help 'larger / smaller font'
+contains stage3/01-session/files/cpz-help 'Alt+V'
+contains stage3/01-session/files/cpz-settings 'Alt+V'
+contains stage3/01-session/files/cpz-help 'Alt+N / Alt+P'
+not_contains stage3/01-session/files/cpz-help 'Ctrl-b'
+not_contains stage3/01-session/files/cpz-help 'Ctrl-a '
 contains stage3/01-session/files/cpz-tab-info '#{window_index} #{window_active}'
 contains stage3/01-session/files/cpz-tab-info 'set-option -t "$session"'
 not_contains stage3/01-session/files/cpz-tab-info 'set-option -t "=$session"'
@@ -477,6 +595,19 @@ contains stage3/01-session/files/tmux.conf 'cpz-display-toggle'
 contains stage3/01-session/01-run.sh 'cpz-display-toggle'
 contains stage3/01-session/files/cpz-help 'Alt+D'
 contains stage3/01-session/files/cpz-help 'Z/X/C/F'
+contains stage3/01-session/files/cpz-help 'Alt+O'
+contains stage3/01-session/files/tmux.conf 'cpz-search'
+contains stage3/01-session/files/tmux.conf 'bind -n M-o display-popup'
+contains stage3/01-session/01-run.sh 'cpz-search'
+contains stage3/01-session/files/cpz-settings '--list-pages'
+contains stage3/01-session/files/cpz-settings '--page'
+contains stage3/01-session/files/cpz-settings '--list-tools'
+contains stage3/01-session/files/cpz-settings '--tool'
+contains stage3/01-session/files/cpz-search '--with-nth=3'
+contains stage3/01-session/files/cpz-search 'DEFAULT_ROOTS'
+contains stage3/01-session/files/cpz-search 'safe_eval'
+contains stage3/01-session/files/cpz-search '--trove'
+contains stage3/01-session/files/cpz-search '--buffers'
 contains stage3/01-session/files/cpz-layout-next 'keyboard_layouts'
 contains stage3/01-session/files/cpz-layout-next 'cpz-layout-apply'
 contains stage3/01-session/files/cpz-layout-apply 'cpz-keyboard-layout.service'
@@ -494,6 +625,10 @@ contains stage3/01-session/files/settings.conf 'show_layout=1'
 contains stage3/01-session/files/cpz-status 'show_layout'
 contains stage3/01-session/files/cpz-status '/run/cpz-layout.active'
 contains stage3/01-session/files/cpz-status 'layout_active'
+contains stage3/01-session/files/cpz-status 'keyboard_layouts'
+contains stage3/01-session/files/cpz-status 'layout_count'
+contains stage3/01-session/files/cpz-apply-settings 'keyboard_layouts'
+contains stage3/01-session/files/cpz-settings 'layout_codes(data)) > 1'
 contains stage3/01-session/files/cpz-status 'CPZ) layout=US'
 contains stage3/01-session/files/cpz-keyboard-layout 'cached_UTF-8_del.kmap.gz'
 contains stage3/01-session/files/cpz-keyboard-layout 'load_standard'
@@ -603,6 +738,11 @@ contains stage2/05-cardputerzero/02-run.sh '99-cpz-no-rpi-update.pref'
 contains stage3/01-session/00-packages 'fonts-dejavu-core'
 contains stage3/01-session/00-packages 'fontconfig'
 contains stage3/01-session/00-packages 'fonts-terminus-otb'
+if grep -qx 'mc' "$ROOT/stage3/01-session/00-packages"; then
+	ok
+else
+	bad "stage3/01-session/00-packages does not install mc"
+fi
 not_contains stage3/01-session/00-packages 'xdg-utils'
 not_contains stage3/01-session/00-packages 'alsa-utils'
 contains stage3/01-session/files/cpz-settings 'devices Connected'
@@ -610,6 +750,7 @@ not_contains stage3/01-session/files/cancel-rename 'greetd'
 
 echo "== cpz session helpers =="
 python_ok stage3/01-session/files/cpz-settings
+python_ok stage3/01-session/files/cpz-search
 for conf in stage3/01-session/files/themes/*.conf; do
 	base=${conf##*/}
 	base=${base%.conf}
@@ -637,7 +778,7 @@ contains .github/workflows/ci.yml './tests/lint.sh'
 contains tests/lint.sh 'shellcheck'
 contains tests/lint.sh 'ruff'
 contains tests/lint.sh 'mypy'
-contains tests/run.sh 'cpz-settings'
+contains tests/run.sh 'unittest discover'
 contains tests/test_cpz_settings.py 'check_pages'
 
 echo "== release checks =="

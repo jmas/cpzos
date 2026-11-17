@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -37,8 +38,7 @@ PERSISTED = (
     "show_bt",
     "show_layout",
     "display",
-    "font_panel",
-    "font_hdmi",
+    "font_size",
     "brightness",
     "screen_timeout",
     "mouse",
@@ -78,16 +78,29 @@ class SettingsTUI(unittest.TestCase):
 
         self.mod.SYSTEM_SETTINGS = str(self.system)
         self.mod.THEME_DIR = str(self.themes)
+        self.mod.TROVE_INDEX_SYSTEM = str(
+            root / "usr" / "share" / "cpz" / "trove-index.json"
+        )
         self.config_home = root / "home" / ".config"
         old = os.environ.get("XDG_CONFIG_HOME")
         os.environ["XDG_CONFIG_HOME"] = str(self.config_home)
-        self.addCleanup(self.restore_env, old)
+        self.addCleanup(self.restore_env, "XDG_CONFIG_HOME", old)
 
-    def restore_env(self, old):
+        self.cache_home = root / "home" / ".cache"
+        old = os.environ.get("XDG_CACHE_HOME")
+        os.environ["XDG_CACHE_HOME"] = str(self.cache_home)
+        self.addCleanup(self.restore_env, "XDG_CACHE_HOME", old)
+
+        self.state_home = root / "home" / ".local" / "state"
+        old = os.environ.get("XDG_STATE_HOME")
+        os.environ["XDG_STATE_HOME"] = str(self.state_home)
+        self.addCleanup(self.restore_env, "XDG_STATE_HOME", old)
+
+    def restore_env(self, name, old):
         if old is None:
-            os.environ.pop("XDG_CONFIG_HOME", None)
+            os.environ.pop(name, None)
         else:
-            os.environ["XDG_CONFIG_HOME"] = old
+            os.environ[name] = old
 
     def write_user(self, text):
         path = Path(self.mod.user_settings_path())
@@ -99,11 +112,24 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(data["theme"], "cpz-campbell")
         self.assertEqual(data["brightness"], 100)
         self.assertEqual(data["display"], "auto")
-        self.assertEqual(data["font_panel"], "6x12")
-        self.assertEqual(data["font_hdmi"], "auto")
+        self.assertEqual(data["font_size"], 12)
         self.assertEqual(data["keyboard_layouts"], "us")
         self.assertEqual(data["keyboard_layout_active"], "us")
         self.assertEqual(self.mod.theme_label("cpz-homebrew"), "Homebrew")
+
+    def test_theme_names_with_unsupported_characters_are_ignored(self):
+        # The renderers only accept [A-Za-z0-9_-], so Settings must not offer
+        # a theme that would silently fall back to Campbell.
+        (self.themes / "my.theme.conf").write_text(
+            "# name: Bad\n", encoding="utf-8"
+        )
+        (self.themes / "bad name.conf").write_text(
+            "# name: Bad\n", encoding="utf-8"
+        )
+        names = self.mod.available_themes()
+        self.assertNotIn("my.theme", names)
+        self.assertNotIn("bad name", names)
+        self.assertIn("cpz-campbell", names)
 
     def test_user_file_overrides_system_file(self):
         self.system.write_text(
@@ -120,8 +146,7 @@ class SettingsTUI(unittest.TestCase):
     def test_invalid_values_fall_back_to_defaults(self):
         self.write_user(
             "display=sideways\n"
-            "font_panel=9x9\n"
-            "font_hdmi=9x9\n"
+            "font_size=999\n"
             "history_limit=7\n"
             "mode_keys=weird\n"
             "screen_timeout=7\n"
@@ -132,8 +157,8 @@ class SettingsTUI(unittest.TestCase):
 
         data = self.mod.load_settings()
         self.assertEqual(data["display"], "auto")
-        self.assertEqual(data["font_panel"], "6x12")
-        self.assertEqual(data["font_hdmi"], "auto")
+        # Values are clamped, not rejected.
+        self.assertEqual(data["font_size"], 64)
         self.assertEqual(data["history_limit"], 2000)
         self.assertEqual(data["mode_keys"], "vi")
         self.assertEqual(data["screen_timeout"], 0)
@@ -154,10 +179,9 @@ class SettingsTUI(unittest.TestCase):
             show_clock=0,
             date_format="iso",
             display="hdmi",
-            font_panel="8x16",
-            font_hdmi="20x40",
+            font_size=18,
             brightness=55,
-            keyboard_layouts="us,ua,de",
+            keyboard_layouts="us,de,ua",
             keyboard_layout_active="ua",
             history_limit=5000,
             mode_keys="emacs",
@@ -176,10 +200,28 @@ class SettingsTUI(unittest.TestCase):
         for key in PERSISTED:
             self.assertEqual(reloaded[key], data[key], key)
 
+    def test_legacy_font_presets_are_migrated(self):
+        self.write_user("font_panel=8x16\n")
+        self.assertEqual(self.mod.load_settings()["font_size"], 16)
+
+        self.write_user("font_hdmi=20x40\n")
+        self.assertEqual(self.mod.load_settings()["font_size"], 12)
+
+        self.write_user("font_panel=8x16\nfont_size=22\n")
+        self.assertEqual(self.mod.load_settings()["font_size"], 22)
+
+    def test_font_size_choices_cover_the_key_bindings(self):
+        self.assertEqual(self.mod.FONT_SIZE_MIN, 10)
+        self.assertEqual(self.mod.FONT_SIZE_MAX, 64)
+        self.assertIn(12, self.mod.FONT_SIZES)
+        self.assertIn(16, self.mod.FONT_SIZES)
+        self.assertIn(64, self.mod.FONT_SIZES)
+        self.assertEqual(self.mod.FONT_SIZE_LABELS[14], "14px")
+
     def test_layouts_are_normalized_in_canonical_order(self):
         self.assertEqual(self.mod.normalize_layouts("de, us ,de,bogus"), ["us", "de"])
         self.assertEqual(
-            self.mod.layout_codes({"keyboard_layouts": "ru,ua"}), ["ua", "ru"]
+            self.mod.layout_codes({"keyboard_layouts": "ru,ua"}), ["ru", "ua"]
         )
         # An unknown active layout falls back to the first enabled one.
         self.assertEqual(
@@ -188,6 +230,17 @@ class SettingsTUI(unittest.TestCase):
             ),
             "us",
         )
+
+    def test_layouts_are_sorted_alphabetically(self):
+        labels = [label for _code, label in self.mod.LAYOUTS]
+        self.assertEqual(labels, sorted(labels, key=str.casefold))
+
+    def test_timezones_keep_the_common_ones_first(self):
+        zones = list(self.mod.TIMEZONES)
+        common = [zone for zone in zones if zone in self.mod.COMMON_TIMEZONES]
+        self.assertEqual(common, zones[: len(common)])
+        rest = zones[len(common) :]
+        self.assertEqual(rest, sorted(rest, key=str.lower))
 
     def test_datetime_helpers(self):
         parts = self.mod.datetime_parts(datetime(2026, 1, 31, 23, 59, 58))
@@ -217,89 +270,245 @@ class SettingsTUI(unittest.TestCase):
         self.assertIn("pages OK", output.getvalue())
         self.assertGreater(len(self.mod.PAGE_TITLES), 10)
 
-    def test_package_metadata_parsing(self):
-        text = (
-            "Package: tmux\n"
-            "Status: install ok installed\n"
-            "Section: admin\n"
-            "Version: 3.4-1\n"
-            "Description: terminal multiplexer\n"
-            " tmux lets you switch between programs.\n"
-            " .\n"
-            " It is scriptable.\n"
-            "\n"
-            "Package: htop\n"
-            "Section: utils\n"
-            "Description: interactive process viewer\n"
-        )
-        stanzas = self.mod.parse_deb822(text)
-        self.assertEqual([s["Package"] for s in stanzas], ["tmux", "htop"])
+    def test_apt_package_parsing(self):
+        self.assertEqual(self.mod.apt_command_package("apt install tmux"), "tmux")
         self.assertEqual(
-            self.mod.summary_line(stanzas[0]["Description"]),
-            "terminal multiplexer",
+            self.mod.apt_command_package("sudo apt-get install -y bat"), "bat"
         )
-        self.assertIn(
-            "scriptable", self.mod.long_description(stanzas[0]["Description"])
+        self.assertEqual(self.mod.apt_command_package("sudo -E apt install bat"), "bat")
+        self.assertEqual(
+            self.mod.apt_command_package(
+                "DEBIAN_FRONTEND=noninteractive apt install bat"
+            ),
+            "bat",
         )
-        self.assertEqual(self.mod.normalize_section("non-free/utils"), "utils")
-        self.assertEqual(self.mod.section_label("utils"), "Utilities")
+        self.assertEqual(
+            self.mod.apt_command_package(
+                "apt install -y --no-install-recommends htop"
+            ),
+            "htop",
+        )
+        self.assertEqual(self.mod.apt_command_package("apt install rust:arm64"), "rust")
+        self.assertEqual(self.mod.apt_command_package("snap install foo"), "")
+        self.assertEqual(self.mod.apt_command_package("apt install ./foo.deb"), "")
 
-    def test_terminal_package_filter(self):
-        terminal = ("/usr/bin/tmux", "/usr/share/man/man1/tmux.1.gz")
-        self.assertTrue(self.mod.files_have_program(terminal))
-        self.assertFalse(self.mod.files_have_program(("/usr/lib/libfoo.so",)))
-        self.assertFalse(
-            self.mod.package_looks_gui("admin", "libc6, libtinfo6", terminal)
-        )
-        self.assertTrue(self.mod.package_looks_gui("utils", "libgtk-3-0", ()))
-        self.assertTrue(
-            self.mod.package_looks_gui(
-                "utils", "", ("/usr/share/applications/foo.desktop",)
-            )
-        )
-
-    def test_available_package_skips_libraries_and_gui(self):
-        stanza = {
-            "Package": "htop",
-            "Section": "utils",
-            "Description": "interactive process viewer",
+    def test_trove_index_loading_and_filters(self):
+        index = {
+            "schema": 1,
+            "tools": [
+                {
+                    "slug": "tmux",
+                    "name": "tmux",
+                    "summary": "terminal multiplexer",
+                    "language": "c",
+                    "language_label": "C",
+                    "categories": ["tui", "multiplexers"],
+                    "platforms": ["linux"],
+                    "install": {
+                        "linux": {"ubuntu / debian": "apt install tmux"},
+                    },
+                    "apt": {"command": "apt install tmux", "package": "tmux"},
+                },
+                {
+                    "slug": "lazygit",
+                    "name": "lazygit",
+                    "summary": "terminal UI for git",
+                    "language": "go",
+                    "language_label": "Go",
+                    "categories": ["git", "tui"],
+                    "platforms": ["linux"],
+                    "install": {},
+                    "apt": {},
+                },
+            ],
+            "categories": [
+                {"slug": "git", "name": "Git", "count": 1},
+                {"slug": "tui", "name": "TUI", "count": 2},
+            ],
+            "languages": [
+                {"slug": "c", "name": "C", "count": 1},
+                {"slug": "go", "name": "Go", "count": 1},
+            ],
         }
-        self.assertIsNotNone(self.mod.available_package(stanza))
-        self.assertIsNone(
-            self.mod.available_package(dict(stanza, Package="libfoo", Section="libs"))
+        path = Path(self.mod.trove_cache_path())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(__import__("json").dumps(index), encoding="utf-8")
+
+        loaded = self.mod.load_trove_index()
+        self.assertEqual(loaded["count"], 2)
+        self.assertEqual(
+            [tool["slug"] for tool in self.mod.filter_trove_tools(loaded["tools"])],
+            ["tmux", "lazygit"],
         )
-        self.assertIsNone(
-            self.mod.available_package(dict(stanza, Package="htop-dev"))
+        self.assertEqual(
+            [
+                tool["slug"]
+                for tool in self.mod.filter_trove_tools(
+                    loaded["tools"], "git", "", ""
+                )
+            ],
+            ["lazygit"],
         )
-        self.assertIsNone(
-            self.mod.available_package(
-                dict(stanza, Package="galculator", Depends="libgtk-3-0")
-            )
+        self.assertEqual(
+            [
+                tool["slug"]
+                for tool in self.mod.filter_trove_tools(
+                    loaded["tools"], "", "tui", "c"
+                )
+            ],
+            ["tmux"],
+        )
+        self.assertEqual(
+            self.mod.trove_option_label(
+                self.mod.trove_category_options(loaded), "tui"
+            ),
+            "TUI",
         )
 
-    def test_packages_are_grouped_by_category(self):
-        installed = [
-            {"name": "tmux", "section": "admin", "installed": True},
-            {"name": "htop", "section": "utils", "installed": True},
-        ]
-        groups = self.mod.group_packages(installed)
-        self.assertEqual([label for label, _ in groups], ["System", "Utilities"])
-        self.assertEqual(groups[0][1][0]["name"], "tmux")
-        # Already installed packages are not offered again.
-        available = [
-            {"name": "tmux", "section": "admin", "installed": False},
-            {"name": "nano", "section": "editors", "installed": False},
-        ]
-        groups = self.mod.group_packages(available, {"tmux"})
-        self.assertEqual([label for label, _ in groups], ["Editors"])
+    def test_trove_tool_list_for_search(self):
+        index = {
+            "schema": 1,
+            "tools": [
+                {
+                    "slug": "tmux",
+                    "name": "tmux",
+                    "summary": "terminal multiplexer",
+                    "categories": ["tui"],
+                    "apt": {"command": "apt install tmux", "package": "tmux"},
+                },
+                {
+                    "slug": "lazygit",
+                    "name": "lazygit",
+                    "summary": "terminal UI for git",
+                    "categories": ["git"],
+                    "apt": {},
+                },
+            ],
+        }
+        path = Path(self.mod.trove_cache_path())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(index), encoding="utf-8")
 
-    def test_core_packages_are_protected(self):
-        optional = {"name": "cowsay", "priority": "optional", "essential": False}
-        tmux = {"name": "tmux", "priority": "optional", "essential": False}
-        essential = {"name": "bash", "priority": "required", "essential": True}
-        self.assertFalse(self.mod.package_is_protected(optional))
-        self.assertTrue(self.mod.package_is_protected(tmux))
-        self.assertTrue(self.mod.package_is_protected(essential))
+        bindir = Path(self.tmp.name) / "bin"
+        bindir.mkdir()
+        tmux = bindir / "tmux"
+        tmux.write_text("#!/bin/sh\n", encoding="utf-8")
+        tmux.chmod(0o755)
+        old = os.environ.get("PATH")
+        os.environ["PATH"] = str(bindir)
+        self.addCleanup(self.restore_env, "PATH", old)
+
+        payload = self.mod.list_tools_payload()
+        self.assertEqual(payload["schema"], 1)
+        tools = {tool["slug"]: tool for tool in payload["tools"]}
+        self.assertEqual(tools["tmux"]["command"], "tmux")
+        self.assertTrue(tools["tmux"]["installed"])
+        self.assertEqual(tools["tmux"]["apt"], "tmux")
+        self.assertEqual(tools["lazygit"]["command"], "")
+        self.assertFalse(tools["lazygit"]["installed"])
+
+    def test_trove_managed_state_round_trip(self):
+        apps = {
+            "tmux": {
+                "slug": "tmux",
+                "name": "tmux",
+                "package": "tmux",
+                "version": "3.4",
+                "installed_at": "2026-11-17T12:00:00",
+                "install_command": "apt install tmux",
+                "uninstall_command": "apt-get purge tmux",
+            }
+        }
+        self.mod.write_trove_apps(apps)
+        self.assertEqual(self.mod.read_trove_apps(), apps)
+        path = Path(self.mod.trove_state_path())
+        self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
+
+    def test_trove_details_show_manual_instructions(self):
+        tool = {
+            "slug": "foo",
+            "name": "foo",
+            "summary": "a terminal foo",
+            "description": "",
+            "language": "rust",
+            "language_label": "Rust",
+            "categories": ["tui"],
+            "platforms": ["linux"],
+            "install": {
+                "linux": {"ubuntu / debian": "snap install foo"},
+                "macos": "brew install foo",
+            },
+            "apt": {},
+            "url": "https://terminaltrove.com/foo/",
+            "website": "https://example.com/foo",
+        }
+        lines = self.mod.trove_details_lines(
+            tool,
+            {"package": "", "status": "missing", "version": "", "source": "slug"},
+            None,
+            60,
+        )
+        text = "\n".join(lines)
+        self.assertIn("Not available in apt", text)
+        self.assertIn("snap install foo", text)
+        self.assertIn("brew install foo", text)
+        self.assertIn("Terminal Trove: https://terminaltrove.com/foo/", text)
+        self.assertIn("Website: https://example.com/foo", text)
+
+    def test_trove_details_do_not_offer_system_packages(self):
+        tool = {
+            "slug": "htop",
+            "name": "htop",
+            "summary": "process viewer",
+            "description": "",
+            "language": "c",
+            "language_label": "C",
+            "categories": ["tui"],
+            "platforms": ["linux"],
+            "install": {},
+            "apt": {},
+            "url": "https://terminaltrove.com/htop/",
+            "website": "",
+        }
+        lines = self.mod.trove_details_lines(
+            tool,
+            {
+                "package": "htop",
+                "status": "installed",
+                "version": "3.4",
+                "source": "catalog",
+            },
+            None,
+            60,
+        )
+        text = "\n".join(lines)
+        self.assertIn("installed (system)", text)
+        self.assertIn("outside the manager", text)
+        self.assertNotIn("Install: apt-get install", text)
+
+    def test_newer_system_index_wins_over_stale_cache(self):
+        old = {
+            "schema": 1,
+            "generated_at": "2026-01-01T00:00:00+00:00",
+            "tools": [{"slug": "old", "name": "old"}],
+        }
+        new = {
+            "schema": 1,
+            "generated_at": "2026-02-01T00:00:00+00:00",
+            "tools": [{"slug": "new", "name": "new"}],
+        }
+        cache = Path(self.mod.trove_cache_path())
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(__import__("json").dumps(old), encoding="utf-8")
+        system = Path(self.mod.TROVE_INDEX_SYSTEM)
+        system.parent.mkdir(parents=True, exist_ok=True)
+        system.write_text(__import__("json").dumps(new), encoding="utf-8")
+        self.assertEqual(self.mod.load_trove_index()["tools"][0]["slug"], "new")
+
+    def test_trove_index_without_catalog_is_empty(self):
+        loaded = self.mod.load_trove_index()
+        self.assertEqual(loaded["tools"], [])
+        self.assertEqual(loaded["count"], 0)
 
 
 if __name__ == "__main__":
