@@ -21,6 +21,13 @@ HTML = ROOT / "index.html"
 APP = ROOT / "assets" / "app.js"
 DYNAMIC_KEYS = {"meta.title", "meta.desc"}
 PLACEHOLDER = re.compile(r"\{([a-zA-Z0-9_]+)\}")
+BANNED = {
+    "starts in a terminal": "write 'opens a terminal' (CPZ-UI rule 45)",
+    "Writing erases": "name the action: 'This erases' (CPZ-UI rule 48)",
+    "input and output devices": "write 'audio devices' (CPZ-UI rule 50)",
+    "clock sync": "write 'automatic time' (CPZ-UI rule 50)",
+    "press again to restore": "write 'press again to undo' (CPZ-UI rule 48)",
+}
 VOID_TAGS = {
     "area",
     "base",
@@ -152,6 +159,13 @@ def main() -> int:
                 fail(f"{path.name}: placeholder mismatch in {key!r}")
 
     html = HTML.read_text(encoding="utf-8")
+    for key, value in en.items():
+        for phrase, hint in BANNED.items():
+            if phrase.lower() in value.lower():
+                fail(f"en.json: {key!r} contains banned phrase {phrase!r}; {hint}")
+    for phrase, hint in BANNED.items():
+        if phrase.lower() in html.lower():
+            fail(f"index.html: banned phrase {phrase!r}; {hint}")
     used = set(re.findall(r'data-i18n(?:-placeholder|-aria-label)?="([^"]+)"', html))
     unknown = used - set(en) - DYNAMIC_KEYS
     for key in sorted(unknown):

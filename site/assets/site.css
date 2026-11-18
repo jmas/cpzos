@@ -253,14 +253,6 @@ section:first-child {
   padding: 64px 0 56px;
 }
 
-.kicker {
-  margin: 0 0 28px;
-  color: var(--accent);
-  font-size: 11.5px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
 .hero h1 {
   margin: 0 0 20px;
   font-size: clamp(64px, 10vw, 104px);
@@ -358,10 +350,27 @@ section:first-child {
 
 .install-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
-  gap: 32px;
+  grid-template-columns: 1fr;
+  gap: 24px;
   margin-top: 28px;
   align-items: start;
+}
+
+.install-steps {
+  max-width: 72ch;
+}
+
+.more {
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+
+.more a {
+  color: var(--muted);
+}
+
+.more a:hover {
+  color: var(--accent);
 }
 
 .steps {
@@ -418,6 +427,10 @@ section:first-child {
 
 .download .actions {
   margin-top: 16px;
+}
+
+.download > .actions:first-child {
+  margin-top: 0;
 }
 
 .first-run {
@@ -545,7 +558,7 @@ kbd {
 
 .combo {
   color: var(--dim);
-  white-space: nowrap;
+  white-space: normal;
 }
 
 /* wide tables */
@@ -663,6 +676,10 @@ footer {
 @media (max-width: 900px) {
   .hero h1 {
     font-size: 76px;
+  }
+
+  .principles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

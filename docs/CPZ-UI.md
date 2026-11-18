@@ -59,7 +59,7 @@ Each visible string MUST pass one of these tests:
 - **Value** — states the current condition.
 - **Hint** — names a key that works for the current selection.
 - **Message** — reports the result of an action, or an error and the next step.
-- **Explanation** — prevents a likely mistake (for example "Writing erases the
+- **Explanation** — prevents a likely mistake (for example "This erases the
   card" or "Do not pull the power").
 
 If a string passes none of these tests, delete it. Section counts, section
@@ -72,7 +72,7 @@ A fact appears once per surface. Before adding text, search for the same fact
 elsewhere:
 
 - login details, Wi-Fi state and the power-off instruction belong to the
-  first-boot checklist, not to both the hero and the checklist;
+  first-start checklist, not to both the hero and the checklist;
 - `Download`, `Latest release` and `Documentation` must not appear in the
   header, a section and the footer at the same time;
 - a success toast is redundant when the screen already shows the new value.
@@ -174,13 +174,14 @@ violated, leave it alone.
 
 ## 2. Product UI model
 
-CPZ is one terminal session:
+CPZ is a terminal-first graphics session:
 
 ```text
 tabs ─ panes ─ status bar
    Alt+S → Settings (main → page → picker)
    Alt+H → key reference
    Alt+O → Search
+   a game or video → opens over the terminal, then returns to the same tab
 ```
 
 - Settings is the only configuration surface. A setting that requires editing
@@ -190,6 +191,9 @@ tabs ─ panes ─ status bar
   must never close a terminal tab.
 - Search is a shortcut into Settings, apps and the power actions, not a second
   settings system.
+- A graphical app is not a second mode. It opens over the terminal and closing
+  it returns to the same tab. There is no desktop, window manager or task
+  switcher.
 
 ---
 
@@ -200,7 +204,7 @@ tabs ─ panes ─ status bar
 1. Every label names a destination, control or value; otherwise it is removed.
 2. Sentence case, no trailing colon, no "please", no "successfully".
 3. One concept, one term (see the glossary).
-4. No implementation jargon on daily surfaces: `kmscon`, `tmux`, `apt`, `NTP`,
+4. No implementation jargon on daily surfaces: `cage`, `foot`, `tmux`, `apt`, `NTP`,
    `EDID`, `autologin`, `PipeWire`, catalog internals. Put it in `About`,
    `Diagnostics` or the documentation.
 5. Units are explicit: `px`, `%`, `s`, `lines`.
@@ -214,8 +218,11 @@ tabs ─ panes ─ status bar
 10. Do not use text as decoration. If a number or paragraph has no
     navigational or safety purpose, remove it.
 
-The on-device UI is English. The site may translate explanations, but
-on-device menu names and paths stay English so they match the device.
+The on-device UI ships in English, Ukrainian and German; English is the
+fallback. The language is selected in Settings → System → Language and also
+sets the system locale for new logins. The site is available in more
+languages; it keeps on-device menu names in their canonical English form and
+translates only the explanation (see rule 34).
 
 ### Controls and navigation
 
@@ -225,7 +232,8 @@ on-device menu names and paths stay English so they match the device.
 12. No dead focusable rows. An info row either has no cursor or its Enter opens
     details. The footer MUST NOT advertise `Enter` for a row that ignores it.
 13. Footer keys MUST be valid for the current selection and context. Teach the
-    keys that work now, not the whole keymap.
+    keys that work now, not the whole keymap. Footer hints use palette slot 8,
+    the theme's muted colour, so they match the Search footer in every theme.
 14. `Enter` opens, confirms or applies. `Space` toggles. `q`/`Esc` goes back
     without changing data. `/` starts filtering.
 15. Destructive actions MUST confirm, name the object and default to "no".
@@ -243,6 +251,11 @@ on-device menu names and paths stay English so they match the device.
 20. Settings depth MUST NOT exceed three levels including the main menu.
 21. Adding a top-level menu row requires removing or merging another; the
     nine-row budget is part of the design.
+
+Mouse and wheel input is an optional accelerator, never the only way to reach
+a control. A click selects a row, a double-click activates the same action as
+`Enter`, and the wheel scrolls; every one of those actions MUST also work from
+the keyboard. Text selection and copying belong to tmux/foot, not to the TUI.
 
 ### Status bar
 
@@ -272,8 +285,9 @@ on-device menu names and paths stay English so they match the device.
     repeated in three sections.
 33. Navigation labels match the section headings (`Keys`, not "Key
     reference").
-34. Keep on-device menu names in English inside translations; translate the
-    explanation, not the UI path.
+34. Keep on-device menu names and paths in the canonical English form inside
+    site translations; translate the explanation, not the UI path. The device
+    itself shows them in its selected language.
 35. The site must stay readable without JavaScript and pass
     `python3 site/check.py`.
 
@@ -284,7 +298,7 @@ on-device menu names and paths stay English so they match the device.
 37. Meaning is not carried by colour alone.
 38. New user-visible strings on the site require all locale files and
     `site/check.py`. New TUI strings must fit 51 columns in every supported
-    layout of the panel.
+    layout of the panel and in every language catalog (en, uk, de).
 39. A translation may be longer than English; leave room in labels and
     footers.
 
@@ -312,6 +326,75 @@ on-device menu names and paths stay English so they match the device.
 Implementation: `draw_modal_frame()` in `cpz-settings` and the
 border/label/padding block in `fzf_args()` in `cpz-search`. Changing one
 without the other is a finding.
+
+### Sentence shape and translation
+
+These rules apply to English and to every translation. English is the source of
+meaning, not a word order to copy.
+
+45. Name what appears on screen, not the place the system "starts in":
+    `opens a terminal instead of a desktop`, not `starts in a terminal instead
+    of on a desktop`.
+46. Keep every noun phrase complete. `for the CardputerZero handheld` /
+    `для кишенькового комп'ютера CardputerZero`, not a bare adjective with an
+    implied noun.
+47. Keep contrasts parallel. Compare two interfaces or two places, not an
+    interface with a place: `a terminal, not a desktop`, not `in a terminal,
+    not on a desktop`.
+48. Name a concrete actor and give every transitive verb an object. `This
+    erases the card`, not `Writing erases the card`; `press again to undo`, not
+    `press again to restore` when the object is unclear.
+49. Use one grammatical form per list or table column. If the header is
+    `Includes`, every row is a noun phrase; if it is `What you can do`, every
+    row starts with a verb.
+50. Prefer the everyday word when both words are accurate: `audio devices`,
+    not `input and output devices`; `automatic time`, not `clock sync`.
+51. Do not use a dash as a substitute for a verb in a full sentence.
+    `Wi-Fi, sound and power are in Settings`, not `Wi-Fi, sound and power — in
+    Settings`.
+52. Translate meaning, not words. If a literal translation sounds like a
+    calque, rewrite the sentence in the target language. Read it aloud before
+    committing it.
+
+| Bad | Good | Why |
+| --- | --- | --- |
+| starts in a terminal, not on a desktop | opens a terminal instead of a desktop | names what appears; keeps the contrast parallel |
+| for the CardputerZero | for the CardputerZero handheld | completes the noun phrase |
+| Writing erases the whole card | This erases everything on the card | a process is not an actor |
+| press again to restore | press again to undo | a transitive verb needs an object |
+| Wi-Fi, sound and power — in Settings | Wi-Fi, sound and power are in Settings | a dash is not a verb |
+| input and output devices | audio devices | everyday word |
+
+### Brevity and one fact, one place
+
+53. Give each fact one job and one place on a surface. The same fact may appear
+    again only when it changes job: a promise in the hero, an instruction in
+    the first-start list, a reference in a table. Never repeat it twice with
+    the same job.
+54. Each section adds the next fact. The hero states the promise; the first
+    section after it must not paraphrase the hero. If a card repeats the hero,
+    replace it with a new capability or delete it.
+55. A section introduction must add information that the heading and the
+    controls do not already give. If it only announces the controls, delete it.
+    A table or list is a reference, not a script: do not narrate its rows.
+56. Keep one primary call to action per view. Do not repeat the primary
+    download label in a section; a persistent header link is navigation, not a
+    second CTA. Secondary links must have distinct destinations.
+57. A title names the thing; its description adds a fact. Do not restate the
+    title in the first sentence.
+58. Prefer deletion to paraphrase. If two sentences say the same thing, keep
+    the shorter one with the action. The footer does not repeat the product or
+    device name. Metadata may restate the hero for search; visible copy may
+    not.
+
+| Was watery | Minimal | Why |
+| --- | --- | --- |
+| hero and first card both say "a terminal, not a desktop" | hero says it; first card says "Split the screen" | one job per fact |
+| keys intro says "Alt+H shows the full list"; the Alt+H row repeats it | keep the row, delete the intro sentence | the table is the reference |
+| help intro repeats Alt+H/O/S from Keys | delete the intro | adds no information |
+| hero "Download image" and section "Latest release" open the same page | keep the hero CTA; the section offers "All releases" only | one primary CTA |
+| second card repeats "your tabs stay open" | "Plug in a monitor at any time; your work stays open" | adds a new fact |
+| footer repeats "built for CardputerZero" | "Based on Raspberry Pi OS." | branding already says it |
 
 ---
 
@@ -355,7 +438,7 @@ Do not:
 
 ```text
 <Object>            Display, Battery, Brightness, Ethernet
-<Object> <Qualifier>  Screen Timeout, Status Refresh, Text Size
+<Object> <Qualifier>  Status Refresh, Text Size
 ```
 
 No verbs, no sentences, no punctuation.
@@ -394,9 +477,8 @@ Top level:
 | `Alt+S` | Settings |
 | `Alt+H` | full key reference |
 | `Alt+O` | Search |
-| `Alt+Q` | detach (session survives) |
 
-These are the defaults. Every action is rebindable in Settings → Keyboard →
+These are the defaults. Every action is rebindable in Settings → Input →
 Shortcuts; see [CPZ-KEYS.md](CPZ-KEYS.md) for the rules and the complete list.
 
 Inside Settings:
@@ -425,6 +507,8 @@ Rules:
 - Every section answers one question and links out instead of duplicating the
   documentation.
 - Key combinations stay literal; only descriptions are translated.
+- Describe a game or video by what it does. Do not name `cage`, `foot`,
+  `Wayland`, `X11` or `tmux` on the site.
 - Chapter numbers are decoration and are not used.
 - Release version is not printed; link to Releases.
 - Locale files have the same keys and pass `site/check.py`.
@@ -450,6 +534,13 @@ Before merging a UI change:
 [ ] Errors say what failed and what to do.
 [ ] Dark/light, Mono, one/many tabs, no/connected adapter checked.
 [ ] Site: all 11 locales updated.
+[ ] Every sentence has a concrete subject and object; no calque, hanging
+    modifier, mixed list form or dash-for-verb (rules 45-52).
+[ ] Lists and table columns use one grammatical form and the header names it.
+[ ] Each fact has one job and one place; sections add facts, not paraphrases
+    (rules 53-58).
+[ ] One primary CTA; section intros add information; the footer does not
+    repeat the product name.
 [ ] python3 site/check.py
 [ ] python3 -m unittest discover -s tests -p 'test_*.py'
 [ ] tests/lint.sh
@@ -497,8 +588,8 @@ Rules for exceptions:
 | --- | --- | --- |
 | **Settings** | the TUI and its main page | Preferences, Control Panel |
 | **Connections** | Wi-Fi, Bluetooth, Ethernet, VPN page | Network (for the page), Connectivity |
-| **Display** | theme, brightness, timeout, output, text size | Display & Brightness |
-| **Text Size** | kmscon font size, 10–64 px | Font Size |
+| **Display** | theme, brightness, screen output, text size, status bar | Display & Brightness |
+| **Text Size** | foot font size, 10–64 px | Font Size |
 | **Keys** | key reference | Key Bindings, Key reference |
 | **pane** | a tmux split | split, window |
 | **tab** | a tmux window | window (in user text) |
@@ -523,7 +614,7 @@ The review that produced these rules used the same sequence:
 2. Removed strings that failed the purpose test: the "Three things…" intro,
    the repeated hero note, `Install.note` without an action, the status-bar
    hint that described a state the UI does not have.
-3. Checked each fact once: login and Wi-Fi moved to the first-boot list;
+3. Checked each fact once: login and Wi-Fi moved to the first-start list;
    `Download`, `Documentation` and `Latest release` kept one home each.
 4. Walked the Settings tree with a 53x14 grid: labels over 16 characters,
    dead info rows, footers that promised Enter, and lists without filters.

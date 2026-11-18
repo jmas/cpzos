@@ -10,12 +10,14 @@ or four physical presses. The shortcuts are therefore deliberately narrow:
 
 `cpz-keys` is the single source of truth. It generates the tmux bindings,
 renders `Alt+H`, fills the CPZ Search action list, shows the first-login hint
-and backs Settings → Keyboard → Shortcuts.
+and backs Settings → Input → Shortcuts.
 
 ## Rules
 
 1. **Two keys maximum.** One modifier (`Alt`) plus one key. No `Ctrl+Alt`,
-   `Shift+Alt`, `Sym` or `Fn` chords for a CPZ action.
+   `Shift+Alt`, `Sym` or `Fn` chords for a CPZ action. The one named-key
+   exception is previous tab: `Alt+Shift+Tab`, using the conventional reverse
+   Tab key.
 2. **Alt is the primary modifier.** The defaults use `Alt+letter` and
    `Alt+digit`. `Alt+Space` is the only named key because Space is a single
    normal key on both the internal and an external keyboard.
@@ -23,9 +25,10 @@ and backs Settings → Keyboard → Shortcuts.
    Sym layer on the internal keyboard. Use a letter instead.
 4. **No arrows for global actions.** The internal arrows are `Fn+F/X/Z/C`.
    Global navigation uses letters; copy mode keeps its single-key vi movement.
-5. **One action, one binding.** No duplicate aliases. `Alt+Tab`, `Alt+BackTab`,
+5. **One action, one binding.** No duplicate aliases. `Alt+A`, `Alt+F`,
    `Ctrl+Plus`, `Ctrl+Minus`, `Alt+I` and the old `Alt+arrow` scroll aliases are
-   intentionally gone.
+   intentionally gone. Tab switching uses the conventional
+   `Alt+Tab` / `Alt+Shift+Tab` pair.
 6. **The prefix is a fallback, not the UI.** `C-a` remains available for tmux
    commands that are not in the CPZ registry. Daily actions never need it.
 7. **Rebindable by design.** A user-facing binding belongs in `cpz-keys`, never
@@ -39,7 +42,7 @@ and backs Settings → Keyboard → Shortcuts.
 | Start here | Search | `Alt+O` |
 | | Settings | `Alt+S` |
 | | Help | `Alt+H` |
-| Tabs | Previous / next tab | `Alt+A` / `Alt+F` |
+| Tabs | Previous / next tab | `Alt+Shift+Tab` / `Alt+Tab` |
 | | Select tab 1–9 | `Alt+1` … `Alt+9` |
 | | New / close / rename / list | `Alt+T` / `Alt+W` / `Alt+R` / `Alt+L` |
 | Panes | Split left/right, top/bottom | `Alt+V` / `Alt+B` |
@@ -52,12 +55,12 @@ and backs Settings → Keyboard → Shortcuts.
 | Session | Input layout | `Alt+Space` |
 | | Display toggle (panel / auto) | `Alt+D` |
 | | Font bigger / smaller | `Alt+G` / `Alt+M` |
-| | Detach | `Alt+Q` |
 
-`Alt+A` / `Alt+F` mean back / forward through the tab list. Tab numbers remain
-the fastest way to jump directly. `Alt+U` / `Alt+I` change the default output
-volume in the same 5% steps as Settings → Sound; `Alt+0` toggles mute. Both
-paths use `wpctl`, so the status-bar volume token stays in sync.
+`Alt+Tab` moves to the next tab and `Alt+Shift+Tab` to the previous one, the
+same order as a browser. Tab numbers remain the fastest way to jump directly.
+`Alt+U` / `Alt+I` change the default output volume in the same 5% steps as
+Settings → Sound; `Alt+0` toggles mute. Both paths use `wpctl`, so the
+status-bar volume token stays in sync.
 
 ### Copy mode
 
@@ -66,7 +69,13 @@ paths use `wpctl`, so the status-bar volume token stays in sync.
 - `j` / `k` (or `Fn+F` / `Fn+X`) move one line,
 - `Ctrl+U` / `Ctrl+D` or `Fn+L` / `Fn+M` page,
 - `Space` starts or stops a selection, `Enter` copies,
+- a mouse drag enters copy mode and copies the selection on release,
+- double-click selects the word under the pointer,
 - `q` leaves copy mode.
+
+`set-clipboard` is on by default. tmux sends the copied text over OSC 52 and
+foot puts it on the Wayland clipboard; `Alt+Y` pastes the tmux buffer when the
+receiving application does not accept the clipboard.
 
 Only two keys are needed for the paging keys; the one-key vi movement is inside
 a mode, where it does not compete with a global shortcut.
@@ -92,7 +101,8 @@ The first pass removed the bindings that could not be produced with two keys
 on the internal keyboard and the aliases that made the reference inconsistent:
 
 - Tab switching moved from `Alt+Left` / `Alt+Right` (Fn chord internally) to
-  `Alt+A` / `Alt+F`; `Alt+Tab` / `Alt+BackTab` duplicates were removed.
+  `Alt+Tab` / `Alt+Shift+Tab`. The intermediate `Alt+A` / `Alt+F` defaults were
+  removed; both keys remain free for user overrides.
 - Text size moved from `Alt+Plus` / `Alt+Minus` and `Ctrl+Plus` / `Ctrl+Minus`
   (Sym layer plus an extra modifier) to `Alt+G` / `Alt+M`.
 - The duplicate `Alt+I` layout shortcut was removed; `Alt+Space` is the single
@@ -102,18 +112,21 @@ on the internal keyboard and the aliases that made the reference inconsistent:
   `Ctrl+D` (or `Fn+L` / `Fn+M`) page and `j` / `k` move.
 - Prefix aliases (`C-a c`, `C-a &`) were removed. `C-a` itself remains only
   for advanced tmux commands that have no CPZ action.
+- The global `Detach` shortcut (`Alt+Q`) was removed from the CPZ registry. It
+  was confusing on a kiosk because the tty1 client immediately reconnects; use
+  the tmux prefix fallback `C-a d` if a real detach is needed.
 - The old copy-mode `M-Up` / `M-Down` aliases were removed in favour of the
   mode's own paging keys.
 
 The result is one registry, one binding per action, and no daily action that
 needs a third key or the Sym/Fn layer.
 
-## Settings → Keyboard → Shortcuts
+## Settings → Input → Shortcuts
 
 The Shortcuts page lists one row per action and its current key.
 
 - `Enter` (or `Space` / `C`) opens the capture dialog.
-- Press `Alt+letter`, `Alt+digit` or `Alt+Space` to bind it.
+- Press `Alt+letter`, `Alt+digit`, `Alt+Space` or `Alt+Tab` to bind it.
 - `Backspace` restores that action's default.
 - `Esc` cancels.
 - `Reset Shortcuts` at the bottom restores every default.

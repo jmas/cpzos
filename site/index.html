@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CPZ — CardputerZero OS</title>
-<meta name="description" content="CPZ is a Linux for the CardputerZero handheld that boots into a text terminal. It keeps your tabs open and manages Wi-Fi, Bluetooth, sound and power from a single Settings menu.">
+<meta name="description" content="CPZ is an operating system for the CardputerZero handheld. It opens a terminal instead of a desktop, keeps your work in tabs, and runs graphical apps over the terminal.">
 <meta name="color-scheme" content="dark light">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%230c0c0c'/%3E%3Ctext x='32' y='42' font-family='monospace' font-size='26' fill='%239ece6a' text-anchor='middle'%3ECPZ%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/site.css">
@@ -44,12 +44,10 @@
 <main id="main">
 
 <section class="hero" id="top">
-  <p class="kicker" data-i18n="hero.kicker">CardputerZero · Debian 13</p>
   <h1>CPZ</h1>
-  <p class="lead" data-i18n="hero.lead">A Linux for the CardputerZero handheld that boots into a text terminal instead of a desktop. Open tabs, split the screen, join Wi-Fi and change settings — all from the keyboard.</p>
+  <p class="lead" data-i18n="hero.lead">An operating system for the CardputerZero handheld that opens a terminal instead of a desktop. Work in tabs, change settings from one menu, and open graphical apps when you need them.</p>
   <div class="actions">
     <a class="button" href="https://github.com/jmas/cpzos/releases/latest" data-i18n="hero.cta.download">Download image</a>
-    <a class="button ghost" href="#install" data-i18n="nav.install">Install</a>
   </div>
 </section>
 
@@ -60,9 +58,12 @@
     </div>
   </div>
   <ol class="principles">
-    <li><h3 data-i18n="w1.t">Fast and light in a terminal</h3><p data-i18n="w1.d">CPZ starts straight into a terminal. It boots quickly, uses little memory and comes with a wide choice of text apps that fit the small screen.</p></li>
-    <li><h3 data-i18n="w2.t">Fits small and large screens</h3><p data-i18n="w2.d">Use the built-in screen or connect an HDMI monitor. Text and layout adapt to either one, and your session keeps running while you switch.</p></li>
-    <li><h3 data-i18n="w3.t">Simple to set up and use</h3><p data-i18n="w3.d">Settings, search and the app catalog all work from one keyboard-driven interface. No config files, extra tools or desktop to learn.</p></li>
+    <li><h3 data-i18n="w1.t">Fast and light</h3><p data-i18n="w1.d">Starts quickly and uses little memory, leaving more for your apps.</p></li>
+    <li><h3 data-i18n="w2.t">Terminal as desktop</h3><p data-i18n="w2.d">Tabs, panes and a status bar replace windows and icons.</p></li>
+    <li><h3 data-i18n="w3.t">Keyboard control</h3><p data-i18n="w3.d">Every action has a key. A mouse is optional.</p></li>
+    <li><h3 data-i18n="w4.t">Convenience first</h3><p data-i18n="w4.d">Plug in a drive and it opens in a tab; one search finds apps, files and settings.</p></li>
+    <li><h3 data-i18n="w5.t">Graphical apps</h3><p data-i18n="w5.d">Games, video players and other graphical apps open over the terminal; close one and you are back in the same tab.</p></li>
+    <li><h3 data-i18n="w6.t">Multiple languages</h3><p data-i18n="w6.d">Switch the interface and system language in Settings. No reinstall needed.</p></li>
   </ol>
 </section>
 
@@ -70,29 +71,23 @@
   <div class="section-head">
     <div>
       <h2 data-i18n="install.title">Install</h2>
-      <p class="intro" data-i18n="install.intro">One image, one microSD card, no setup wizard. The image is built for the CardputerZero hardware.</p>
     </div>
   </div>
   <div class="install-grid">
-    <ol class="steps">
-      <li data-i18n="install.s1">Download the .img.xz file from Releases.</li>
-      <li data-i18n="install.s2">Write it to a microSD card with Raspberry Pi Imager, balenaEtcher, dd or M5 Imager. Writing erases the whole card.</li>
-      <li data-i18n="install.s3">Insert the card and power on. The first boot takes a little longer than later boots.</li>
-    </ol>
-    <aside class="download">
-      <p data-i18n="install.note">The release page lists a SHA-256 checksum; check it before writing.</p>
-      <div class="actions">
-        <a class="button" href="https://github.com/jmas/cpzos/releases/latest" data-i18n="install.latest">Latest release</a>
-        <a class="button ghost" href="https://github.com/jmas/cpzos/releases" data-i18n="install.all">All releases</a>
-      </div>
-    </aside>
+    <div class="install-steps">
+      <ol class="steps">
+        <li data-i18n="install.s1">Download the image file from Releases.</li>
+        <li data-i18n="install.s2">Write it to a microSD card with Raspberry Pi Imager, balenaEtcher or M5 Imager. This erases everything on the card.</li>
+        <li data-i18n="install.s3">Put the card in and turn the device on. The first start takes a little longer.</li>
+      </ol>
+      <p class="more"><a href="https://github.com/jmas/cpzos/releases" data-i18n="install.all">All releases</a></p>
+    </div>
     <article class="first-run">
-      <h3 data-i18n="install.after.title">First boot</h3>
+      <h3 data-i18n="install.after.title">First start</h3>
       <ul>
-        <li data-i18n="install.after.login">Log in as cpz / cpz, then set a new password in Settings → System.</li>
+        <li data-i18n="install.after.login">Log in with the name cpz and the password cpz, then set a new password in Settings → System → Security.</li>
         <li data-i18n="install.after.wifi">Turn on Wi-Fi in Settings → Connections. It is off by default.</li>
-        <li data-i18n="install.after.power">Power off from Settings → Power. Don't just unplug the device.</li>
-        <li data-i18n="install.after.usb">Plug in a USB drive and it opens in a new tab under /media.</li>
+        <li data-i18n="install.after.power">Power off from Settings → Power. Don't unplug the device to turn it off.</li>
       </ul>
     </article>
   </div>
@@ -102,27 +97,33 @@
   <div class="section-head">
     <div>
       <h2 data-i18n="keys.title">Keys</h2>
-      <p class="intro" data-i18n="keys.intro">Hold Alt and press a key. This is the short list; Alt+H on the device shows every binding, including copy, paste and tab selection. Any shortcut can be reassigned in Settings → Keyboard → Shortcuts.</p>
+      <p class="intro" data-i18n="keys.intro">Hold Alt and press a key. You can change any shortcut in Settings → Input → Shortcuts.</p>
     </div>
   </div>
   <article class="panel keys-panel">
     <table class="keys wide">
       <tbody>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>A</kbd> / <kbd>F</kbd></td><td data-i18n="k.tabs.prev">Switch to the previous / next tab</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>T</kbd></td><td data-i18n="k.tabs.new">Open a new tab</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>W</kbd></td><td data-i18n="k.tabs.close">Close the current tab (asks first)</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>V</kbd></td><td data-i18n="k.panes.splitv">Split the screen left / right</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>B</kbd></td><td data-i18n="k.panes.splith">Split the screen top / bottom</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>N</kbd> / <kbd>P</kbd></td><td data-i18n="k.panes.next">Switch to the next / previous pane</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>Z</kbd></td><td data-i18n="k.panes.zoom">Zoom the current pane (press again to restore)</td></tr>
         <tr><td class="combo"><kbd>Alt</kbd>+<kbd>O</kbd></td><td data-i18n="k.session.search">Search commands, files and apps</td></tr>
         <tr><td class="combo"><kbd>Alt</kbd>+<kbd>S</kbd></td><td data-i18n="k.session.settings">Open Settings</td></tr>
         <tr><td class="combo"><kbd>Alt</kbd>+<kbd>H</kbd></td><td data-i18n="k.session.help">Show this key list</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>D</kbd></td><td data-i18n="k.session.display">Force the built-in screen / return to automatic</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>G</kbd> / <kbd>M</kbd></td><td data-i18n="k.session.font">Make the text bigger / smaller (saved in Settings)</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>U</kbd> / <kbd>I</kbd></td><td data-i18n="k.session.volume">Raise / lower the output volume</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>0</kbd></td><td data-i18n="k.session.mute">Mute or unmute the output</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>Q</kbd></td><td data-i18n="k.session.detach">Detach the session; log back in to return to it</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> / <kbd>Alt</kbd>+<kbd>Tab</kbd></td><td data-i18n="k.tabs.prev">Switch to the previous / next tab</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd></td><td data-i18n="k.tabs.select">Jump to tab 1–9</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>T</kbd></td><td data-i18n="k.tabs.new">Open a new tab</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>W</kbd></td><td data-i18n="k.tabs.close">Close the current tab (asks first)</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>R</kbd></td><td data-i18n="k.tabs.rename">Rename the current tab</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>L</kbd></td><td data-i18n="k.tabs.list">Show all tabs</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>V</kbd></td><td data-i18n="k.panes.splitv">Split the screen into left and right panes</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>B</kbd></td><td data-i18n="k.panes.splith">Split the screen into top and bottom panes</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>N</kbd> / <kbd>P</kbd></td><td data-i18n="k.panes.next">Switch to the next / previous pane</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>Z</kbd></td><td data-i18n="k.panes.zoom">Zoom the current pane; press again to undo</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>X</kbd></td><td data-i18n="k.panes.close">Close the current pane</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>C</kbd></td><td data-i18n="k.copy.copy">Copy text from the screen</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>Y</kbd></td><td data-i18n="k.copy.paste">Paste the last copied text</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>Space</kbd></td><td data-i18n="k.session.layout">Switch the keyboard layout</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>D</kbd></td><td data-i18n="k.session.display">Switch between the built-in screen and automatic output</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>G</kbd> / <kbd>M</kbd></td><td data-i18n="k.session.font">Make the text bigger / smaller (the size is saved in Settings)</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>U</kbd> / <kbd>I</kbd></td><td data-i18n="k.session.volume">Raise / lower the volume</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>0</kbd></td><td data-i18n="k.session.mute">Mute or unmute the sound</td></tr>
       </tbody>
     </table>
   </article>
@@ -132,21 +133,21 @@
   <div class="section-head">
     <div>
       <h2 data-i18n="settings.title">Settings</h2>
-      <p class="intro" data-i18n="settings.intro">Change Wi-Fi, Bluetooth, sound, display and power with the arrow keys and Enter. Alt+S opens Settings at any time.</p>
+      <p class="intro" data-i18n="settings.intro">Move between rows with F/X/Z/C or the arrow keys, then press Enter.</p>
     </div>
   </div>
   <div class="table-wrap">
     <table class="grid">
-      <thead><tr><th data-i18n="settings.h.page">Section</th><th data-i18n="settings.h.controls">What you can do</th></tr></thead>
+      <thead><tr><th data-i18n="settings.h.page">Section</th><th data-i18n="settings.h.controls">Includes</th></tr></thead>
       <tbody>
-        <tr><td><code>Connections</code></td><td data-i18n="settings.network">Join Wi-Fi, pair Bluetooth devices, check Ethernet and manage VPNs and IP addresses</td></tr>
-        <tr><td><code>Display</code></td><td data-i18n="settings.display">Theme, brightness, screen timeout, text size, status bar and screen output</td></tr>
-        <tr><td><code>Sound</code></td><td data-i18n="settings.sound">Volume, mute, input and output devices</td></tr>
-        <tr><td><code>Keyboard</code></td><td data-i18n="settings.keyboard">Keyboard mapping, layouts, shortcut rebinding and the key list</td></tr>
-        <tr><td><code>Date &amp; Time</code></td><td data-i18n="settings.datetime">Date, time, time zone and automatic clock sync</td></tr>
-        <tr><td><code>Power</code></td><td data-i18n="settings.power">Battery status, restart, power off and suspend</td></tr>
-        <tr><td><code>Applications</code></td><td data-i18n="settings.apps">Browse, install and remove terminal apps</td></tr>
-        <tr><td><code>System</code></td><td data-i18n="settings.system">About, System Monitor, Diagnostics, password, remote access (SSH) and reset</td></tr>
+        <tr><td><code>Connections</code></td><td data-i18n="settings.network">Wi-Fi, Bluetooth, network details and VPNs</td></tr>
+        <tr><td><code>Display</code></td><td data-i18n="settings.display">Built-in screen or HDMI, theme, brightness, text size and status bar</td></tr>
+        <tr><td><code>Sound</code></td><td data-i18n="settings.sound">Volume, mute and audio devices</td></tr>
+        <tr><td><code>Input</code></td><td data-i18n="settings.keyboard">Keyboard layout, mouse, shortcuts and key list</td></tr>
+        <tr><td><code>Date &amp; Time</code></td><td data-i18n="settings.datetime">Date, time, time zone and automatic time</td></tr>
+        <tr><td><code>Power</code></td><td data-i18n="settings.power">Battery and power actions</td></tr>
+        <tr><td><code>Applications</code></td><td data-i18n="settings.apps">Terminal app catalog</td></tr>
+        <tr><td><code>System</code></td><td data-i18n="settings.system">Language, system information, diagnostics, password, remote access and reset</td></tr>
       </tbody>
     </table>
   </div>
@@ -156,14 +157,13 @@
   <div class="section-head">
     <div>
       <h2 data-i18n="help.title">Help</h2>
-      <p class="intro" data-i18n="help.intro">The device answers most questions with one shortcut: Alt+H for keys, Alt+O for search and Alt+S for Settings.</p>
     </div>
   </div>
   <div class="download help">
     <div class="actions">
       <a class="button ghost" href="https://github.com/jmas/cpzos/tree/master/docs" data-i18n="help.docs">Documentation</a>
       <a class="button ghost" href="https://github.com/jmas/cpzos/issues" data-i18n="help.issues">Report a problem</a>
-      <a class="button ghost" href="https://github.com/jmas/cpzos/blob/master/docs/CPZ-KMSCON.md" data-i18n="help.recovery">Recovery and boot logs</a>
+      <a class="button ghost" href="https://github.com/jmas/cpzos/blob/master/docs/CPZ-CAGE.md#recovery" data-i18n="help.recovery">If something goes wrong</a>
     </div>
   </div>
 </section>
@@ -176,7 +176,7 @@
     <nav class="footer-links">
       <a href="https://github.com/jmas/cpzos" data-i18n="footer.source">Source</a>
     </nav>
-    <p class="footer-note" data-i18n="footer.based">Based on Raspberry Pi OS and pi-gen. Built for the CardputerZero handheld.</p>
+    <p class="footer-note" data-i18n="footer.based">Based on Raspberry Pi OS.</p>
   </div>
 </footer>
 
