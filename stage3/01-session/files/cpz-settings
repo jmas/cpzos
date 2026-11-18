@@ -60,8 +60,19 @@ NAV_RIGHT = (curses.KEY_RIGHT, ord("l"), ord("c"))
 # Dialogs are drawn in one compact centred frame. The internal panel is 53x14
 # at the default font, so the body wraps well before the edge. Routine results
 # stay on screen briefly; errors wait for Enter/Esc.
+#
+# Every dialog surface (confirm, result, picker, filter and Search) uses the
+# same chrome: a single-line square border, a bold title in the top border,
+# one blank row, body text one column inside the border, and a muted hint on
+# the last row inside the frame. Keep the title and padding here rather than in
+# each dialog so the frame cannot drift. See docs/CPZ-UI.md §3.
 MODAL_MAX_WIDTH = 46
+MODAL_TEXT_COLUMN = 2
 MODAL_TOAST_MS = 1500
+# kmscon paints the console grid edge to edge, so a full-screen page would touch
+# the panel bezel. Every page keeps one blank column on each side; dialogs draw
+# their own frame and are already inset.
+SCREEN_PAD = 1
 ERROR_MARKERS = (
     "failed",
     "failure",
@@ -969,10 +980,11 @@ def draw_datetime_editor(
 ) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
-    put(screen, 0, 0, " Set Date & Time", curses.A_BOLD)
-    put(screen, 1, 0, "-" * max(0, width - 1))
+    left = SCREEN_PAD
+    put(screen, 0, left, "Set Date & Time", curses.A_BOLD)
+    put(screen, 1, left, "-" * content_width(width))
 
-    columns = (2, 14, 26)
+    columns = (left + 2, left + 14, left + 26)
     for index in range(len(parts)):
         row = 2 + (index // 3) * 2
         column = columns[index % 3]
@@ -995,20 +1007,20 @@ def draw_datetime_editor(
             curses.A_REVERSE if index == selected else 0,
         )
 
-    put(screen, 7, 0, f"  {datetime_text(parts)}")
+    put(screen, 7, left + 2, datetime_text(parts))
     put(
         screen,
         9,
-        0,
-        "  NTP: " + ("On (will be disabled)" if ntp else "Off"),
+        left + 2,
+        "NTP: " + ("On (will be disabled)" if ntp else "Off"),
     )
     if notice:
-        put(screen, height - 1, 0, f" {notice}")
+        put(screen, height - 1, left, notice)
     else:
         put(
             screen,
             height - 1,
-            0,
+            left,
             "Type or F/X edit Z/C field Enter apply q cancel",
         )
     screen.refresh()
@@ -1193,6 +1205,30 @@ def modal_text(message: str, width: int) -> list[str]:
     return lines or [""]
 
 
+def draw_modal_frame(popup, title: str, hint: str = "", error: bool = False) -> None:
+    """Draw the one CPZ dialog frame used by every modal surface.
+
+    The title sits in the top border with one space on each side, body text
+    starts one column inside the border, and the hint is muted on the last row
+    inside the frame. ``error`` reverses the title for destructive actions;
+    the rest of the frame does not change.
+    """
+    popup.erase()
+    popup.attrset(0)
+    popup.box()
+    title_attr = curses.A_REVERSE | curses.A_BOLD if error else curses.A_BOLD
+    put(popup, 0, MODAL_TEXT_COLUMN, f" {title} ", title_attr)
+    if hint:
+        height, width = popup.getmaxyx()
+        put(
+            popup,
+            height - 2,
+            MODAL_TEXT_COLUMN,
+            hint[: max(0, width - 2 * MODAL_TEXT_COLUMN)],
+            curses.A_DIM,
+        )
+
+
 def modal_window(
     screen,
     title: str,
@@ -1204,9 +1240,13 @@ def modal_window(
     screen_height, screen_width = screen.getmaxyx()
     available = max(10, screen_width - 4)
     body_width = min(MODAL_MAX_WIDTH, max(8, available - 4))
+    hint_width = len(hint) + 2 * MODAL_TEXT_COLUMN if hint else 0
     body = modal_text(message, body_width)
     longest = max((len(line) for line in body), default=0)
-    box_width = min(available, max(len(title) + 6, longest + 4, 24))
+    box_width = min(
+        available,
+        max(len(title) + 6, longest + 4, hint_width, 24),
+    )
     body_width = max(8, box_width - 4)
     body = modal_text(message, body_width)
 
@@ -1220,21 +1260,9 @@ def modal_window(
     left = max(0, (screen_width - box_width) // 2)
 
     popup = curses.newwin(box_height, box_width, top, left)
-    popup.erase()
-    popup.attrset(0)
-    popup.box()
-    title_attr = curses.A_REVERSE | curses.A_BOLD if error else curses.A_BOLD
-    put(popup, 0, 2, f" {title} ", title_attr)
+    draw_modal_frame(popup, title, hint, error)
     for offset, line in enumerate(body):
-        put(popup, 2 + offset, 2, line)
-    if hint:
-        put(
-            popup,
-            box_height - 2,
-            2,
-            hint[: max(0, box_width - 4)],
-            curses.A_DIM,
-        )
+        put(popup, 2 + offset, MODAL_TEXT_COLUMN, line)
     popup.keypad(True)
     popup.refresh()
     return popup
@@ -1264,7 +1292,7 @@ def show_message(
         screen,
         title,
         message,
-        " Enter/Esc close" if wait else "",
+        "Enter/Esc close" if wait else "",
         error=error,
     )
     try:
@@ -1309,7 +1337,7 @@ def confirm(
         screen,
         title,
         message,
-        " Enter/y yes    n/Esc cancel",
+        "Enter/y yes  n/Esc cancel",
         error=danger,
     )
     try:
@@ -1328,13 +1356,14 @@ def text_page(screen, title: str, lines) -> None:
     while True:
         screen.erase()
         height, width = screen.getmaxyx()
-        put(screen, 0, 0, f" {title}", curses.A_BOLD)
-        put(screen, 1, 0, "-" * max(0, width - 1))
+        left = SCREEN_PAD
+        put(screen, 0, left, title, curses.A_BOLD)
+        put(screen, 1, left, "-" * content_width(width))
         visible = max(1, height - 3)
         for index in range(visible):
             line = lines[offset + index] if offset + index < len(lines) else ""
-            put(screen, 2 + index, 0, line)
-        put(screen, height - 1, 0, "F/X scroll PgUp/PgDn q back")
+            put(screen, 2 + index, left, line)
+        put(screen, height - 1, left, "F/X scroll PgUp/PgDn q back")
         screen.refresh()
         key = screen.getch()
         if key in (ord("q"), ord("Q"), 27):
@@ -1679,16 +1708,17 @@ def bluetooth_summary() -> str:
 def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: str = "") -> None:
     screen.erase()
     height, width = screen.getmaxyx()
+    left = SCREEN_PAD
 
-    put(screen, 0, 0, " Bluetooth  (* connected  + paired)", curses.A_BOLD)
-    put(screen, 1, 0, "-" * max(0, width - 1))
+    put(screen, 0, left, "Bluetooth  (* connected  + paired)", curses.A_BOLD)
+    put(screen, 1, left, "-" * content_width(width))
 
     status = notice or adapter["error"]
     top = 3 if status else 2
     if status:
-        put(screen, 2, 0, f" {status}")
+        put(screen, 2, left, status)
     elif not devices:
-        put(screen, 4, 1, "No devices. Press r to scan.")
+        put(screen, 4, left + 1, "No devices. Press r to scan.")
 
     items = ["power", "scan"] + devices
     for index, item in enumerate(items):
@@ -1706,9 +1736,9 @@ def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: 
             label = item["name"]
         text = f"{'>' if index == selected else ' '} {mark} {label}"
         attr = curses.A_REVERSE if index == selected else 0
-        put(screen, y, 0, text.ljust(max(0, width - 1)), attr)
+        put(screen, y, left, text.ljust(content_width(width)), attr)
 
-    put(screen, height - 1, 0, "F/X move  Enter toggle  r scan  q back")
+    put(screen, height - 1, left, "F/X move  Enter toggle  r scan  q back")
     screen.refresh()
 
 
@@ -1760,6 +1790,11 @@ def bluetooth_screen(screen) -> None:
             devices = bt_devices()
             selected = min(selected, 1 + len(devices))
             continue
+
+
+def content_width(width: int) -> int:
+    """Columns available to a full-screen page after the side padding."""
+    return max(1, width - 2 * SCREEN_PAD)
 
 
 def put(screen, y: int, x: int, text: str, attr: int = 0) -> None:
@@ -2067,7 +2102,6 @@ def help_lines() -> list:
         lines = list(keys_module().shortcut_lines())
     except FileNotFoundError:
         lines = [
-            "CPZ shortcuts",
             "The cpz-keys helper is not installed.",
         ]
     lines.extend(
@@ -2237,7 +2271,7 @@ def capture_shortcut(screen, action: dict) -> str | None:
         "Alt+letter, Alt+digit or Alt+Space.\n"
         "Backspace restores the default.\n"
         "Esc cancels.",
-        " Alt+key only    Backspace reset    Esc cancel",
+        "Alt+key  Backspace reset  Esc cancel",
     )
     try:
         while True:
@@ -2379,11 +2413,13 @@ def draw_layouts(
 ) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
-    put(screen, 0, 0, " Layouts", curses.A_BOLD)
+    left = SCREEN_PAD
+    cw = content_width(width)
+    put(screen, 0, left, "Layouts", curses.A_BOLD)
     if searching or query:
-        put(screen, 1, 0, f" /{query}" + ("_" if searching else ""))
+        put(screen, 1, left, f"/{query}" + ("_" if searching else ""))
     else:
-        put(screen, 1, 0, "-" * max(0, width - 1))
+        put(screen, 1, left, "-" * cw)
 
     enabled = set(layout_codes(data))
     active = active_layout(data)
@@ -2400,20 +2436,20 @@ def draw_layouts(
         suffix = "  Active" if code == active else ""
         text = f"{'>' if row == selected else ' '} {mark} {label[:26]:<26}{suffix}"
         attr = curses.A_REVERSE if row == selected else 0
-        put(screen, top + offset, 0, text.ljust(max(0, width - 1)), attr)
+        put(screen, top + offset, left, text.ljust(cw), attr)
     if not shown:
-        put(screen, top, 1, "No matches")
+        put(screen, top, left + 1, "No matches")
 
     if first > 0:
-        put(screen, 1, width - 2, "^")
+        put(screen, 1, left + cw - 1, "^")
     if first + visible < len(shown):
-        put(screen, 1, width - 2, "v" if first == 0 else "*")
+        put(screen, 1, left + cw - 1, "v" if first == 0 else "*")
 
     if searching:
         footer = "Type to filter  Enter keep  Esc clear"
     else:
         footer = "F/X move  Space toggle  / filter  q back"
-    put(screen, height - 1, 0, footer)
+    put(screen, height - 1, left, footer)
     screen.refresh()
 
 
@@ -2522,11 +2558,13 @@ def draw_timezone(
 ) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
-    put(screen, 0, 0, " Time Zone", curses.A_BOLD)
+    left = SCREEN_PAD
+    cw = content_width(width)
+    put(screen, 0, left, "Time Zone", curses.A_BOLD)
     if searching or query:
-        put(screen, 1, 0, f" /{query}" + ("_" if searching else ""))
+        put(screen, 1, left, f"/{query}" + ("_" if searching else ""))
     else:
-        put(screen, 1, 0, "-" * max(0, width - 1))
+        put(screen, 1, left, "-" * cw)
 
     top = 2
     visible = max(1, height - 3)
@@ -2540,20 +2578,20 @@ def draw_timezone(
         mark = "*" if zone == current else " "
         text = f"{'>' if row == selected else ' '} {mark} {zone}"
         attr = curses.A_REVERSE if row == selected else 0
-        put(screen, top + offset, 0, text.ljust(max(0, width - 1)), attr)
+        put(screen, top + offset, left, text.ljust(cw), attr)
     if not shown:
-        put(screen, top, 1, "No matches")
+        put(screen, top, left + 1, "No matches")
 
     if first > 0:
-        put(screen, 1, width - 2, "^")
+        put(screen, 1, left + cw - 1, "^")
     if first + visible < len(shown):
-        put(screen, 1, width - 2, "v" if first == 0 else "*")
+        put(screen, 1, left + cw - 1, "v" if first == 0 else "*")
 
     if searching:
         footer = "Type to filter  Enter keep  Esc clear"
     else:
         footer = "F/X move  Enter set  / filter  q back"
-    put(screen, height - 1, 0, footer)
+    put(screen, height - 1, left, footer)
     screen.refresh()
 
 
@@ -3264,8 +3302,12 @@ def trove_filter_popup(
     query = ""
     selected = 0
     height, width = screen.getmaxyx()
-    popup_height = min(16, max(6, height - 2))
-    popup_width = min(max(28, len(title) + 12), max(20, width - 2))
+    hint = "Type to filter  Enter keep  Esc cancel"
+    popup_height = min(16, max(8, height - 2))
+    popup_width = min(
+        max(28, len(title) + 12, len(hint) + 2 * MODAL_TEXT_COLUMN),
+        max(20, width - 2),
+    )
     top = max(0, (height - popup_height) // 2)
     left = max(0, (width - popup_width) // 2)
     try:
@@ -3291,14 +3333,13 @@ def trove_filter_popup(
             )
             initialized = True
         selected = max(0, min(selected, len(filtered) - 1))
-        visible = max(1, popup_height - 4)
+        visible = max(1, popup_height - 6)
+        text_width = max(0, popup_width - 2 * MODAL_TEXT_COLUMN)
         first = max(0, min(selected - visible + 1, len(filtered) - visible))
         first = max(0, first)
 
-        popup.erase()
-        popup.box()
-        put(popup, 0, 2, f" {title} ")
-        put(popup, 1, 1, f"Search: {query}"[: popup_width - 2])
+        draw_modal_frame(popup, title, hint)
+        put(popup, 2, MODAL_TEXT_COLUMN, f"Search: {query}"[:text_width])
         for offset, (_value, label, count) in enumerate(
             filtered[first : first + visible]
         ):
@@ -3307,13 +3348,15 @@ def trove_filter_popup(
             if count:
                 text += f" ({count})"
             attr = curses.A_REVERSE if row == selected else 0
-            put(popup, 2 + offset, 1, text.ljust(max(0, popup_width - 2)), attr)
+            put(
+                popup,
+                3 + offset,
+                MODAL_TEXT_COLUMN,
+                text.ljust(text_width),
+                attr,
+            )
         if not filtered:
-            put(popup, 2, 1, "No matches")
-        if first > 0:
-            put(popup, 0, popup_width - 2, "^")
-        if first + visible < len(filtered):
-            put(popup, popup_height - 1, popup_width - 2, "v")
+            put(popup, 3, MODAL_TEXT_COLUMN, "No matches")
         popup.refresh()
 
         key = popup.getch()
@@ -3668,7 +3711,7 @@ def simulate_removal(name: str) -> list[str] | None:
 def draw_loading(screen, text: str) -> None:
     screen.erase()
     height, _width = screen.getmaxyx()
-    put(screen, max(0, height // 2), 1, " " + text)
+    put(screen, max(0, height // 2), SCREEN_PAD, " " + text)
     screen.refresh()
 
 
@@ -3687,30 +3730,32 @@ def draw_trove_list(
 ) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
-    title = " Applications"
+    left = SCREEN_PAD
+    cw = content_width(width)
+    title = "Applications"
     if index_count:
         title += f" · {len(tools)} of {index_count}"
     else:
         title += " · catalog not downloaded"
-    put(screen, 0, 0, title, curses.A_BOLD)
+    put(screen, 0, left, title, curses.A_BOLD)
 
-    x = 0
+    tab_x = left
     for text, tab_mode in ((" Browse ", "browse"), (" Installed ", "installed")):
         piece = f" {text.strip()} "
         attr = curses.A_REVERSE if mode == tab_mode else curses.A_DIM
-        put(screen, 1, x, piece, attr)
-        x += len(piece)
-    put(screen, 1, x + 1, "Tab", curses.A_DIM)
+        put(screen, 1, tab_x, piece, attr)
+        tab_x += len(piece)
+    put(screen, 1, tab_x + 1, "Tab", curses.A_DIM)
 
     if search_active:
-        put(screen, 2, 0, f" Search: {query}_")
+        put(screen, 2, left, f"Search: {query}_")
     elif mode == "browse":
         filters = [f"Category: {category_label}", f"Language: {language_label}"]
         if apt_only:
             filters.insert(0, "Apt only")
-        put(screen, 2, 0, (" " + " · ".join(filters))[: max(0, width - 1)])
+        put(screen, 2, left, (" " + " · ".join(filters))[:cw])
     else:
-        put(screen, 2, 0, "-" * max(0, width - 1))
+        put(screen, 2, left, "-" * cw)
 
     top = 3
     list_bottom = max(top + 1, height - 2)
@@ -3720,7 +3765,7 @@ def draw_trove_list(
         first = selected - visible + 1
     first = max(0, min(first, max(0, len(tools) - visible)))
 
-    name_width = min(26, max(12, width // 3))
+    name_width = min(26, max(12, cw // 3))
     for offset, tool in enumerate(tools[first : first + visible]):
         row = first + offset
         marker = "*" if tool.get("slug") in managed else " "
@@ -3738,8 +3783,8 @@ def draw_trove_list(
         put(
             screen,
             top + offset,
-            0,
-            text.ljust(max(0, width - 1)),
+            left,
+            text.ljust(cw),
             curses.A_REVERSE if row == selected else 0,
         )
     if not tools:
@@ -3751,16 +3796,16 @@ def draw_trove_list(
             message = "No apt tools match. Press a for all."
         else:
             message = "No matches. Esc clears the filter."
-        put(screen, top, 1, message)
+        put(screen, top, left + 1, message)
     if first > 0:
-        put(screen, top, width - 2, "^")
+        put(screen, top, left + cw - 1, "^")
     if first + visible < len(tools):
-        put(screen, top + visible - 1, width - 2, "v")
+        put(screen, top + visible - 1, left + cw - 1, "v")
 
     chosen = tools[selected] if tools and selected < len(tools) else None
     summary_y = list_bottom
     if chosen and summary_y < height - 1:
-        put(screen, summary_y, 1, str(chosen.get("summary", "")))
+        put(screen, summary_y, left + 1, str(chosen.get("summary", "")))
 
     if search_active:
         hint = "Type to filter  Enter keep  Esc clear"
@@ -3770,7 +3815,7 @@ def draw_trove_list(
         hint = "F/X move  / search  Enter info  i install  q back"
     else:
         hint = "F/X move  / search  Enter info  e run  q back"
-    put(screen, height - 1, 0, hint)
+    put(screen, height - 1, left, hint)
     screen.refresh()
 
 
@@ -3789,21 +3834,23 @@ def trove_details_screen(
         current = managed.get(str(tool.get("slug", "")))
         record = current
         _height, width = screen.getmaxyx()
-        lines = trove_details_lines(tool, apt, record, width)
+        left = SCREEN_PAD
+        cw = content_width(width)
+        lines = trove_details_lines(tool, apt, record, cw)
         screen.erase()
         height, _width = screen.getmaxyx()
-        title = f" {tool.get('name', tool.get('slug', '?'))}"
-        put(screen, 0, 0, title, curses.A_BOLD)
-        put(screen, 1, 0, "-" * max(0, width - 1))
+        title = str(tool.get("name", tool.get("slug", "?")))
+        put(screen, 0, left, title, curses.A_BOLD)
+        put(screen, 1, left, "-" * cw)
         visible = max(1, height - 4)
         offset = max(0, min(offset, max(0, len(lines) - visible)))
         for index in range(visible):
             line = lines[offset + index] if offset + index < len(lines) else ""
-            put(screen, 2 + index, 0, line)
+            put(screen, 2 + index, left, line)
         put(
             screen,
             height - 1,
-            0,
+            left,
             "F/X scroll i install d remove e run q",
         )
         screen.refresh()
@@ -4744,12 +4791,19 @@ def select_popup(screen, item: dict, data: dict):
     labels = item.get("labels") or {}
     current = data.get(key)
     selected = values.index(current) if current in values else 0
+    title = item.get("label", "Select")
+    hint = "F/X move  Enter apply  Esc cancel"
 
     height, width = screen.getmaxyx()
-    popup_height = min(max(len(values) + 4, 6), max(6, height - 2), 16)
+    popup_height = min(max(len(values) + 6, 8), max(6, height - 2), 16)
     longest = max(len(str(labels.get(value, value))) for value in values)
     popup_width = min(
-        max(longest + 8, len(item.get("label", "Select")) + 4, 20),
+        max(
+            longest + 8,
+            len(title) + 6,
+            len(hint) + 2 * MODAL_TEXT_COLUMN,
+            20,
+        ),
         max(20, width - 2),
     )
     top = max(0, (height - popup_height) // 2)
@@ -4760,26 +4814,27 @@ def select_popup(screen, item: dict, data: dict):
         return None
     popup.keypad(True)
 
-    visible = max(1, popup_height - 3)
+    visible = max(1, popup_height - 5)
+    text_width = max(0, popup_width - 2 * MODAL_TEXT_COLUMN)
     first = 0
     if selected >= visible:
         first = selected - visible + 1
     first = max(0, min(first, max(0, len(values) - visible)))
 
     while True:
-        popup.erase()
-        popup.box()
-        put(popup, 0, 2, f" {item.get('label', 'Select')} ")
+        draw_modal_frame(popup, title, hint)
         for offset, value in enumerate(values[first : first + visible]):
             row = first + offset
             label = str(labels.get(value, value))
             text = f"{'>' if row == selected else ' '} {label}"
             attr = curses.A_REVERSE if row == selected else 0
-            put(popup, 1 + offset, 1, text.ljust(max(0, popup_width - 2)), attr)
-        if first > 0:
-            put(popup, 0, popup_width - 2, "^")
-        if first + visible < len(values):
-            put(popup, popup_height - 1, popup_width - 2, "v")
+            put(
+                popup,
+                2 + offset,
+                MODAL_TEXT_COLUMN,
+                text.ljust(text_width),
+                attr,
+            )
         popup.refresh()
 
         key = popup.getch()
@@ -4810,18 +4865,20 @@ def select_popup(screen, item: dict, data: dict):
 def draw_page(screen, title: str, items: list, values: list, selected: int, data: dict, issues: list[str], is_main: bool, hint: str = "") -> None:
     screen.erase()
     height, width = screen.getmaxyx()
-    put(screen, 0, 0, f" {title}", curses.A_BOLD)
+    left = SCREEN_PAD
+    cw = content_width(width)
+    put(screen, 0, left, title, curses.A_BOLD)
     if is_main and issues:
         warning = "! " + " + ".join(issues)
         put(
             screen,
             1,
-            0,
-            warning[: max(0, width - 1)].ljust(max(0, width - 1)),
+            left,
+            warning[:cw].ljust(cw),
             curses.A_REVERSE | curses.A_BOLD,
         )
     else:
-        put(screen, 1, 0, "-" * max(0, width - 1))
+        put(screen, 1, left, "-" * cw)
 
     top = 2
     visible = max(1, height - 1 - top)
@@ -4837,15 +4894,15 @@ def draw_page(screen, title: str, items: list, values: list, selected: int, data
         label = item.get("label", "")
         text = f"{'>' if row == selected else ' '} {label:<16} {value}"
         attr = curses.A_REVERSE if row == selected else 0
-        put(screen, y, 0, text.ljust(max(0, width - 1)), attr)
+        put(screen, y, left, text.ljust(cw), attr)
 
     if first > 0:
-        put(screen, 1, width - 2, "^")
+        put(screen, 1, left + cw - 1, "^")
     if first + visible < len(items):
-        put(screen, 1, width - 2, "v" if first == 0 else "*")
+        put(screen, 1, left + cw - 1, "v" if first == 0 else "*")
 
     if hint:
-        footer = " " + hint
+        footer = hint
     else:
         kind = items[selected].get("kind") if items else "info"
         if kind in ("submenu", "action"):
@@ -4862,7 +4919,7 @@ def draw_page(screen, title: str, items: list, values: list, selected: int, data
             action = "Z/C change"
         parts = ["F/X move"] + ([action] if action else []) + ["q " + ("close" if is_main else "back")]
         footer = "  ".join(parts)
-    put(screen, height - 1, 0, footer)
+    put(screen, height - 1, left, footer)
     screen.refresh()
 
 

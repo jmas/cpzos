@@ -75,6 +75,14 @@ class KeysRegistry(unittest.TestCase):
             self.assertTrue(action["command"].strip(), action)
             self.assertTrue(action["label"].strip(), action)
 
+    def test_search_popup_lets_the_cpz_frame_draw_the_title(self):
+        search = next(
+            action for action in self.mod.ACTIONS if action["id"] == "search"
+        )
+        self.assertIn("display-popup -B", search["command"])
+        self.assertNotIn("-T ", search["command"])
+        self.assertIn("-h 90%", search["command"])
+
     def test_normalize_accepts_config_forms_and_rejects_more_keys(self):
         self.assertEqual(self.mod.normalize_key("M-t"), "M-t")
         self.assertEqual(self.mod.normalize_key("m-t"), "M-t")
@@ -167,7 +175,10 @@ class KeysRegistry(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             self.assertEqual(self.mod.main(["help"]), 0)
-        self.assertIn("CPZ shortcuts", output.getvalue())
+        self.assertIn(
+            "Every action is one modifier plus one key.", output.getvalue()
+        )
+        self.assertNotIn("CPZ shortcuts", output.getvalue())
 
     def test_tmux_conf_has_no_parallel_key_list(self):
         text = (FILES / "tmux.conf").read_text(encoding="utf-8")

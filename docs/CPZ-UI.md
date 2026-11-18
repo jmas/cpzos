@@ -123,9 +123,12 @@ Check the worst cases, not the default:
 - no battery, charging, low battery;
 - each supported locale on the site (currently 11);
 - dark and light themes, and `Mono` / `Light High Contrast`.
+- a confirm, a picker and Search in each theme; the frame, title and muted
+  hint must stay distinguishable.
 
-Labels MUST fit the label column; the footer MUST fit 53 columns; a status
-token MUST remain distinguishable from every other token.
+Labels MUST fit the label column; the footer MUST fit the 51 content columns
+(53 minus the one blank column on each side); a status token MUST remain
+distinguishable from every other token.
 
 ### A9. Verify claims
 
@@ -185,7 +188,8 @@ tabs ─ panes ─ status bar
 - The main menu is a map of destinations, not a list of commands.
 - The Settings TUI owns the same session that runs the shell. Leaving Settings
   must never close a terminal tab.
-- Search is a shortcut into Settings and apps, not a second settings system.
+- Search is a shortcut into Settings, apps and the power actions, not a second
+  settings system.
 
 ---
 
@@ -215,8 +219,9 @@ on-device menu names and paths stay English so they match the device.
 
 ### Controls and navigation
 
-11. The main menu MUST fit 9 rows and the panel. All labels MUST fit the
-    16-character label column; footers MUST fit 53 columns.
+11. The main menu MUST fit 9 rows and the panel. Full-screen pages keep one
+    blank column on each side; all labels MUST fit the 16-character label
+    column and footers MUST fit the remaining 51 content columns.
 12. No dead focusable rows. An info row either has no cursor or its Enter opens
     details. The footer MUST NOT advertise `Enter` for a row that ignores it.
 13. Footer keys MUST be valid for the current selection and context. Teach the
@@ -278,10 +283,35 @@ on-device menu names and paths stay English so they match the device.
     not optional.
 37. Meaning is not carried by colour alone.
 38. New user-visible strings on the site require all locale files and
-    `site/check.py`. New TUI strings must fit 53 columns in every supported
+    `site/check.py`. New TUI strings must fit 51 columns in every supported
     layout of the panel.
 39. A translation may be longer than English; leave room in labels and
     footers.
+
+### Modal chrome
+
+40. Every CPZ modal uses the same frame: a single-line square border, a bold
+    title in the top border with one space on each side, one blank row, body
+    text one column inside the border, and a muted hint on the last row inside
+    the frame. Confirm, result, picker, filter and Search all use it; no
+    surface draws a second variant.
+41. The title is drawn as `" title "` starting at column 2, so one space
+    separates it from the corner; body text and the hint start at column 2.
+    Only a destructive action reverses the title; all other titles are bold
+    only.
+42. A CPZ modal hosted in a tmux popup runs borderless (`display-popup -B`)
+    and the application draws the frame. Do not pass `-T` to add a second
+    title.
+43. Search is a modal, not a page: it uses the same frame, one blank row and
+    muted hint as the Settings dialogs. Full-page references (`Alt+H`) and
+    external tools (`nmtui`) are not modals and keep their own presentation.
+44. Do not draw scroll markers, counters or decoration on the frame. Overflow
+    is shown by the list cursor and the footer, never by overwriting the
+    border.
+
+Implementation: `draw_modal_frame()` in `cpz-settings` and the
+border/label/padding block in `fzf_args()` in `cpz-search`. Changing one
+without the other is a finding.
 
 ---
 
@@ -299,6 +329,7 @@ Use these patterns first. A new control style needs an exception (section 9).
 | **Picker** | direct choice without stepping | `Enter` opens, `Enter` applies, `q` cancels | current label | `Enter list` |
 | **Searchable list** | more than ~20 unrelated items | type to filter, `Esc` clears, `Enter` applies | query line | `Type to filter  Enter keep  Esc clear` |
 | **Text page** | About, Diagnostics, key reference | scroll, `q` back | — | `F/X scroll  q back` |
+| **Modal frame** | chrome for every confirm, result, picker, filter and Search | — | bold title in the top border, body one column in, muted hint on the last inner row | — |
 | **Confirm modal** | destructive or irreversible action | `Enter`/`y`, `n`/`Esc` | question + detail | `Enter/y yes  n/Esc cancel` |
 | **Result modal** | success that is not visible on screen | `Enter`/`Esc` | outcome | `Enter/Esc close` |
 | **Toast** | routine success already implied by the screen | none | outcome | no hint |
@@ -311,7 +342,10 @@ Do not:
 - use a modal for optional reading;
 - use a cycle for unrelated names without an `Enter` picker;
 - use a submenu for a single action;
-- use an action row for a setting that could be a toggle.
+- use an action row for a setting that could be a toggle;
+- draw a second frame inside a modal, or add `-T` when the app already draws
+  the frame;
+- put scroll markers or counters on the frame.
 
 ---
 
@@ -406,10 +440,13 @@ Before merging a UI change:
 [ ] No fact repeats another surface (A4).
 [ ] Current value is visible; result is visible (A5).
 [ ] Footer keys work on this row (A6, invariant 13).
-[ ] Labels <= 16 chars; footer <= 53; main <= 9 rows.
+[ ] Labels <= 16 chars; footer <= 51; main <= 9 rows.
 [ ] Long list has filter and an empty state.
 [ ] New/changed binding is in cpz-help and the footer.
 [ ] Destructive action confirms and defaults to no.
+[ ] Modal uses the shared frame: bold title in the border, one blank row,
+    body and hint at column 2.
+[ ] A tmux popup behind a CPZ modal is borderless and has no `-T` title.
 [ ] Errors say what failed and what to do.
 [ ] Dark/light, Mono, one/many tabs, no/connected adapter checked.
 [ ] Site: all 11 locales updated.
@@ -431,7 +468,7 @@ Before implementing it, add a row to the exception register below and explain:
 1. the surface and the user job;
 2. which catalogue patterns were tried and why each fails;
 3. the proposed pattern and its states (empty, loading, error, success);
-4. the keyboard map and how it fits 53 columns;
+4. the keyboard map and how it fits 51 columns;
 5. how it is added to `cpz-help` and the site if needed;
 6. the tests or verify checks that keep it correct;
 7. why the extra pattern is worth its maintenance cost.

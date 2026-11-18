@@ -42,7 +42,7 @@ ACTIONS: tuple[dict[str, Any], ...] = (
         "label": "Search",
         "section": "Start here",
         "default": "M-o",
-        "command": 'display-popup -E -w 85% -h 70% -T "Search" '
+        "command": 'display-popup -B -E -w 85% -h 90% '
         '"/usr/local/bin/cpz-search"',
     },
     {
@@ -58,7 +58,7 @@ ACTIONS: tuple[dict[str, Any], ...] = (
         "label": "Help",
         "section": "Start here",
         "default": "M-h",
-        "command": 'display-popup -E -w 90% -h 90% -T "CPZ keys" '
+        "command": 'display-popup -E -w 90% -h 90% -T "Shortcuts" '
         '"/usr/local/bin/cpz-help"',
     },
     {
@@ -622,7 +622,6 @@ def suspend_tmux() -> None:
 def shortcut_lines() -> list[str]:
     bindings = effective_bindings()
     lines = [
-        "CPZ shortcuts",
         "Every action is one modifier plus one key. The defaults use Alt.",
         "",
     ]

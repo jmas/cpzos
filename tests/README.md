@@ -32,11 +32,11 @@ pull request (`.github/workflows/ci.yml`).
   sysfs/settings tree and checks that `display=panel` is honoured both by the
   systemd unit and by `--auto`, and that kmscon disables `use-original-mode`.
 - `test_cpz_search.py` checks the `cpz-search` providers (the short action
-  home list, commands, actions, Settings, files, calculator, Terminal Trove and
-  tmux buffers), item format, file roots/pruning, safe calculator, dispatch to
-  the Settings tab and the `cpz-settings` entry points used by the CPZ Search
-  popup (`--page`, `--tool`, `--list-pages`, `--list-tools`, `--install-tool`,
-  request queue).
+  home list, commands, actions, Settings, power actions, files, calculator,
+  Terminal Trove and tmux buffers), item format, file roots/pruning, safe
+  calculator, dispatch to the Settings tab and the `cpz-settings` entry points
+  used by the CPZ Search popup (`--page`, `--tool`, `--list-pages`,
+  `--list-tools`, `--install-tool`, request queue).
 - `test_cpz_keys.py` checks the shortcut registry rules (one Alt key plus one
   plain key, unique defaults, no punctuation/Sym/Fn chords), override
   precedence and conflicts, generated tmux bindings, and that tmux/help/search/

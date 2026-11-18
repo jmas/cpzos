@@ -311,6 +311,14 @@ class SettingsTUI(unittest.TestCase):
                     len(item["label"]), 16, f"{page}: {item['label']}"
                 )
 
+    def test_full_screen_pages_keep_a_side_gutter(self):
+        # The panel is 53 columns. Every full-screen page leaves one blank
+        # column on each side, so content gets 51.
+        self.assertEqual(self.mod.SCREEN_PAD, 1)
+        self.assertEqual(self.mod.content_width(53), 51)
+        self.assertEqual(self.mod.content_width(80), 78)
+        self.assertEqual(self.mod.content_width(1), 1)
+
     def test_status_bar_page_fits_the_panel(self):
         data = dict(self.mod.DEFAULTS)
         data.update(show_clock=1, show_date=1, show_conn=1)
@@ -708,6 +716,96 @@ class SettingsTUI(unittest.TestCase):
         loaded = self.mod.load_trove_index()
         self.assertEqual(loaded["tools"], [])
         self.assertEqual(loaded["count"], 0)
+
+
+class ModalChrome(unittest.TestCase):
+    """All dialogs share one frame, so title/padding/hint cannot drift."""
+
+    def setUp(self):
+        self.mod = load_settings_module()
+
+        class FakePopup:
+            def __init__(self, height, width):
+                self.height = height
+                self.width = width
+                self.calls = []
+
+            def getmaxyx(self):
+                return self.height, self.width
+
+            def erase(self):
+                self.calls.append(("erase",))
+
+            def attrset(self, attr):
+                self.calls.append(("attrset", attr))
+
+            def box(self):
+                self.calls.append(("box",))
+
+            def addstr(self, y, x, text, attr=0):
+                self.calls.append((y, x, text, attr))
+
+            def keypad(self, enabled):
+                self.calls.append(("keypad", enabled))
+
+            def refresh(self):
+                self.calls.append(("refresh",))
+
+        self.FakePopup = FakePopup
+
+    def test_frame_places_bold_title_and_muted_hint(self):
+        popup = self.FakePopup(8, 40)
+        hint = "Enter/y yes  n/Esc cancel"
+        self.mod.draw_modal_frame(popup, "Reboot", hint)
+        self.assertIn(
+            (
+                0,
+                self.mod.MODAL_TEXT_COLUMN,
+                " Reboot ",
+                self.mod.curses.A_BOLD,
+            ),
+            popup.calls,
+        )
+        self.assertIn(
+            (
+                6,
+                self.mod.MODAL_TEXT_COLUMN,
+                hint,
+                self.mod.curses.A_DIM,
+            ),
+            popup.calls,
+        )
+
+    def test_danger_reverses_only_the_title(self):
+        popup = self.FakePopup(8, 40)
+        self.mod.draw_modal_frame(popup, "Reboot", "", error=True)
+        self.assertIn(
+            (
+                0,
+                self.mod.MODAL_TEXT_COLUMN,
+                " Reboot ",
+                self.mod.curses.A_REVERSE | self.mod.curses.A_BOLD,
+            ),
+            popup.calls,
+        )
+
+    def test_modal_window_body_starts_one_blank_row_below_the_border(self):
+        class FakeScreen:
+            def getmaxyx(self):
+                return 14, 53
+
+        popup = self.FakePopup(6, 24)
+        with mock.patch.object(self.mod.curses, "newwin", return_value=popup):
+            self.mod.modal_window(
+                FakeScreen(),
+                "Reboot",
+                "Reboot now?",
+                "Enter/y yes  n/Esc cancel",
+            )
+        self.assertIn(
+            (2, self.mod.MODAL_TEXT_COLUMN, "Reboot now?", 0),
+            popup.calls,
+        )
 
 
 if __name__ == "__main__":

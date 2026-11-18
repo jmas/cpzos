@@ -111,17 +111,32 @@ class SearchItems(unittest.TestCase):
         self.assertLess(payloads.index("fzf"), payloads.index("lazygit"))
         self.assertNotIn(("tool", "fzf", "apps fzf  [run app]", "fzf", "managed,installed,runnable"), parsed)
 
-    def test_home_items_hold_settings_and_actions_when_no_apps_are_managed(self):
+    def test_home_items_hold_settings_actions_and_power_when_no_apps_are_managed(self):
         self.mod.managed_app_items = lambda: []
         parsed = [self.mod.parse_item(line) for line in self.mod.home_items()]
-        self.assertEqual(len(parsed), len(self.mod.ACTIONS) + 1)
         self.assertEqual(
-            {item[0] for item in parsed if item}, {"action", "settings"}
+            len(parsed), len(self.mod.ACTIONS) + len(self.mod.POWER_ACTIONS) + 1
+        )
+        self.assertEqual(
+            {item[0] for item in parsed if item}, {"action", "settings", "power"}
         )
         self.assertEqual(parsed[0][0], "settings")
         self.assertEqual(
             parsed[0], ("settings", "network", "Network  [settings]", "", "settings")
         )
+
+    def test_home_ends_with_reboot_and_shut_down(self):
+        self.mod.managed_app_items = lambda: []
+        items = self.mod.home_items()
+        parsed = [self.mod.parse_item(line) for line in items]
+        self.assertEqual(
+            parsed[-2:],
+            [
+                ("power", "reboot", "Reboot  [power]", "", "power"),
+                ("power", "poweroff", "Shut Down  [power]", "", "power"),
+            ],
+        )
+        self.assertIn("Enter confirm", self.mod.hint_line(items[-1]))
 
     def test_home_settings_rows_carry_the_searchable_page_title(self):
         self.mod.managed_app_items = lambda: []
@@ -533,6 +548,69 @@ class Dispatch(unittest.TestCase):
             self.mod.dispatch("media", "/dev/sda1", "", "/tmp", "/media/USB")
         unmount.assert_called_once_with("/dev/sda1", "/media/USB")
 
+    def test_power_enter_confirms(self):
+        with mock.patch.object(self.mod, "run_power") as run_power:
+            self.mod.dispatch("power", "reboot", "", "/tmp")
+        run_power.assert_called_once_with("reboot")
+
+
+class PowerAction(unittest.TestCase):
+    def setUp(self):
+        self.mod = load_script("cpz_search_power", SEARCH)
+
+    def test_reboot_asks_the_tmux_client_to_confirm(self):
+        clients = subprocess.CompletedProcess(
+            [], 0, stdout="client0\n", stderr=""
+        )
+        with mock.patch.dict(os.environ, {"TMUX": "/tmp/tmux"}), mock.patch.object(
+            self.mod.shutil, "which", return_value="/usr/bin/tmux"
+        ), mock.patch.object(
+            self.mod.subprocess, "run", return_value=clients
+        ) as run, mock.patch.object(
+            self.mod, "run_hidden", return_value=True
+        ) as run_hidden:
+            self.mod.run_power("reboot")
+        run.assert_called_once_with(
+            ["tmux", "list-clients", "-F", "#{client_name}"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        run_hidden.assert_called_once_with(
+            [
+                "tmux",
+                "confirm-before",
+                "-t",
+                "client0",
+                "-p",
+                "Reboot now? (y/n)",
+                "run-shell -b "
+                "'systemctl reboot || sudo -n systemctl reboot'",
+            ]
+        )
+
+    def test_power_off_names_the_action(self):
+        clients = subprocess.CompletedProcess([], 0, stdout="client0\n")
+        with mock.patch.dict(os.environ, {"TMUX": "/tmp/tmux"}), mock.patch.object(
+            self.mod.shutil, "which", return_value="/usr/bin/tmux"
+        ), mock.patch.object(
+            self.mod.subprocess, "run", return_value=clients
+        ), mock.patch.object(
+            self.mod, "run_hidden", return_value=True
+        ) as run_hidden:
+            self.mod.run_power("poweroff")
+        command = run_hidden.call_args.args[0]
+        self.assertEqual(command[5], "Shut down now? (y/n)")
+        self.assertIn("systemctl poweroff", command[6])
+
+    def test_outside_tmux_it_reports_instead_of_shutting_down(self):
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            self.mod, "notify"
+        ) as notify:
+            self.mod.run_power("poweroff")
+        notify.assert_called_once_with("cpz-search: power actions need tmux")
+
 
 class MediaUnmount(unittest.TestCase):
     def setUp(self):
@@ -630,25 +708,34 @@ class OpenSettings(unittest.TestCase):
 
 
 class PopupChrome(unittest.TestCase):
-    """The tmux popup draws the frame, so fzf must not draw a second one.
+    """Search draws the same CPZ frame as the Settings dialogs.
 
-    A nested fzf border plus its separator showed up as extra ASCII lines in
-    the middle of the Search window and ate four rows and columns of results.
+    The tmux popup is borderless; fzf owns the single frame so the title,
+    padding and hint cannot drift from the confirm/result modals.
     """
 
     def setUp(self):
         self.mod = load_script("cpz_search_chrome", SEARCH)
         self.arguments = self.mod.fzf_args("/tmp/cpz-search")
 
-    def test_fzf_draws_no_second_frame(self):
-        self.assertIn("--no-border", self.arguments)
-        self.assertIn("--no-separator", self.arguments)
-        borders = [
+    def test_fzf_draws_the_one_cpz_frame(self):
+        self.assertIn("--border=sharp", self.arguments)
+        self.assertIn("--border-label= Search ", self.arguments)
+        self.assertIn("--border-label-pos=3", self.arguments)
+        self.assertIn("--padding=1,1,0,0", self.arguments)
+        self.assertNotIn("--no-border", self.arguments)
+        self.assertNotIn("--no-unicode", self.arguments)
+
+    def test_hint_uses_the_muted_palette_slot(self):
+        color = next(
             argument
             for argument in self.arguments
-            if argument.startswith("--border")
-        ]
-        self.assertEqual(borders, [])
+            if argument.startswith("--color=")
+        )
+        self.assertIn("bw", color)
+        self.assertIn("label:bold", color)
+        self.assertIn("preview-fg:8", color)
+        self.assertNotIn("--no-color", self.arguments)
 
     def test_footer_preview_stays_chromeless(self):
         preview = next(

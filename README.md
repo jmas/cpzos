@@ -36,8 +36,10 @@ reassigned in Settings → Keyboard → Shortcuts; see
 [docs/CPZ-KEYS.md](docs/CPZ-KEYS.md) for the complete default list and the
 shortcut rules.
 
-Settings confirms destructive actions and reports results in a centred modal.
-Successful results fade after a moment; errors stay until `Enter`/`Esc`.
+Settings confirms destructive actions and reports results in a centred modal
+using the same frame as Search and the pickers: bold title in the border, one
+blank row, and a muted hint. Successful results fade after a moment; errors
+stay until `Enter`/`Esc`.
 In-progress text such as `Scanning...` remains inline because the action is
 already blocking.
 
@@ -264,14 +266,14 @@ removed with one confirmation; the manager records its state in
 
 ## Search
 
-`Alt+O` opens CPZ Search in a short tmux popup. It starts with the mounted USB
-drives, the apps installed through Applications, one row per Settings page and
-the daily CPZ actions with their current (possibly rebound) keys; typing
-anything loads the searchable providers:
+`Alt+O` opens CPZ Search in a centred tmux popup. It starts with the mounted USB
+drives, the apps installed through Applications, one row per Settings page, the
+daily CPZ actions with their current (possibly rebound) keys, and the Reboot
+and Shut Down rows; typing anything loads the searchable providers:
 
 | Input | Provider |
 | --- | --- |
-| no prefix | mounted media, installed apps, Settings pages, CPZ actions, catalog apps and PATH commands |
+| no prefix | mounted media, installed apps, Settings pages, CPZ actions, power actions, catalog apps and PATH commands |
 | `/` | files under `$HOME`, `/etc`, `/usr/local`, `/opt`, `/srv`, `/media` and `/mnt` |
 | `=` | calculator |
 | `apps` | Terminal Trove apps (installed apps first, the rest show `[install app]`) |
@@ -293,9 +295,10 @@ prompt line.
 typed. It launches an installed app or command in a new tab, opens a
 non-runnable app's Applications details page in the Settings tab, opens a file
 in `vim` (or `lf` for a directory), opens the selected Settings page, pastes a
-tmux buffer, and unmounts a mounted USB drive after the `sudo` prompt. `Ctrl+Y`
-copies the selected path/command/result to the tmux buffer, so `Alt+Y` pastes
-it; `Ctrl+O` opens the containing directory in
+tmux buffer, unmounts a mounted USB drive after the `sudo` prompt, and asks tmux
+to confirm before rebooting or shutting down. `Ctrl+Y` copies the selected
+path/command/result to the tmux buffer, so `Alt+Y` pastes it; `Ctrl+O` opens
+the containing directory in
 `lf` (or the Applications details for an app). Settings targets are queued for
 the running Settings tab instead of starting a second TUI inside the popup, so
 the popup closes immediately and `q` behaves like normal Settings. A target

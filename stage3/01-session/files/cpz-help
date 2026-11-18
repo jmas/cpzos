@@ -13,7 +13,6 @@ keys() {
 		/usr/local/bin/cpz-keys help
 	else
 		cat <<'EOF'
-CPZ shortcuts
 The cpz-keys helper is not installed; the shortcut registry is unavailable.
 EOF
 	fi

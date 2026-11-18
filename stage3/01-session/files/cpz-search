@@ -4,9 +4,9 @@ and tmux buffers.
 
 Started by Alt+O from /etc/tmux.conf. The popup opens like a search box with the
 apps installed through the Applications manager, the mounted USB media, one row
-per Settings page and the daily CPZ tmux actions; typing anything loads the
-rest (catalog apps and PATH commands). A leading prefix switches the provider,
-in the same spirit as Walker in Omarchy:
+per Settings page, the daily CPZ tmux actions and the power actions; typing
+anything loads the rest (catalog apps and PATH commands). A leading prefix
+switches the provider, in the same spirit as Walker in Omarchy:
     /      files under $HOME and the small system configuration roots
     =      calculator
     apps   Terminal Trove apps (installed first, the rest can be installed)
@@ -97,6 +97,12 @@ FALLBACK_ACTIONS = (
     ("font-down", "Font Smaller", "Alt+M"),
     ("layout-next", "Input Layout", "Alt+Space"),
     ("display-toggle", "Display Toggle", "Alt+D"),
+)
+# Power actions have no shortcut: they are too destructive to fire from a
+# keypress, so they exist only in Search and always ask before running.
+POWER_ACTIONS = (
+    ("reboot", "Reboot", "Reboot now?"),
+    ("poweroff", "Shut Down", "Shut down now?"),
 )
 
 
@@ -423,6 +429,14 @@ def action_items() -> list[str]:
     ]
 
 
+def power_items() -> list[str]:
+    """Reboot and Shut Down, listed last so a stray Enter cannot reach them."""
+    return [
+        make_item("power", action, f"{label}  [power]", "", "power")
+        for action, label, _question in POWER_ACTIONS
+    ]
+
+
 def settings_items() -> list[str]:
     """One row per Settings page, except the main menu.
 
@@ -478,25 +492,28 @@ def default_items() -> list[str]:
         + installed
         + action_items()
         + settings_items()
+        + power_items()
         + remaining
         + path_app_items(excluded)
     )
 
 
 def home_items() -> list[str]:
-    """The first screen: media, installed apps, Settings pages and actions.
+    """The first screen: media, installed apps, Settings pages, actions, power.
 
     Settings pages are part of the first screen because Search exists to reach
     Settings and apps, not only tmux commands. `cpz-settings --list-pages`
-    supplies them, so a new page appears here without editing Search. The
-    catalog and PATH commands are still only loaded once something is typed,
-    which keeps opening the popup instant.
+    supplies them, so a new page appears here without editing Search. Power is
+    last so a stray Enter cannot reboot the device. The catalog and PATH
+    commands are still only loaded once something is typed, which keeps
+    opening the popup instant.
     """
     return dedupe(
         media_items()
         + managed_app_items()
         + settings_items()
         + action_items()
+        + power_items()
     )
 
 
@@ -903,6 +920,57 @@ def unmount_media(device: str, mountpoint: str) -> None:
         notify(f"cpz-search: cannot unmount {label}")
 
 
+def run_power(action: str) -> None:
+    """Confirm with tmux, then reboot or power off the device.
+
+    A power action closes the popup and every tab, so the question is a tmux
+    prompt, not another fzf list: the prompt stays on the client after
+    cpz-search exits and only then runs the command. logind lets the active
+    local seat do this without a password; sudo -n is only a fallback for
+    images where that seat rule is unavailable.
+    """
+    entry = next((item for item in POWER_ACTIONS if item[0] == action), None)
+    if entry is None:
+        notify(f"cpz-search: unknown power action {action}")
+        return
+    _action, _label, question = entry
+    if not (os.environ.get("TMUX") and shutil.which("tmux")):
+        notify("cpz-search: power actions need tmux")
+        return
+    try:
+        clients = subprocess.run(
+            ["tmux", "list-clients", "-F", "#{client_name}"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        clients = None
+    client = ""
+    if clients is not None and clients.returncode == 0:
+        client = next(
+            (line.strip() for line in clients.stdout.splitlines() if line.strip()),
+            "",
+        )
+    if not client:
+        notify("cpz-search: cannot ask the tmux client to confirm")
+        return
+    command = f"systemctl {action} || sudo -n systemctl {action}"
+    if not run_hidden(
+        [
+            "tmux",
+            "confirm-before",
+            "-t",
+            client,
+            "-p",
+            f"{question} (y/n)",
+            f"run-shell -b {shlex.quote(command)}",
+        ]
+    ):
+        notify("cpz-search: cannot open the confirmation prompt")
+
+
 def launch(command: list[str], cwd: str | None = None) -> None:
     if not command:
         return
@@ -1123,6 +1191,8 @@ def dispatch(
         unmount_media(payload, extra)
     elif kind == "action":
         run_action(payload, cwd)
+    elif kind == "power":
+        run_power(payload)
     elif kind == "calc":
         copy_payload(payload)
 
@@ -1187,6 +1257,8 @@ def hint_for(kind: str, extra: str, flags: set[str]) -> str:
         return "Enter paste  Ctrl+Y copy"
     if kind == "media":
         return "Enter unmount  Ctrl+Y copy"
+    if kind == "power":
+        return "Enter confirm  Ctrl+Y copy"
     if kind == "calc":
         return "Enter copy result"
     return "Enter open  Ctrl+Y copy"
@@ -1207,16 +1279,20 @@ def fzf_args(temp_directory: str) -> list[str]:
     executable = shlex.quote(self_path())
     return [
         "--layout=reverse",
-        # The tmux popup already draws a frame with the "Search" title, so a
-        # second fzf border only repeats it one row further in. Both appear as
-        # ASCII lines (--no-unicode), which looks like clutter on the small
-        # screen and steals four rows and columns from the list.
-        "--no-border",
+        # Search uses the same single-line square frame as the Settings
+        # dialogs: bold title in the top border, one blank row, content one
+        # column inside, and a muted hint on the last row. The tmux popup
+        # runs borderless (-B in cpz-keys) so this is the only frame.
+        "--border=sharp",
+        "--border-label= Search ",
+        "--border-label-pos=3",
+        "--padding=1,1,0,0",
         "--no-separator",
         "--no-scrollbar",
         "--no-bold",
-        "--no-color",
-        "--no-unicode",
+        # "bw" keeps the list monochrome; palette slot 8 is the theme's muted
+        # colour, so the footer hint matches the A_DIM hint in cpz-settings.
+        "--color=bw,label:bold,preview-fg:8",
         "--no-mouse",
         "--cycle",
         "--sync",
@@ -1310,15 +1386,18 @@ def check() -> int:
             errors.append("home item is malformed")
             continue
         home_kinds.add(parsed[0])
-        if parsed[0] not in ("media", "action", "settings", "tool"):
+        if parsed[0] not in ("media", "action", "settings", "tool", "power"):
             errors.append(
-                "home list must contain media, Settings, actions or managed apps"
+                "home list must contain media, Settings, actions, power or "
+                "managed apps"
             )
             break
     if "action" not in home_kinds:
         errors.append("home list must contain actions")
     if "settings" not in home_kinds:
         errors.append("home list must contain Settings pages")
+    if "power" not in home_kinds:
+        errors.append("home list must contain power actions")
 
     cases = (("=2+2", "4"), ("=10/4", "2.5"), ("=2**10", "1024"))
     for expression, expected in cases:
