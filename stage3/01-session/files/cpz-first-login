@@ -19,11 +19,9 @@ current=$(stat -c %Y /etc/shadow 2>/dev/null || true)
 [ "$current" = "$(cat "$stamp" 2>/dev/null || true)" ] || exit 0
 
 clear
-printf 'CPZ: the factory password is still in use.\n\n'
-printf 'It is recommended to set a new password for this account.\n'
-printf 'You can do it now, or later from Settings.\n\n'
+printf 'CPZ is using the factory password.\n\n'
 prompt_timeout=${CPZ_PASSWORD_PROMPT_TIMEOUT:-10}
-printf 'Set a new password now? [y/N] (default N in %ss) ' "$prompt_timeout"
+printf 'Change it now? [y/N] (default N in %ss) ' "$prompt_timeout"
 answer=
 if command -v timeout >/dev/null 2>&1; then
 	# The single quotes are intentional: sh -c expands $answer in the child.
@@ -37,8 +35,8 @@ case "$answer" in
 y | Y | yes | YES | Yes) ;;
 *)
 	clear
-	printf 'Keeping the factory password. You can change it later from Settings.\n'
-	sleep 2
+	printf 'Skipped. Later: Settings > System > Password.\n'
+	sleep 1
 	exit 0
 	;;
 esac
@@ -48,7 +46,7 @@ if passwd; then
 	printf 'Password updated.\n'
 else
 	clear
-	printf 'Password not changed. You can set it later from Settings.\n'
-	sleep 2
+	printf 'Password not changed. Settings > System > Password.\n'
+	sleep 1
 fi
 exit 0

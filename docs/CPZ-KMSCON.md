@@ -1,7 +1,8 @@
 # CPZ terminal session (kmscon)
 
 The regular CPZ image is a terminal system: kmscon owns the DRM/KMS console and
-runs tmux with the CPZ status bar and Settings TUI. There is no compositor,
+runs tmux with the CPZ status bar and Settings TUI. UI and text rules are in
+[CPZ-UI.md](CPZ-UI.md). There is no compositor,
 desktop or launcher. The internal panel is a pure DRM display (card1/SPI-1);
 kmscon drives it through KMS and fbcon is disabled.
 
@@ -133,8 +134,7 @@ sudo cpz-kmscon-output --force     # re-render and restart the session now
 sudo cpz-kmscon-output --recover   # restart the session (HDMI link recovery)
 ```
 
-`Alt+D` toggles `display` between `auto` and `panel`; Settings → Display &
-Brightness → Output sets `auto`, `panel` or `hdmi`. The timer picks the change
+`Alt+D` toggles `display` between `auto` and `panel`; Settings → Display → Display Output sets `auto`, `panel` or `hdmi`. The timer picks the change
 up within two seconds.
 
 ### Diagnosing the panel
@@ -287,12 +287,11 @@ the plain standard layout; kmscon has one keymap, so the overlay is active only
 while the internal keyboard is selected.
 
 The font size is shared by both screens, so HDMI gets more columns at the same
-cell size. `Alt+Plus` / `Alt+Minus` (and `Ctrl+Plus` / `Ctrl+Minus`) run
-`cpz-font`, which writes `font_size` to the CPZ settings; the internal keyboard
-emits them as Sym+T / Sym+R. Settings → Display & Brightness → Font Size edits
-the same value and offers the full 10–64 px range. The size survives layout
-changes, theme restarts and reboots. A font change still needs a kmscon restart
-because kmscon has no runtime font API.
+cell size. `Alt+G` / `Alt+M` run `cpz-font`, which writes `font_size` to the CPZ
+settings. Settings → Display → Text Size edits the same value and offers the
+full 10–64 px range; the keys can be changed in Settings → Keyboard →
+Shortcuts. The size survives layout changes, theme restarts and reboots. A font
+change still needs a kmscon restart because kmscon has no runtime font API.
 
 `cpz-kmscon-config` prints `changed` or `same`; `cpz-kmscon-output` restarts
 the session only when the rendered file differs, the display mode moves
@@ -326,10 +325,13 @@ image stay plain shells.
 /usr/local/bin/cpz-login                    # uid 1000 autologin + pty marker
 /usr/local/bin/cpz-hint                     # one-line key hint on attach
 /usr/local/bin/cpz-help                     # Alt+H key reference
-/usr/local/bin/cpz-search                   # Alt+O omnisearch popup
-/usr/local/bin/cpz-tab-info                 # status bar tab counters
+/usr/local/bin/cpz-keys                     # shortcut registry + generated tmux binds
+/usr/local/bin/cpz-search                   # Alt+O Search popup
 /usr/local/bin/cpz-tab-mount                # opens/closes the tab for a USB disk
-/usr/local/bin/cpz-font                     # Alt+Plus/Alt+Minus, persists font_size
+/usr/local/bin/cpz-font                     # Alt+G/Alt+M, persists font_size
+/usr/local/bin/cpz-volume                   # Alt+U/Alt+I/Alt+0, default sink volume
+~/.config/cpz/keys.conf                     # optional shortcut overrides
+~/.cache/cpz/tmux-keys.conf                 # generated bindings sourced by tmux
 /usr/local/bin/cpz-layout-map               # language-aware Sym overlay generator
 /usr/local/bin/cpz-automount                # USB filesystem hotplug mounts
 /etc/systemd/system/kmsconvt@.service.d/10-cpz.conf
@@ -352,34 +354,43 @@ The image adds `<ZENK> = 93;` to `/usr/share/X11/xkb/keycodes/evdev`: xkb-data
 leaves the keycode used by Sym+N (`>`) unnamed. Automatic `xkb-data` upgrades
 are masked; a manual package upgrade would need that line re-applied.
 
-Daily tmux actions are direct two-key `Alt+letter` bindings: `Alt+T` / `Alt+W`
+Daily tmux actions are direct two-key `Alt+key` bindings: `Alt+T` / `Alt+W`
 for tabs, `Alt+V` / `Alt+B` for splits, `Alt+N` / `Alt+P` for panes, `Alt+Z`
 for pane zoom, and so on. No tmux prefix is needed for the main UI. `C-a`
 remains only as an advanced fallback; the default `C-b` is hard to chord on
-the small CPZ keyboard.
+the small CPZ keyboard. `Alt+U` / `Alt+I` raise and lower the default output
+volume and `Alt+0` toggles mute through `cpz-volume`, which uses the same
+`wpctl` sink as Settings → Sound. `cpz-keys` generates the bindings and
+Settings → Keyboard → Shortcuts can reassign any of them; see
+[CPZ-KEYS.md](CPZ-KEYS.md) for the rules, defaults and file format.
 
 Plugging in a USB disk opens a tab in `/media/<label>` (see
 `docs/CPZ-STORAGE.md`). The tab is tagged with `@cpz_mount`, is not saved in
 the session layout, and is closed before the filesystem is unmounted.
 
-`Alt+O` opens `cpz-search`, a tmux popup with PATH commands, daily CPZ actions,
-Settings pages and files in one fzf list. `/` switches to file search, `=` to
-the calculator, `@` to the local Terminal Trove catalog and `$` to tmux paste
-buffers. Installed Trove tools launch in a new tab; other tools open the
-Applications details screen at that tool, so `i` can install them with the
-existing apt policy. `Ctrl+Y` copies the selection to the tmux buffer and
-`Ctrl+O` opens its directory in `lf` (or the Trove details). Settings entries
-use `cpz-settings --page <page>`, which is also available outside the popup.
-The search is on demand: no daemon or index runs between invocations.
+`Alt+O` opens CPZ Search, a short tmux popup with mounted drives, installed
+apps, catalog apps, PATH commands, daily CPZ actions, Settings pages and files
+in one fzf list. Mounted USB drives show an `Unmount <label>` row first; `Enter`
+asks `sudo` and unmounts through `cpz-automount`. `/` switches to file search,
+`=` to the calculator, `apps` to the local Terminal Trove catalog and `$` to
+tmux paste buffers. Installed apps are
+listed first and launch in a new tab; every other app row opens its
+Applications details page in the Settings tab, where `i` installs through the
+same apt policy as Applications.
+`Ctrl+Y` copies the selection to the tmux buffer and `Ctrl+O` opens its
+directory in `lf` (or the Applications details). Settings entries use
+`cpz-settings --page <page>` and app entries use `cpz-settings --tool <slug>`,
+which opens that app's page directly; both are also available outside the
+popup. The search is on demand: no daemon or index runs between invocations.
 
 The tmux helpers avoid two tmux 3.5 behaviours: literal tabs in `-F` output are
 replaced with `_`, and `set-option` no longer accepts the `=session` exact-match
-prefix. The tab counter, tab close and session save therefore use
+prefix. Tab close and session save therefore use
 space-separated formats or per-window queries.
 
-`cpz-hint` runs from the `client-attached` hook and targets that client's
-status line, so the one-line shortcut hint is not printed into the pane under
-the top status bar. `Alt+H` opens the full paged reference.
+`cpz-hint` runs from the `client-attached` hook once per login session and
+targets that client's status line, so the short discovery hint is not printed
+into the pane under the top status bar. `Alt+H` opens the full paged reference.
 
 Enabled: `kmsconvt@tty1`, `getty@tty2`, `getty@tty3`, `console-setup`,
 `cpz-kmscon-output.timer`,

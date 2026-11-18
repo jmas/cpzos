@@ -1,0 +1,735 @@
+#!/usr/bin/python3
+"""CPZ keyboard shortcut registry and tmux applier.
+
+The CardputerZero keyboard is small: punctuation lives on the Sym layer and the
+arrow keys are Fn combinations. CPZ shortcuts are therefore deliberately
+limited to one modifier plus one plain key. The defaults use Alt+letter and
+Alt+digit, which are two physical keys on the internal keyboard and on an
+external USB/Bluetooth keyboard.
+
+This module is the single source of truth for the shortcuts:
+
+* ``ACTIONS`` defines every user-facing action, its default key, its group and
+  the tmux command it runs.
+* tmux.conf sources the generated file instead of hard-coding ``bind`` lines.
+* cpz-help, cpz-search, cpz-hint and cpz-settings read the same registry, so a
+  rebind is visible everywhere.
+
+Overrides live in ``~/.config/cpz/keys.conf`` (one ``action=M-key`` per line).
+Settings -> Keyboard -> Shortcuts writes that file and calls ``cpz-keys apply``.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from typing import Any
+
+SYSTEM_KEYS = "/etc/cpz/keys.conf"
+KEY_PATTERN = re.compile(r"^M-(?:[a-z0-9]|Space)$")
+DISPLAY_RE = re.compile(r"^(?:Alt|Ctrl)\+(.+)$")
+SECTIONS = ("Start here", "Tabs", "Panes", "Scroll and copy", "Sound", "Session")
+
+# Every daily CPZ action is a direct two-key binding. Do not add M-<punct>,
+# Shift+Alt+key, Fn combinations or a third modifier here: those cannot be
+# trusted on the internal keyboard. Tab numbers use the same modifier+digit
+# shape and are therefore included in the registry.
+ACTIONS: tuple[dict[str, Any], ...] = (
+    {
+        "id": "search",
+        "label": "Search",
+        "section": "Start here",
+        "default": "M-o",
+        "command": 'display-popup -E -w 85% -h 70% -T "Search" '
+        '"/usr/local/bin/cpz-search"',
+    },
+    {
+        "id": "settings",
+        "label": "Settings",
+        "section": "Start here",
+        "default": "M-s",
+        "command": "run-shell -b "
+        "'/usr/local/bin/cpz-settings-open #{session_name}'",
+    },
+    {
+        "id": "help",
+        "label": "Help",
+        "section": "Start here",
+        "default": "M-h",
+        "command": 'display-popup -E -w 90% -h 90% -T "CPZ keys" '
+        '"/usr/local/bin/cpz-help"',
+    },
+    {
+        "id": "prev-tab",
+        "label": "Previous Tab",
+        "section": "Tabs",
+        "default": "M-a",
+        "command": "previous-window",
+    },
+    {
+        "id": "next-tab",
+        "label": "Next Tab",
+        "section": "Tabs",
+        "default": "M-f",
+        "command": "next-window",
+    },
+    {
+        "id": "tab-1",
+        "label": "Tab 1",
+        "section": "Tabs",
+        "default": "M-1",
+        "command": "select-window -t :1",
+    },
+    {
+        "id": "tab-2",
+        "label": "Tab 2",
+        "section": "Tabs",
+        "default": "M-2",
+        "command": "select-window -t :2",
+    },
+    {
+        "id": "tab-3",
+        "label": "Tab 3",
+        "section": "Tabs",
+        "default": "M-3",
+        "command": "select-window -t :3",
+    },
+    {
+        "id": "tab-4",
+        "label": "Tab 4",
+        "section": "Tabs",
+        "default": "M-4",
+        "command": "select-window -t :4",
+    },
+    {
+        "id": "tab-5",
+        "label": "Tab 5",
+        "section": "Tabs",
+        "default": "M-5",
+        "command": "select-window -t :5",
+    },
+    {
+        "id": "tab-6",
+        "label": "Tab 6",
+        "section": "Tabs",
+        "default": "M-6",
+        "command": "select-window -t :6",
+    },
+    {
+        "id": "tab-7",
+        "label": "Tab 7",
+        "section": "Tabs",
+        "default": "M-7",
+        "command": "select-window -t :7",
+    },
+    {
+        "id": "tab-8",
+        "label": "Tab 8",
+        "section": "Tabs",
+        "default": "M-8",
+        "command": "select-window -t :8",
+    },
+    {
+        "id": "tab-9",
+        "label": "Tab 9",
+        "section": "Tabs",
+        "default": "M-9",
+        "command": "select-window -t :9",
+    },
+    {
+        "id": "new-tab",
+        "label": "New Tab",
+        "section": "Tabs",
+        "default": "M-t",
+        "command": "run-shell -b "
+        "'/usr/local/bin/cpz-tab-new #{session_name}'",
+    },
+    {
+        "id": "close-tab",
+        "label": "Close Tab",
+        "section": "Tabs",
+        "default": "M-w",
+        "command": "run-shell -b "
+        "'/usr/local/bin/cpz-tab-close-key #{session_name}'",
+    },
+    {
+        "id": "rename-tab",
+        "label": "Rename Tab",
+        "section": "Tabs",
+        "default": "M-r",
+        "command": 'command-prompt -p "Rename tab:" '
+        '"rename-window -- \'%%\'"',
+    },
+    {
+        "id": "list-tabs",
+        "label": "List Tabs",
+        "section": "Tabs",
+        "default": "M-l",
+        "command": "choose-tree -Zw",
+    },
+    {
+        "id": "split-right",
+        "label": "Split Left/Right",
+        "section": "Panes",
+        "default": "M-v",
+        "command": "split-window -h",
+    },
+    {
+        "id": "split-down",
+        "label": "Split Top/Bottom",
+        "section": "Panes",
+        "default": "M-b",
+        "command": "split-window -v",
+    },
+    {
+        "id": "next-pane",
+        "label": "Next Pane",
+        "section": "Panes",
+        "default": "M-n",
+        "command": "select-pane -t :.+",
+    },
+    {
+        "id": "prev-pane",
+        "label": "Previous Pane",
+        "section": "Panes",
+        "default": "M-p",
+        "command": "select-pane -t :.-",
+    },
+    {
+        "id": "zoom-pane",
+        "label": "Zoom Pane",
+        "section": "Panes",
+        "default": "M-z",
+        "command": "resize-pane -Z",
+    },
+    {
+        "id": "close-pane",
+        "label": "Close Pane",
+        "section": "Panes",
+        "default": "M-x",
+        "command": 'confirm-before -p "Close pane? (y/n)" kill-pane',
+    },
+    {
+        "id": "swap-pane-prev",
+        "label": "Swap Pane Prev",
+        "section": "Panes",
+        "default": "M-j",
+        "command": "swap-pane -U",
+    },
+    {
+        "id": "swap-pane-next",
+        "label": "Swap Pane Next",
+        "section": "Panes",
+        "default": "M-k",
+        "command": "swap-pane -D",
+    },
+    {
+        "id": "copy-mode",
+        "label": "Copy Mode",
+        "section": "Scroll and copy",
+        "default": "M-c",
+        "command": "copy-mode",
+    },
+    {
+        "id": "paste-buffer",
+        "label": "Paste Buffer",
+        "section": "Scroll and copy",
+        "default": "M-y",
+        "command": "paste-buffer -p",
+    },
+    {
+        "id": "volume-up",
+        "label": "Volume Up",
+        "section": "Sound",
+        "default": "M-u",
+        "command": 'run-shell -b "/usr/local/bin/cpz-volume up"',
+    },
+    {
+        "id": "volume-down",
+        "label": "Volume Down",
+        "section": "Sound",
+        "default": "M-i",
+        "command": 'run-shell -b "/usr/local/bin/cpz-volume down"',
+    },
+    {
+        "id": "volume-mute",
+        "label": "Mute",
+        "section": "Sound",
+        "default": "M-0",
+        "command": 'run-shell -b "/usr/local/bin/cpz-volume mute"',
+    },
+    {
+        "id": "layout-next",
+        "label": "Input Layout",
+        "section": "Session",
+        "default": "M-Space",
+        "command": "run-shell -b '/usr/local/bin/cpz-layout-next'",
+    },
+    {
+        "id": "display-toggle",
+        "label": "Display Toggle",
+        "section": "Session",
+        "default": "M-d",
+        "command": "run-shell -b '/usr/local/bin/cpz-display-toggle'",
+    },
+    {
+        "id": "font-up",
+        "label": "Font Bigger",
+        "section": "Session",
+        "default": "M-g",
+        "command": 'run-shell -b "/usr/local/bin/cpz-font up"',
+    },
+    {
+        "id": "font-down",
+        "label": "Font Smaller",
+        "section": "Session",
+        "default": "M-m",
+        "command": 'run-shell -b "/usr/local/bin/cpz-font down"',
+    },
+    {
+        "id": "detach",
+        "label": "Detach",
+        "section": "Session",
+        "default": "M-q",
+        "command": "detach-client",
+    },
+)
+ACTIONS_BY_ID = {action["id"]: action for action in ACTIONS}
+DEFAULT_KEYS = tuple(action["default"] for action in ACTIONS)
+
+
+def config_home() -> str:
+    return os.environ.get("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config"
+    )
+
+
+def cache_home() -> str:
+    return os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache"
+    )
+
+
+def user_keys_path() -> str:
+    return os.path.join(config_home(), "cpz", "keys.conf")
+
+
+def active_keys_path() -> str:
+    return os.path.join(cache_home(), "cpz", "keys.active")
+
+
+def tmux_keys_path() -> str:
+    """Return the fixed path sourced by /etc/tmux.conf.
+
+    XDG_CACHE_HOME is intentionally ignored here: the static tmux config always
+    sources ``~/.cache/cpz/tmux-keys.conf``, so both sides must agree even when
+    a user exports a different cache directory in the shell.
+    """
+    override = os.environ.get("CPZ_KEYS_TMUX_CONF", "").strip()
+    if override:
+        return override
+    return os.path.join(
+        os.path.expanduser("~"), ".cache", "cpz", "tmux-keys.conf"
+    )
+
+
+def normalize_key(value: Any) -> str:
+    """Return the canonical ``M-key`` form or an empty string.
+
+    Config files accept ``M-t`` and ``Alt+T``; Settings writes ``M-t``. The
+    Ctrl modifier is intentionally rejected: a global ``C-c``/``C-d``/``C-z``
+    binding would break the shell, and mixing modifiers makes the CPZ key
+    reference harder to predict.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower().replace(" ", "")
+    match = DISPLAY_RE.match(lowered)
+    if match:
+        if lowered.startswith("ctrl+"):
+            return ""
+        suffix = match.group(1)
+    elif lowered.startswith("m-"):
+        suffix = lowered[2:]
+    elif lowered.startswith("alt+"):
+        suffix = lowered[4:]
+    else:
+        return ""
+    if suffix == "space":
+        return "M-Space"
+    if re.fullmatch(r"[a-z0-9]", suffix):
+        return "M-" + suffix
+    return ""
+
+
+def display_key(key: str) -> str:
+    """Turn ``M-t`` into ``Alt+T`` for help and Settings."""
+    key = normalize_key(key)
+    if not key:
+        return "unbound"
+    suffix = key[2:]
+    if suffix.lower() == "space":
+        return "Alt+Space"
+    return "Alt+" + suffix.upper()
+
+
+def is_valid_key(key: str) -> bool:
+    return bool(KEY_PATTERN.match(key))
+
+
+def read_override_file(path: str) -> dict[str, str]:
+    """Read one keys.conf file, ignoring comments and invalid entries."""
+    overrides: dict[str, str] = {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                action_id, value = line.split("=", 1)
+                action_id = action_id.strip()
+                if action_id not in ACTIONS_BY_ID:
+                    continue
+                key = normalize_key(value)
+                if key:
+                    overrides[action_id] = key
+    except OSError:
+        pass
+    return overrides
+
+
+def read_overrides() -> dict[str, str]:
+    """Read the optional system defaults and the user's ``keys.conf``.
+
+    The user file wins over the system file, so an administrator can set a
+    default that the user can still override in Settings.
+    """
+    overrides = read_override_file(SYSTEM_KEYS)
+    overrides.update(read_override_file(user_keys_path()))
+    return overrides
+
+
+def effective_bindings() -> dict[str, dict[str, str]]:
+    """Resolve overrides, keeping every action on a unique two-key binding.
+
+    Defaults are assigned first, so an override for one action can never steal
+    another action's default key and leave that action unbound. An override is
+    applied only when its key is free; a conflicting line is ignored and the
+    action keeps its default. Settings rejects conflicts before writing them,
+    so this is the recovery path for a hand-edited keys.conf.
+    """
+    overrides = read_overrides()
+    keys = {action["id"]: action["default"] for action in ACTIONS}
+    owner = {key: action_id for action_id, key in keys.items()}
+    for action in ACTIONS:
+        action_id = action["id"]
+        key = normalize_key(overrides.get(action_id, ""))
+        if not key or key == keys[action_id]:
+            continue
+        holder = owner.get(key)
+        if holder and holder != action_id:
+            continue
+        owner.pop(keys[action_id], None)
+        keys[action_id] = key
+        owner[key] = action_id
+    return {
+        action["id"]: {
+            "id": action["id"],
+            "key": keys[action["id"]],
+            "display": display_key(keys[action["id"]]),
+        }
+        for action in ACTIONS
+    }
+
+
+def conflict_for(action_id: str, key: str) -> str:
+    """Return the action that already owns ``key``, or an empty string."""
+    key = normalize_key(key)
+    if not key:
+        return "invalid"
+    for other_id, binding in effective_bindings().items():
+        if other_id != action_id and binding["key"] == key:
+            return other_id
+    return ""
+
+
+def set_override(action_id: str, key: str) -> int:
+    """Persist one override. Returns a process-style exit code."""
+    if action_id not in ACTIONS_BY_ID:
+        print(f"cpz-keys: unknown action {action_id}", file=sys.stderr)
+        return 2
+    key = normalize_key(key)
+    if not is_valid_key(key):
+        print(
+            "cpz-keys: use one Alt key: Alt+letter, Alt+digit or Alt+Space",
+            file=sys.stderr,
+        )
+        return 2
+    other = conflict_for(action_id, key)
+    if other:
+        print(
+            f"cpz-keys: {display_key(key)} is already used by "
+            f"{ACTIONS_BY_ID[other]['label']}",
+            file=sys.stderr,
+        )
+        return 2
+    overrides = read_override_file(user_keys_path())
+    if key == ACTIONS_BY_ID[action_id]["default"]:
+        overrides.pop(action_id, None)
+    else:
+        overrides[action_id] = key
+    write_overrides(overrides)
+    return 0
+
+
+def clear_override(action_id: str) -> None:
+    overrides = read_override_file(user_keys_path())
+    overrides.pop(action_id, None)
+    write_overrides(overrides)
+
+
+def clear_all_overrides() -> None:
+    try:
+        os.unlink(user_keys_path())
+    except OSError:
+        pass
+
+
+def write_overrides(overrides: dict[str, str]) -> None:
+    path = user_keys_path()
+    os.makedirs(os.path.dirname(path), mode=0o755, exist_ok=True)
+    temp = path + ".tmp"
+    with open(temp, "w", encoding="utf-8") as handle:
+        handle.write("# CPZ shortcut overrides. Written by cpz-settings.\n")
+        handle.write("# Values are one Alt+key binding; remove a line to reset.\n")
+        for action in ACTIONS:
+            key = normalize_key(overrides.get(action["id"], ""))
+            if key and key != action["default"]:
+                handle.write(f"{action['id']}={key}\n")
+    os.replace(temp, path)
+
+
+def read_active_keys() -> set[str]:
+    try:
+        with open(active_keys_path(), "r", encoding="utf-8") as handle:
+            return {
+                line.strip()
+                for line in handle
+                if line.strip() and not line.startswith("#")
+            }
+    except OSError:
+        return set()
+
+
+def write_active_keys(keys: set[str]) -> None:
+    path = active_keys_path()
+    os.makedirs(os.path.dirname(path), mode=0o755, exist_ok=True)
+    temp = path + ".tmp"
+    with open(temp, "w", encoding="utf-8") as handle:
+        handle.write("# Generated by cpz-keys. Do not edit.\n")
+        for key in sorted(keys):
+            handle.write(key + "\n")
+    os.replace(temp, path)
+
+
+def generated_lines() -> list[str]:
+    """Return tmux config lines for the effective bindings.
+
+    Every default key is unbound first, together with keys from the previous
+    run. This removes duplicate aliases and stale bindings after a rebind while
+    leaving unrelated tmux keys alone.
+    """
+    bindings = effective_bindings()
+    current = {binding["key"] for binding in bindings.values() if binding["key"]}
+    stale = (set(DEFAULT_KEYS) | read_active_keys()) - current
+    lines = [
+        "# Generated by cpz-keys. Do not edit; use Settings > Keyboard > Shortcuts.",
+    ]
+    for key in sorted(stale):
+        lines.append(f"unbind -n {key}")
+    for action in ACTIONS:
+        binding = bindings.get(action["id"], {})
+        key = binding.get("key", "")
+        if key:
+            lines.append(f"bind -n {key} {action['command']}")
+    return lines
+
+
+def write_tmux_config(path: str | None = None) -> str:
+    path = path or tmux_keys_path()
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, mode=0o755, exist_ok=True)
+    lines = generated_lines()
+    temp = path + ".tmp"
+    with open(temp, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+    os.replace(temp, path)
+    current = {
+        binding["key"]
+        for binding in effective_bindings().values()
+        if binding["key"]
+    }
+    write_active_keys(current)
+    return path
+
+
+def all_known_keys() -> set[str]:
+    return set(DEFAULT_KEYS) | read_active_keys() | {
+        binding["key"]
+        for binding in effective_bindings().values()
+        if binding["key"]
+    }
+
+
+def tmux_source(path: str) -> tuple[int, str]:
+    try:
+        result = subprocess.run(
+            ["tmux", "source-file", path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+    except OSError as error:
+        return 1, str(error)
+    message = (result.stderr or result.stdout).strip()
+    return result.returncode, message
+
+
+def apply_tmux() -> tuple[int, str]:
+    path = write_tmux_config()
+    return tmux_source(path)
+
+
+def suspend_tmux() -> None:
+    """Temporarily remove CPZ bindings while Settings captures a new key."""
+    for key in sorted(all_known_keys()):
+        try:
+            subprocess.run(
+                ["tmux", "unbind-key", "-n", key],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except OSError:
+            return
+
+
+def shortcut_lines() -> list[str]:
+    bindings = effective_bindings()
+    lines = [
+        "CPZ shortcuts",
+        "Every action is one modifier plus one key. The defaults use Alt.",
+        "",
+    ]
+    for section in SECTIONS:
+        lines.append(f"==== {section} ====")
+        for action in ACTIONS:
+            if action["section"] != section:
+                continue
+            binding = bindings.get(action["id"], {})
+            display = binding.get("display", "unbound")
+            lines.append(f" {display:<14} {action['label']}")
+        lines.append("")
+    copy_key = bindings.get("copy-mode", {}).get("display", "Alt+C")
+    lines.extend(
+        [
+            f"{copy_key} enters copy mode; j/k or Fn+F/Fn+X move,",
+            "Ctrl+U / Ctrl+D page, Space starts a selection, Enter copies,",
+            "q leaves copy mode.",
+            "",
+            "Settings > Keyboard > Shortcuts changes any binding.",
+        ]
+    )
+    return lines
+
+
+def help_text() -> str:
+    return "\n".join(shortcut_lines())
+
+
+def hint_text() -> str:
+    bindings = effective_bindings()
+
+    def label(action_id: str) -> str:
+        return bindings.get(action_id, {}).get("display", "")
+
+    return (
+        f"{label('help')} keys   {label('search')} search   "
+        f"{label('settings')} settings"
+    )
+
+
+def list_text() -> str:
+    bindings = effective_bindings()
+    lines = []
+    for action in ACTIONS:
+        binding = bindings.get(action["id"], {})
+        lines.append(
+            "\t".join(
+                (
+                    action["id"],
+                    action["label"],
+                    action["section"],
+                    binding.get("key", ""),
+                    binding.get("display", "unbound"),
+                    action["default"],
+                )
+            )
+        )
+    return "\n".join(lines)
+
+
+def main(arguments: list[str]) -> int:
+    command = arguments[0] if arguments else "list"
+    rest = arguments[1:]
+    if command in ("-h", "--help"):
+        print(
+            "Usage: cpz-keys [list|help|hint|write [FILE]|apply|reset|"
+            "bind ACTION KEY|unbind ACTION]"
+        )
+        return 0
+    if command == "help":
+        print(help_text())
+        return 0
+    if command == "list":
+        print(list_text())
+        return 0
+    if command == "hint":
+        print(hint_text())
+        return 0
+    if command == "write":
+        print(write_tmux_config(rest[0] if rest else None))
+        return 0
+    if command == "apply":
+        rc, message = apply_tmux()
+        if message:
+            print(message, file=sys.stderr if rc else sys.stdout)
+        return rc
+    if command == "reset":
+        clear_all_overrides()
+        return 0
+    if command == "bind":
+        if len(rest) != 2:
+            print("cpz-keys: bind needs ACTION KEY", file=sys.stderr)
+            return 2
+        return set_override(rest[0], rest[1])
+    if command == "unbind":
+        if len(rest) != 1:
+            print("cpz-keys: unbind needs ACTION", file=sys.stderr)
+            return 2
+        if rest[0] not in ACTIONS_BY_ID:
+            print(f"cpz-keys: unknown action {rest[0]}", file=sys.stderr)
+            return 2
+        clear_override(rest[0])
+        return 0
+    print(f"cpz-keys: unknown command {command}", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

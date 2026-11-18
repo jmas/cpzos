@@ -64,8 +64,11 @@ as the console session is running. At boot, udev coldplug runs before the
 console user logs in, so disks that are already attached are mounted without a
 tab.
 
-Mounted paths are included in the `Alt+O` omnisearch file provider, so a data
-directory can be opened without leaving the keyboard.
+Mounted paths are included in the `Alt+O` CPZ Search file provider, so a data
+directory can be opened without leaving the keyboard. Every mounted drive also
+gets an `Unmount <label>  [media]` row at the top of the search; `Enter` runs
+`sudo cpz-automount umount <dev>`, so the disk tab is closed and the filesystem
+flushed without typing the command.
 
 ## Safe removal
 

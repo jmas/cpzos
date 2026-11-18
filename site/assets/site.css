@@ -274,12 +274,6 @@ section:first-child {
   line-height: 1.6;
 }
 
-.note {
-  max-width: 72ch;
-  color: var(--muted);
-  font-size: 14px;
-}
-
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -317,17 +311,7 @@ section:first-child {
 /* sections */
 
 .section-head {
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-.num {
-  margin: 6px 0 0;
-  color: var(--accent);
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  display: block;
 }
 
 .section-head h2 {

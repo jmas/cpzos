@@ -17,6 +17,7 @@ import unittest
 from datetime import datetime
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SETTINGS = ROOT / "stage3" / "01-session" / "files" / "cpz-settings"
@@ -302,6 +303,26 @@ class SettingsTUI(unittest.TestCase):
         self.assertIn("pages OK", output.getvalue())
         self.assertGreater(len(self.mod.PAGE_TITLES), 10)
 
+    def test_menu_labels_fit_the_value_column(self):
+        data = dict(self.mod.DEFAULTS)
+        for page in self.mod.PAGE_TITLES:
+            for item in self.mod.page_items(page, data, None):
+                self.assertLessEqual(
+                    len(item["label"]), 16, f"{page}: {item['label']}"
+                )
+
+    def test_status_bar_page_fits_the_panel(self):
+        data = dict(self.mod.DEFAULTS)
+        data.update(show_clock=1, show_date=1, show_conn=1)
+        items = self.mod.page_items("statusbar", data, None)
+        self.assertLessEqual(len(items), 11)
+
+    def test_filter_rows_matches_labels_and_codes(self):
+        rows = [("ua", "Ukrainian"), ("us", "English (US)")]
+        self.assertEqual(self.mod.filter_rows(rows, "ukr"), [("ua", "Ukrainian")])
+        self.assertEqual(self.mod.filter_rows(rows, "US"), [("us", "English (US)")])
+        self.assertEqual(self.mod.filter_rows(rows, "zzz"), [])
+
     def test_apt_package_parsing(self):
         self.assertEqual(self.mod.apt_command_package("apt install tmux"), "tmux")
         self.assertEqual(
@@ -415,29 +436,58 @@ class SettingsTUI(unittest.TestCase):
                     "categories": ["git"],
                     "apt": {},
                 },
+                {
+                    "slug": "github-cli",
+                    "name": "GitHub CLI",
+                    "summary": "GitHub from the terminal",
+                    "categories": ["git"],
+                    "apt": {"command": "apt install gh", "package": "github-cli"},
+                },
             ],
         }
         path = Path(self.mod.trove_cache_path())
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(index), encoding="utf-8")
+        self.mod.write_trove_apps(
+            {
+                "github-cli": {
+                    "slug": "github-cli",
+                    "name": "GitHub CLI",
+                    "package": "github-cli",
+                    "version": "2.0",
+                    "installed_at": "2026-11-18T00:00:00",
+                    "install_command": "apt install gh",
+                    "uninstall_command": "apt-get purge github-cli",
+                }
+            }
+        )
 
         bindir = Path(self.tmp.name) / "bin"
         bindir.mkdir()
-        tmux = bindir / "tmux"
-        tmux.write_text("#!/bin/sh\n", encoding="utf-8")
-        tmux.chmod(0o755)
+        for name in ("tmux", "gh"):
+            binary = bindir / name
+            binary.write_text("#!/bin/sh\n", encoding="utf-8")
+            binary.chmod(0o755)
         old = os.environ.get("PATH")
         os.environ["PATH"] = str(bindir)
         self.addCleanup(self.restore_env, "PATH", old)
+        self.mod.package_executables = lambda package: (
+            ["gh"] if package == "github-cli" else []
+        )
 
         payload = self.mod.list_tools_payload()
         self.assertEqual(payload["schema"], 1)
         tools = {tool["slug"]: tool for tool in payload["tools"]}
         self.assertEqual(tools["tmux"]["command"], "tmux")
         self.assertTrue(tools["tmux"]["installed"])
+        self.assertFalse(tools["tmux"]["managed"])
         self.assertEqual(tools["tmux"]["apt"], "tmux")
         self.assertEqual(tools["lazygit"]["command"], "")
         self.assertFalse(tools["lazygit"]["installed"])
+        self.assertFalse(tools["lazygit"]["managed"])
+        self.assertEqual(tools["github-cli"]["command"], "gh")
+        self.assertTrue(tools["github-cli"]["installed"])
+        self.assertTrue(tools["github-cli"]["managed"])
 
     def test_trove_apt_support_filter(self):
         apt_names = {"tmux", "lazygit", "github-cli"}
@@ -503,6 +553,59 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(resolved["needs_update"], "1")
         self.assertEqual(self.mod.resolve_trove_apt(tool, set())["status"], "missing")
 
+    def test_cli_install_tool_records_the_app(self):
+        index = {
+            "schema": 1,
+            "tools": [
+                {
+                    "slug": "btop",
+                    "name": "btop",
+                    "summary": "resource monitor",
+                    "apt": {"command": "apt install btop", "package": "btop"},
+                }
+            ],
+        }
+        path = Path(self.mod.trove_cache_path())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(index), encoding="utf-8")
+        self.mod.trove_apt_names = lambda: {"btop"}
+        self.mod.resolve_trove_apt = lambda tool, names: {
+            "package": "btop",
+            "status": "available",
+            "version": "",
+        }
+        self.mod.apt_status = lambda package: {
+            "package": package,
+            "status": "installed",
+            "version": "1.0",
+        }
+        with mock.patch.object(self.mod.subprocess, "call", return_value=0):
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(self.mod.cli_install_tool("btop"), 0)
+        apps = self.mod.read_trove_apps()
+        self.assertEqual(apps["btop"]["package"], "btop")
+        self.assertEqual(apps["btop"]["version"], "1.0")
+
+    def test_cli_install_tool_rejects_unknown_slugs(self):
+        self.assertEqual(self.mod.cli_install_tool("missing"), 2)
+
+    def test_search_tool_target_opens_the_app_details(self):
+        """CPZ Search's --tool target must land on the app page, not the list."""
+        tool = {"slug": "lazygit", "name": "lazygit"}
+        self.mod.draw_loading = lambda *_args, **_kwargs: None
+        self.mod.load_trove_index = lambda: {
+            "tools": [tool],
+            "categories": [],
+            "languages": [],
+        }
+        self.mod.read_trove_apps = lambda: {"lazygit": {"slug": "lazygit"}}
+        self.mod.trove_apt_names = lambda: {"lazygit"}
+        with mock.patch.object(self.mod, "trove_details_screen") as details:
+            self.mod.trove_apps_screen(mock.Mock(), "lazygit")
+        details.assert_called_once()
+        self.assertEqual(details.call_args.args[1]["slug"], "lazygit")
+        self.assertEqual(details.call_args.args[2], {"slug": "lazygit"})
+
     def test_trove_managed_state_round_trip(self):
         apps = {
             "tmux": {
@@ -548,7 +651,7 @@ class SettingsTUI(unittest.TestCase):
         self.assertIn("Not available in apt", text)
         self.assertIn("snap install foo", text)
         self.assertIn("brew install foo", text)
-        self.assertIn("Terminal Trove: https://terminaltrove.com/foo/", text)
+        self.assertIn("Catalog: https://terminaltrove.com/foo/", text)
         self.assertIn("Website: https://example.com/foo", text)
 
     def test_trove_details_do_not_offer_system_packages(self):

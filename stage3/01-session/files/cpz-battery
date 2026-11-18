@@ -1,0 +1,413 @@
+#!/bin/sh
+# CPZ battery guard.
+#
+# The CardputerZero has one LiPo cell behind a TI BQ27220 fuel gauge (Linux
+# bq27xxx driver, exposed as one /sys/class/power_supply node). Draining the
+# pack down to the gauge's hardware cutoff makes the cell voltage collapse
+# under the CPU/boot load; the board then resets, which looks like an
+# unexpected reboot. Stopping a little earlier turns that into a clean
+# poweroff.
+#
+#   cpz-battery status  print the gauge values
+#   cpz-battery check   exit 0 ok/charging/unknown, 1 low, 2 critical
+#   cpz-battery guard   monitor loop used by cpz-battery-guard.service
+#   cpz-battery boot    boot-time check used by cpz-login
+#
+# Thresholds live in /etc/cpz/battery.conf.
+set -u
+
+SYSFS=${CPZ_BATTERY_SYSFS:-/sys/class/power_supply}
+CONFIG=${CPZ_BATTERY_CONFIG:-/etc/cpz/battery.conf}
+RUN_DIR=${CPZ_BATTERY_RUN:-/run}
+POWEROFF=${CPZ_BATTERY_POWEROFF:-systemctl}
+MESSAGE="$RUN_DIR/cpz-battery.message"
+
+# Defaults; /etc/cpz/battery.conf overrides them.
+warn_level=20
+shutdown_level=10
+boot_level=10
+shutdown_voltage_uv=3350000
+shutdown_grace=20
+poll_interval=10
+
+capacity=
+status=
+voltage_now=
+current_now=
+
+log() {
+	printf '%s\n' "$*"
+}
+
+set_percent() {
+	# $1 is a percentage; only 1..100 is accepted.
+	case "$1" in
+		'' | *[!0-9]*) return 1 ;;
+	esac
+	[ "$1" -ge 1 ] && [ "$1" -le 100 ]
+}
+
+load_config() {
+	[ -r "$CONFIG" ] || return 0
+	while IFS='=' read -r key value; do
+		key=$(printf '%s' "${key:-}" | tr -d '[:space:]')
+		case "$key" in
+			'' | '#'*) continue ;;
+		esac
+		value=${value:-}
+		value=${value%%#*}
+		value=$(printf '%s' "$value" | tr -d '[:space:]')
+		case "$value" in
+			'' | *[!0-9]*) continue ;;
+		esac
+		case "$key" in
+			warn_level)
+				if set_percent "$value"; then
+					warn_level=$value
+				fi
+				;;
+			shutdown_level)
+				if set_percent "$value"; then
+					shutdown_level=$value
+				fi
+				;;
+			boot_level)
+				if set_percent "$value"; then
+					boot_level=$value
+				fi
+				;;
+			shutdown_voltage_uv)
+				if [ "$value" -eq 0 ] ||
+					{ [ "$value" -ge 2500000 ] &&
+						[ "$value" -le 4500000 ]; }; then
+					shutdown_voltage_uv=$value
+				fi
+				;;
+			shutdown_grace)
+				if [ "$value" -le 600 ]; then
+					shutdown_grace=$value
+				fi
+				;;
+			poll_interval)
+				if [ "$value" -ge 5 ] && [ "$value" -le 3600 ]; then
+					poll_interval=$value
+				fi
+				;;
+		esac
+	done <"$CONFIG"
+}
+
+read_attr() {
+	# Print a sysfs attribute without whitespace. A missing file is empty.
+	tr -d '[:space:]' <"$1" 2>/dev/null || true
+}
+
+read_battery() {
+	# The gauge is the power_supply entry that has a capacity attribute;
+	# USB/AC supplies do not. Keep the values in globals for the callers.
+	capacity=
+	status=
+	voltage_now=
+	current_now=
+	for supply in "$SYSFS"/*; do
+		[ -r "$supply/capacity" ] || continue
+		capacity=$(read_attr "$supply/capacity")
+		case "$capacity" in
+			'' | *[!0-9]*) capacity=; continue ;;
+		esac
+		status=$(read_attr "$supply/status")
+		voltage_now=$(read_attr "$supply/voltage_now")
+		case "$voltage_now" in
+			'' | *[!0-9]*) voltage_now= ;;
+		esac
+		current_now=$(read_attr "$supply/current_now")
+		case "$current_now" in
+			'') ;;
+			-*)
+				case "${current_now#-}" in
+					'' | *[!0-9]*) current_now= ;;
+				esac
+				;;
+			*[!0-9]*) current_now= ;;
+		esac
+		return 0
+	done
+	return 1
+}
+
+is_charging() {
+	# Only a positive battery current proves that the pack is not draining.
+	# "Not charging" can also mean charge-inhibited while still on battery,
+	# so it is deliberately not treated as safe.
+	case "$status" in
+		Charging | Full) return 0 ;;
+	esac
+	case "$current_now" in
+		'' | -* | 0 | *[!0-9]*) return 1 ;;
+	esac
+	[ "$current_now" -gt 0 ]
+}
+
+at_or_below() {
+	[ -n "$capacity" ] || return 1
+	[ "$capacity" -le "$1" ]
+}
+
+voltage_low() {
+	[ "$shutdown_voltage_uv" -gt 0 ] || return 1
+	[ -n "$voltage_now" ] || return 1
+	[ "$voltage_now" -gt 0 ] || return 1
+	[ "$voltage_now" -le "$shutdown_voltage_uv" ]
+}
+
+is_critical() {
+	at_or_below "$shutdown_level" || voltage_low
+}
+
+is_boot_low() {
+	at_or_below "$boot_level" || voltage_low
+}
+
+battery_summary() {
+	if [ -n "$voltage_now" ]; then
+		printf '%s%% %s.%s V' "$capacity" \
+			"$((voltage_now / 1000000))" \
+			"$(((voltage_now % 1000000) / 100000))"
+	else
+		printf '%s%%' "$capacity"
+	fi
+}
+
+notify() {
+	message=$1
+	log "$message"
+	if [ -d "$RUN_DIR" ]; then
+		printf '%s\n' "$message" >"$MESSAGE" 2>/dev/null || true
+	fi
+	[ "$(id -u)" -eq 0 ] || return 0
+	user=$(getent passwd 1000 2>/dev/null | cut -d: -f1 || true)
+	[ -n "$user" ] || return 0
+	home=$(getent passwd 1000 2>/dev/null | cut -d: -f6 || true)
+	[ -n "$home" ] || home=/
+	command -v tmux >/dev/null 2>&1 || return 0
+	command -v runuser >/dev/null 2>&1 || return 1
+	# The status line is visible over the full-screen Settings TUI too.
+	runuser -u "$user" -- env HOME="$home" \
+		tmux display-message -d 20000 "$message" 2>/dev/null || true
+}
+
+clear_message() {
+	rm -f "$MESSAGE" 2>/dev/null || true
+}
+
+clear_screen() {
+	if command -v clear >/dev/null 2>&1; then
+		clear 2>/dev/null || true
+	else
+		printf '\033[H\033[2J'
+	fi
+}
+
+power_off() {
+	if command -v "$POWEROFF" >/dev/null 2>&1; then
+		"$POWEROFF" poweroff --no-block 2>/dev/null ||
+			"$POWEROFF" poweroff 2>/dev/null || true
+	elif command -v poweroff >/dev/null 2>&1; then
+		poweroff 2>/dev/null || true
+	fi
+}
+
+show_status() {
+	read_battery || true
+	if is_charging; then
+		charging=yes
+	else
+		charging=no
+	fi
+	printf 'capacity=%s\n' "$capacity"
+	printf 'status=%s\n' "$status"
+	printf 'voltage_now=%s\n' "$voltage_now"
+	printf 'current_now=%s\n' "$current_now"
+	printf 'charging=%s\n' "$charging"
+}
+
+check_state() {
+	if ! read_battery || [ -z "$capacity" ]; then
+		printf 'unknown\n'
+		return 0
+	fi
+	if is_charging; then
+		printf 'charging\n'
+		return 0
+	fi
+	if is_critical; then
+		printf 'critical\n'
+		return 2
+	fi
+	if at_or_below "$warn_level"; then
+		printf 'low\n'
+		return 1
+	fi
+	printf 'ok\n'
+	return 0
+}
+
+guard() {
+	warned=0
+	while :; do
+		read_battery || true
+		if [ -z "$capacity" ]; then
+			sleep "$poll_interval"
+			continue
+		fi
+
+		if is_charging; then
+			if [ "$warned" -ne 0 ]; then
+				notify "Charger connected ($(battery_summary))."
+			fi
+			warned=0
+			clear_message
+			sleep "$poll_interval"
+			continue
+		fi
+
+		if is_critical; then
+			# A short load transient can look like a flat pack. Re-read
+			# before starting a countdown the user cannot miss.
+			sleep 2
+			read_battery || true
+		fi
+
+		if ! is_charging && is_critical; then
+			notify "Battery critically low ($(battery_summary)). Connect the charger; shutting down in ${shutdown_grace}s."
+			remaining=$shutdown_grace
+			connected=0
+			while [ "$remaining" -gt 0 ]; do
+				sleep 1
+				read_battery || true
+				if is_charging; then
+					connected=1
+					break
+				fi
+				remaining=$((remaining - 1))
+			done
+			if [ "$connected" -eq 1 ]; then
+				notify "Charger connected ($(battery_summary)). Continuing."
+				warned=0
+				clear_message
+				sleep "$poll_interval"
+				continue
+			fi
+			read_battery || true
+			if is_charging || ! is_critical; then
+				warned=0
+				clear_message
+				sleep "$poll_interval"
+				continue
+			fi
+			notify "Battery critically low ($(battery_summary)). Powering off now."
+			sleep 2
+			power_off
+			# systemd stops this unit during the poweroff. Stay asleep so a
+			# slow shutdown cannot restart the loop and repeat the message.
+			sleep 600
+			return 0
+		fi
+
+		if at_or_below "$warn_level"; then
+			if [ "$warned" -eq 0 ]; then
+				notify "Battery low ($(battery_summary)). Connect the charger."
+				warned=1
+			fi
+		else
+			warned=0
+			clear_message
+		fi
+		sleep "$poll_interval"
+	done
+}
+
+boot_check() {
+	# udev may still be probing the gauge when kmscon starts. Wait briefly
+	# instead of deciding "no battery" on the first boot.
+	tries=0
+	while [ "$tries" -lt 10 ]; do
+		if read_battery && [ -n "$capacity" ]; then
+			break
+		fi
+		sleep 1
+		tries=$((tries + 1))
+	done
+	[ -n "$capacity" ] || return 0
+	if ! is_boot_low; then
+		return 0
+	fi
+
+	if is_charging; then
+		clear_screen
+		printf 'CPZ: battery is very low.\n'
+		printf 'Battery: %s\n\n' "$(battery_summary)"
+		printf 'Charging - keep the charger connected.\n'
+		sleep 3
+		return 0
+	fi
+
+	clear_screen
+	printf 'CPZ: battery is too low to start safely.\n'
+	printf 'Battery: %s\n\n' "$(battery_summary)"
+	printf 'Connect the charger now to keep the device on.\n\n'
+
+	remaining=$shutdown_grace
+	connected=0
+	while [ "$remaining" -gt 0 ]; do
+		printf '\rShutting down in %2d s... ' "$remaining"
+		sleep 1
+		read_battery || true
+		if is_charging; then
+			connected=1
+			break
+		fi
+		remaining=$((remaining - 1))
+	done
+	if [ "$connected" -eq 1 ]; then
+		printf '\rCharger connected (%s). Continuing boot.\n\n' \
+			"$(battery_summary)"
+		sleep 1
+		return 0
+	fi
+
+	# A short load transient can look flat. Do not power off if the gauge
+	# recovered while the countdown was running.
+	read_battery || true
+	if is_charging; then
+		printf '\rCharger connected (%s). Continuing boot.\n\n' \
+			"$(battery_summary)"
+		sleep 1
+		return 0
+	fi
+	if ! is_boot_low; then
+		printf '\rBattery recovered (%s). Continuing boot.\n\n' \
+			"$(battery_summary)"
+		sleep 1
+		return 0
+	fi
+
+	printf '\rBattery is still low. Powering off.\n\n'
+	power_off
+	return 1
+}
+
+load_config
+case "${1:-}" in
+	status) show_status ;;
+	check) check_state ;;
+	guard) guard ;;
+	boot)
+		boot_check
+		exit $?
+		;;
+	*)
+		printf 'usage: %s status|check|guard|boot\n' "$0" >&2
+		exit 64
+		;;
+esac

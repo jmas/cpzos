@@ -1,6 +1,6 @@
 #!/bin/sh
-# Close the current tab. Bound to Alt+W in tmux.conf; the prefix + & fallback asks for
-# confirmation there.
+# Close the current tab. Bound to Alt+W by default by cpz-keys; the tmux
+# confirmation prompt is shown by cpz-tab-close-key.
 #
 # Any terminal tab may be closed, including the first one: renumber-windows
 # promotes the next tab into slot 1. The Settings window stays open, and the
@@ -35,7 +35,6 @@ else
 	# tmux selects the neighbouring tab and renumber-windows closes the gap;
 	# the kill hooks save the new layout and keep Settings last.
 	if tmux kill-window -t "$window_id" 2>/dev/null; then
-		/usr/local/bin/cpz-tab-info "$session" 2>/dev/null || true
 		exit 0
 	fi
 	notice="Could not close the tab"

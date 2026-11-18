@@ -5,7 +5,7 @@
 # active window. Not saved: running processes, pane splits, or scrollback.
 #
 # Hooks can start this several times in quick succession (for example
-# after-select-window repeats while Alt+Left/Right is held) and the timer runs
+# after-select-window repeats while a tab shortcut is held) and the timer runs
 # it every minute. A shared "<state_file>.tmp" made overlapping runs race on
 # mv, so tmux showed "'cpz-session-save' returned 1". Serialise the writers and
 # publish through a unique temporary file instead.

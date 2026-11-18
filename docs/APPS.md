@@ -31,6 +31,7 @@ after pointing the runtime URL at a reachable copy.
 | `a` | toggle apt-only / full catalog |
 | `Enter` | details / install instructions |
 | `i` | install the selected apt package |
+| `e` | run an installed app |
 | `Tab` | switch Browse / Installed |
 | `d` (Installed) | uninstall a managed app |
 | `u` | download the newest catalog |
@@ -125,12 +126,16 @@ manager → display command. `apt` is derived only from the Debian/Ubuntu cell:
 
 ## Search integration
 
-The same catalog powers the `@` provider in `cpz-search` (Alt+O). The search
-calls `cpz-settings --list-tools` for a compact JSON list and launches an
-installed tool's detected command directly. A tool without a detected command
-opens this Applications screen at that tool through
-`cpz-settings --tool <slug>`, so installation still goes through the apt
-policy above. The search never fetches the catalog from the network.
+The same catalog powers CPZ Search (Alt+O). The search calls
+`cpz-settings --list-tools` for a compact JSON list. Installed apps are listed
+first and launch their detected command directly; apps installed through the
+manager are resolved with `dpkg -L` when the binary name differs from the
+package name. Every other app row — apt-backed (`[install app]`), installed
+without a command (`[installed]`) or missing from apt (`[info]`) — opens the
+matching page through `cpz-settings --tool <slug>`. That page shows the
+description and install instructions, and `i` installs with the same apt policy
+above. The search never fetches the catalog from the network and never starts
+an install from the result list itself.
 
 ## Updating the index
 

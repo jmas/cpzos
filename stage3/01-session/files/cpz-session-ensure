@@ -74,5 +74,3 @@ else
 		tmux swap-window -s "$settings_id" -t "$last_id"
 	fi
 fi
-
-/usr/local/bin/cpz-tab-info "$session" 2>/dev/null || true

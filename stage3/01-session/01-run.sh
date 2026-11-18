@@ -21,19 +21,19 @@ install -d -m 1777 "${ROOTFS_DIR}/tmp"
 # Status bar, Settings TUI and tab/session helpers.
 install -m 0755 \
 	files/cpz-session-ensure files/cpz-tab-new files/cpz-tab-close \
-	files/cpz-tab-close-key files/cpz-tab-info files/cpz-tab-mount \
+	files/cpz-tab-close-key files/cpz-tab-mount \
 	files/cpz-settings-open \
 	files/cpz-settings files/cpz-settings-shell files/cpz-status \
 	files/cpz-apply-settings files/cpz-help files/cpz-hint \
-	files/cpz-search \
+	files/cpz-keys files/cpz-search \
 	files/cpz-first-login \
 	files/cpz-session-save files/cpz-session-restore \
 	files/cpz-session-save-as-user files/cpz-conn-status \
-	files/cpz-brightness files/cpz-font \
+	files/cpz-brightness files/cpz-font files/cpz-volume \
 	files/cpz-keyboard-layout \
 	files/cpz-layout-map \
 	files/cpz-layout-next files/cpz-layout-apply files/cpz-display-toggle \
-	files/cpz-automount \
+	files/cpz-automount files/cpz-battery \
 	"${ROOTFS_DIR}/usr/local/bin/"
 install -d -m 0755 "${ROOTFS_DIR}/etc/udev/rules.d"
 install -m 0644 files/99-cpz-backlight.rules files/99-cpz-keyboard.rules \
@@ -43,6 +43,7 @@ install -m 0644 files/99-cpz-backlight.rules files/99-cpz-keyboard.rules \
 install -m 0644 files/cpz-keyboard-layout.service \
 	files/cpz-keyboard-layout.path \
 	files/cpz-automount@.service \
+	files/cpz-battery-guard.service \
 	"${ROOTFS_DIR}/etc/systemd/system/"
 
 # USB filesystems are mounted here by cpz-automount/99-cpz-automount.rules.
@@ -79,6 +80,8 @@ if [ -f "$keycodes" ] && ! grep -q '<ZENK>' "$keycodes"; then
 fi
 install -d -m 0755 "${ROOTFS_DIR}/etc/cpz/themes"
 install -m 0644 files/settings.conf "${ROOTFS_DIR}/etc/cpz/settings.conf"
+# Low-battery policy for cpz-battery / cpz-battery-guard.service.
+install -m 0644 files/battery.conf "${ROOTFS_DIR}/etc/cpz/battery.conf"
 # cpz-settings warns while the factory password is unchanged. It cannot read
 # /etc/shadow, so record the image's mtime here; passwd/usermod/chage all
 # update it, which is enough to clear the warning after a password change.
@@ -124,8 +127,9 @@ install -m 0644 files/50-cpz-networkmanager.rules \
 install -m 0644 files/cpz-bt-agent.service \
 	"${ROOTFS_DIR}/etc/systemd/system/cpz-bt-agent.service"
 
-# Alt+Space switches console layouts; allow only the keymap reload helper to
-# run without a password prompt.
+# Alt+Space switches console layouts by default (rebindable in Settings >
+# Keyboard > Shortcuts); allow only the keymap reload helper to run without a
+# password prompt.
 install -d -m 0755 "${ROOTFS_DIR}/etc/sudoers.d"
 install -m 0440 files/50-cpz-layout \
 	"${ROOTFS_DIR}/etc/sudoers.d/50-cpz-layout"
@@ -198,6 +202,7 @@ fi
 install -m 0755 /usr/local/share/cpz/cancel-rename /usr/bin/cancel-rename
 
 systemctl enable cardputerzero-keymap.service
+systemctl enable cpz-battery-guard.service
 systemctl enable cpz-keyboard-layout.path
 systemctl enable cpz-kmscon-output.timer
 systemctl enable cpz-session-save.timer

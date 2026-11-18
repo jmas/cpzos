@@ -1,5 +1,6 @@
 #!/bin/sh
-# Alt+W (and prefix + & fallback) entry point: check the protected tabs before prompting.
+# Close-tab shortcut entry point (Alt+W by default): check the protected tabs
+# before prompting. The binding is rebindable in Settings > Keyboard > Shortcuts.
 #
 # confirm-before needs a client context; run-shell does not have one, so the
 # prompt is sent to an explicitly listed client.

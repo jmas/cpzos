@@ -47,7 +47,6 @@ case $action in
 		windows=$(tmux list-windows -t "=$session" -F \
 			'#{window_id} #{@cpz_mount}' 2>/dev/null || true)
 		[ -n "$windows" ] || exit 0
-		closed=0
 		while read -r id tab_mount; do
 			[ -n "$id" ] || continue
 			[ "$tab_mount" = "$mount" ] || continue
@@ -66,13 +65,9 @@ case $action in
 			IFS=$old_ifs
 			[ "$on_mount" -eq 1 ] || continue
 			tmux kill-window -t "$id" 2>/dev/null || continue
-			closed=$((closed + 1))
 		done <<EOF
 $windows
 EOF
-		if [ "$closed" -gt 0 ]; then
-			/usr/local/bin/cpz-tab-info "$session" 2>/dev/null || true
-		fi
 		;;
 	*)
 		printf 'cpz-tab-mount: unknown action %s\n' "$action" >&2

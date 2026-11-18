@@ -214,6 +214,9 @@ for file in \
 	stage3/01-session/files/99-cpz-kmscon-nudge.rules \
 	stage3/01-session/files/99-cpz-automount.rules \
 	stage3/01-session/files/cpz-automount \
+	stage3/01-session/files/cpz-battery \
+	stage3/01-session/files/cpz-battery-guard.service \
+	stage3/01-session/files/battery.conf \
 	stage3/01-session/files/cpz-automount@.service \
 	stage3/01-session/files/kmsconvt@.service.d/10-cpz.conf \
 	stage3/01-session/files/cpz-session.sh \
@@ -222,7 +225,6 @@ for file in \
 	stage3/01-session/files/cpz-tab-new \
 	stage3/01-session/files/cpz-tab-close \
 	stage3/01-session/files/cpz-tab-close-key \
-	stage3/01-session/files/cpz-tab-info \
 	stage3/01-session/files/cpz-tab-mount \
 	stage3/01-session/files/cpz-settings-open \
 	stage3/01-session/files/cpz-settings \
@@ -230,6 +232,7 @@ for file in \
 	stage3/01-session/files/cpz-status \
 	stage3/01-session/files/cpz-apply-settings \
 	stage3/01-session/files/cpz-help \
+	stage3/01-session/files/cpz-keys \
 	stage3/01-session/files/cpz-search \
 	stage3/01-session/files/cpz-session-save \
 	stage3/01-session/files/cpz-session-restore \
@@ -241,6 +244,7 @@ for file in \
 	stage3/01-session/files/cpz-conn-status.timer \
 	stage3/01-session/files/cpz-brightness \
 	stage3/01-session/files/cpz-font \
+	stage3/01-session/files/cpz-volume \
 	stage3/01-session/files/cpz-keyboard-layout \
 	stage3/01-session/files/cpz-layout-map \
 	stage3/01-session/files/cpz-layout-next \
@@ -261,6 +265,7 @@ for file in \
 	config.debug.example \
 	docs/M5-IMAGER.md \
 	docs/CPZ-KMSCON.md \
+	docs/CPZ-KEYS.md \
 	docs/APPS.md \
 	tools/make-m5stack-entry.py; do
 	have "$file"
@@ -311,7 +316,6 @@ for script in \
 	stage3/01-session/files/cpz-tab-new \
 	stage3/01-session/files/cpz-tab-close \
 	stage3/01-session/files/cpz-tab-close-key \
-	stage3/01-session/files/cpz-tab-info \
 	stage3/01-session/files/cpz-tab-mount \
 	stage3/01-session/files/cpz-settings-open \
 	stage3/01-session/files/cpz-settings \
@@ -319,6 +323,7 @@ for script in \
 	stage3/01-session/files/cpz-status \
 	stage3/01-session/files/cpz-apply-settings \
 	stage3/01-session/files/cpz-help \
+	stage3/01-session/files/cpz-keys \
 	stage3/01-session/files/cpz-search \
 	stage3/01-session/files/cpz-session-save \
 	stage3/01-session/files/cpz-session-restore \
@@ -326,11 +331,13 @@ for script in \
 	stage3/01-session/files/cpz-conn-status \
 	stage3/01-session/files/cpz-brightness \
 	stage3/01-session/files/cpz-font \
+	stage3/01-session/files/cpz-volume \
 	stage3/01-session/files/cpz-keyboard-layout \
 	stage3/01-session/files/cpz-layout-map \
 	stage3/01-session/files/cpz-layout-next \
 	stage3/01-session/files/cpz-layout-apply \
 	stage3/01-session/files/cpz-display-toggle \
+	stage3/01-session/files/cpz-battery \
 	tools/verify-stage.sh \
 	tools/make-m5stack-entry.py; do
 	if [ -x "$ROOT/$script" ]; then ok; else bad "$script is not executable"; fi
@@ -360,11 +367,14 @@ contains stage3/01-session/files/cpz-kmscon-output 'confirm_hdmi'
 
 echo "== console session =="
 contains stage3/01-session/files/tmux.conf "status-position top"
-contains stage3/01-session/files/tmux.conf '#{@cpz_tab_current} / #{@cpz_tab_total}'
-contains stage3/01-session/files/tmux.conf 'cpz-tab-info'
 contains stage3/01-session/files/tmux.conf 'client-attached'
 contains stage3/01-session/files/tmux.conf 'cpz-session-ensure'
 contains stage3/01-session/files/tmux.conf 'window-size largest'
+contains stage3/01-session/files/tmux.conf 'cpz-keys write'
+contains stage3/01-session/files/tmux.conf 'tmux-keys.conf'
+not_contains stage3/01-session/files/tmux.conf 'bind -n M-'
+contains stage3/01-session/files/cpz-help 'cpz-keys help'
+contains stage3/01-session/files/cpz-hint 'cpz-keys hint'
 contains stage3/01-session/files/cpz-session.sh 'cpz-session-ensure main'
 contains stage3/01-session/files/cpz-session.sh 'cpz-first-login'
 contains stage3/01-session/files/cpz-session.sh '/run/cpz-kmscon/session.tty1.tty'
@@ -395,7 +405,7 @@ contains stage3/01-session/files/kmscon.conf 'no-use-original-mode'
 contains stage3/01-session/files/kmscon.conf 'term=xterm-256color'
 not_contains stage3/01-session/files/cpz-kmscon-output.service '--auto'
 contains stage3/01-session/files/cpz-kmscon-output '--auto) override=""'
-contains stage3/01-session/files/cpz-settings 'Font Size'
+contains stage3/01-session/files/cpz-settings 'Text Size'
 not_contains stage3/01-session/files/cpz-settings 'Panel Text Size'
 not_contains stage3/01-session/files/cpz-settings 'HDMI Text Size'
 contains stage3/01-session/files/settings.conf 'font_size=12'
@@ -416,8 +426,8 @@ contains stage3/01-session/files/cpz-status 'alert_style'
 contains stage3/01-session/files/cpz-status '#[default]'
 contains stage3/01-session/files/cpz-apply-settings 'show_volume'
 contains stage3/01-session/files/cpz-apply-settings 'show_brightness'
-contains stage3/01-session/files/cpz-settings 'Volume Indicator'
-contains stage3/01-session/files/cpz-settings 'Brightness Indicator'
+contains stage3/01-session/files/cpz-settings '"label": "Volume"'
+contains stage3/01-session/files/cpz-settings '"label": "Brightness"'
 contains stage3/01-session/files/settings.conf 'show_volume=0'
 contains stage3/01-session/files/settings.conf 'show_brightness=0'
 contains stage3/01-session/files/cpz-conn-status 'E+'
@@ -484,6 +494,18 @@ contains stage3/01-session/01-run.sh 'install -d -m 0755 "${ROOTFS_DIR}/media"'
 contains stage3/01-session/01-run.sh 'cpz-tab-mount'
 have tests/test_cpz_automount.py
 have tests/test_cpz_tab_mount.py
+have tests/test_cpz_battery.py
+contains stage3/01-session/01-run.sh 'cpz-battery-guard.service'
+contains stage3/01-session/01-run.sh 'files/cpz-battery'
+contains stage3/01-session/01-run.sh 'battery.conf'
+contains stage3/01-session/01-run.sh 'enable cpz-battery-guard.service'
+contains stage3/01-session/files/cpz-login 'cpz-battery boot'
+contains stage3/01-session/files/cpz-battery '/sys/class/power_supply'
+contains stage3/01-session/files/cpz-battery 'shutdown_level'
+contains stage3/01-session/files/cpz-battery 'shutdown_voltage_uv'
+contains stage3/01-session/files/battery.conf 'shutdown_level=10'
+contains stage3/01-session/files/battery.conf 'shutdown_voltage_uv=3350000'
+contains stage3/01-session/files/cpz-battery-guard.service 'ExecStart=/usr/local/bin/cpz-battery guard'
 contains stage3/01-session/02-run.sh 'CPZ_HDMI_VIDEO'
 contains build.sh 'CPZ_HDMI_VIDEO'
 contains config.cpz.example 'CPZ_HDMI_VIDEO'
@@ -528,8 +550,7 @@ contains stage3/01-session/files/cpz-status 'show_eth'
 contains stage3/01-session/files/cpz-status 'show_wifi'
 contains stage3/01-session/files/cpz-status 'show_bt'
 contains stage3/01-session/files/cpz-settings 'page_items'
-contains stage3/01-session/files/cpz-settings 'Ethernet Indicator'
-contains stage3/01-session/files/cpz-settings 'Indicators hide while the interface is off'
+contains stage3/01-session/files/cpz-settings '{"label": "Ethernet", "kind": "toggle", "key": "show_eth"}'
 contains stage3/01-session/files/cpz-settings 'Brightness'
 contains stage3/01-session/files/cpz-settings 'Output Volume'
 contains stage3/01-session/files/cpz-settings 'Change Password'
@@ -591,40 +612,41 @@ contains stage3/01-session/files/cpz-keyboard-layout 'cpz_xkb_template'
 contains stage3/01-session/files/cpz-keyboard-layout 'write_cpz_xkb'
 have stage3/01-session/files/cpz-font
 contains stage3/01-session/files/cpz-font 'font_size'
+have stage3/01-session/files/cpz-volume
+contains stage3/01-session/files/cpz-volume 'set-volume'
+contains stage3/01-session/files/cpz-volume 'set-mute'
+contains stage3/01-session/files/cpz-keys 'cpz-volume up'
+contains stage3/01-session/files/cpz-keys 'cpz-volume mute'
 contains stage3/01-session/files/tmux.conf 'prefix C-a'
-contains stage3/01-session/files/tmux.conf 'cpz-font up'
-contains stage3/01-session/files/tmux.conf 'cpz-font down'
-contains stage3/01-session/files/tmux.conf 'bind -n M-v split-window -h'
-contains stage3/01-session/files/tmux.conf 'bind -n M-b split-window -v'
-contains stage3/01-session/files/tmux.conf 'bind -n M-n select-pane'
-contains stage3/01-session/files/tmux.conf 'bind -n M-p select-pane'
-contains stage3/01-session/files/tmux.conf 'bind -n M-z resize-pane -Z'
-contains stage3/01-session/files/tmux.conf 'bind -n M-x confirm-before'
-contains stage3/01-session/files/tmux.conf 'bind -n M-r command-prompt'
-contains stage3/01-session/files/tmux.conf 'bind -n M-l choose-tree'
-contains stage3/01-session/files/tmux.conf 'bind -n M-q detach-client'
-contains stage3/01-session/files/tmux.conf 'bind -n M-i run-shell'
-contains stage3/01-session/files/tmux.conf 'bind -n M-c copy-mode'
-contains stage3/01-session/files/tmux.conf 'bind -n M-y paste-buffer'
+contains stage3/01-session/files/cpz-keys 'cpz-font up'
+contains stage3/01-session/files/cpz-keys 'cpz-font down'
+contains stage3/01-session/files/cpz-keys 'split-window -h'
+contains stage3/01-session/files/cpz-keys 'split-window -v'
+contains stage3/01-session/files/cpz-keys 'select-pane -t :.+'
+contains stage3/01-session/files/cpz-keys 'select-pane -t :.-'
+contains stage3/01-session/files/cpz-keys 'resize-pane -Z'
+contains stage3/01-session/files/cpz-keys 'confirm-before'
+contains stage3/01-session/files/cpz-keys 'command-prompt'
+contains stage3/01-session/files/cpz-keys 'choose-tree -Zw'
+contains stage3/01-session/files/cpz-keys 'detach-client'
+contains stage3/01-session/files/cpz-keys 'cpz-layout-next'
+contains stage3/01-session/files/cpz-keys 'copy-mode'
+contains stage3/01-session/files/cpz-keys 'paste-buffer'
 not_contains stage3/01-session/files/kmscon.conf 'grab-zoom-in='
 not_contains stage3/01-session/files/kmscon.conf 'grab-zoom-out='
 not_contains stage3/01-session/files/kmscon.conf '<Alt>plus'
 not_contains stage3/01-session/files/kmscon.conf '<Alt>minus'
 have stage3/01-session/files/cpz-hint
 contains stage3/01-session/files/cpz-hint 'display-message -c'
-contains stage3/01-session/files/cpz-hint 'V/B split'
+contains stage3/01-session/files/cpz-hint 'cpz-keys hint'
 contains stage3/01-session/files/tmux.conf 'cpz-hint'
 contains stage3/01-session/01-run.sh 'cpz-hint'
-contains stage3/01-session/files/cpz-help 'larger / smaller font'
-contains stage3/01-session/files/cpz-help 'Alt+V'
-contains stage3/01-session/files/cpz-settings 'Alt+V'
-contains stage3/01-session/files/cpz-help 'Alt+N / Alt+P'
+contains stage3/01-session/files/cpz-help 'cpz-keys help'
+contains stage3/01-session/files/cpz-keys 'Font Bigger'
+contains stage3/01-session/files/cpz-settings 'rebind_action'
+contains stage3/01-session/files/cpz-keys 'Previous Pane'
 not_contains stage3/01-session/files/cpz-help 'Ctrl-b'
 not_contains stage3/01-session/files/cpz-help 'Ctrl-a '
-contains stage3/01-session/files/cpz-tab-info '#{window_index} #{window_active}'
-contains stage3/01-session/files/cpz-tab-info 'set-option -t "$session"'
-not_contains stage3/01-session/files/cpz-tab-info 'set-option -t "=$session"'
-not_contains stage3/01-session/files/cpz-tab-info 'IFS=$tab'
 not_contains stage3/01-session/files/cpz-tab-close 'IFS=$tab'
 not_contains stage3/01-session/files/cpz-tab-close-key 'IFS=$tab'
 not_contains stage3/01-session/files/cpz-session-save 'IFS="$tab" read'
@@ -641,16 +663,16 @@ contains stage3/01-session/files/cpz-settings 'Key Bindings'
 contains stage3/01-session/files/cpz-settings 'Input'
 contains stage3/01-session/files/cpz-settings 'keyboard_layout'
 contains stage3/01-session/files/settings.conf 'keyboard_layout=auto'
-contains stage3/01-session/files/tmux.conf 'M-Space'
-contains stage3/01-session/files/tmux.conf 'cpz-layout-next'
-contains stage3/01-session/files/tmux.conf 'M-d'
-contains stage3/01-session/files/tmux.conf 'cpz-display-toggle'
+contains stage3/01-session/files/cpz-keys '"default": "M-Space"'
+contains stage3/01-session/files/cpz-keys 'cpz-layout-next'
+contains stage3/01-session/files/cpz-keys '"default": "M-d"'
+contains stage3/01-session/files/cpz-keys 'cpz-display-toggle'
 contains stage3/01-session/01-run.sh 'cpz-display-toggle'
-contains stage3/01-session/files/cpz-help 'Alt+D'
-contains stage3/01-session/files/cpz-help 'Z/X/C/F'
-contains stage3/01-session/files/cpz-help 'Alt+O'
-contains stage3/01-session/files/tmux.conf 'cpz-search'
-contains stage3/01-session/files/tmux.conf 'bind -n M-o display-popup'
+contains stage3/01-session/files/cpz-keys 'Display Toggle'
+contains stage3/01-session/files/cpz-settings 'Z/X/C/F'
+contains stage3/01-session/files/cpz-keys '"default": "M-o"'
+contains stage3/01-session/files/cpz-search 'cpz-search'
+contains stage3/01-session/files/cpz-keys 'cpz-search'
 contains stage3/01-session/01-run.sh 'cpz-search'
 contains stage3/01-session/files/cpz-settings '--list-pages'
 contains stage3/01-session/files/cpz-settings '--page'
@@ -679,7 +701,7 @@ contains stage3/01-session/files/cpz-layout-map 'is_letter'
 contains stage3/01-session/files/cpz-layout-map 'render_vt'
 contains stage2/05-cardputerzero/01-run.sh 'tca8418_fsm_can_activate'
 contains stage2/05-cardputerzero/01-run.sh 'if (device->id == 1)'
-contains stage3/01-session/files/cpz-help 'Shift+Sym'
+contains stage3/01-session/files/cpz-settings 'Shift+Sym'
 have tests/test_cpz_layout_map.py
 contains stage3/01-session/files/cpz-settings 'evdev.lst'
 contains stage3/01-session/files/cpz-settings 'LAYOUTS'
@@ -703,7 +725,7 @@ contains stage3/01-session/files/cpz-keyboard-layout 'load_standard'
 contains stage3/01-session/files/cpz-keyboard-layout 'cpz-keyboard-layout.log'
 contains stage3/01-session/files/cpz-keyboard-layout 'ckbcomp'
 contains stage3/01-session/files/cpz-keyboard-layout 'cpz-layout.active'
-contains stage3/01-session/files/cpz-help 'Alt+Space'
+contains stage3/01-session/files/cpz-keys '"default": "M-Space"'
 contains stage3/01-session/files/cpz-keyboard-layout 'keyboard_layout'
 contains stage3/01-session/files/cpz-status 'show_date'
 contains stage3/01-session/files/cpz-status 'date_format'
@@ -716,8 +738,8 @@ contains stage3/01-session/files/cpz-settings 'timedatectl", "set-time"'
 contains stage3/01-session/files/cpz-settings 'timedatectl", "set-ntp"'
 contains stage3/01-session/files/cpz-settings 'read_timezones'
 contains stage3/01-session/files/cpz-settings '--check-pages'
-contains stage3/01-session/files/cpz-settings 'Scan for Devices'
-contains stage3/01-session/files/cpz-settings 'Settings refreshed'
+contains stage3/01-session/files/cpz-settings 'No devices. Press r to scan.'
+not_contains stage3/01-session/files/cpz-settings 'Settings refreshed'
 contains stage3/01-session/files/cpz-settings 'PgUp/PgDn'
 contains stage3/01-session/files/cpz-settings 'security_issues'
 contains stage3/01-session/files/cpz-settings 'factory password in use'
@@ -740,28 +762,20 @@ contains stage3/01-session/01-run.sh '50-cpz-networkmanager.rules'
 contains stage3/01-session/01-run.sh 'cpz-bt-agent.service'
 contains stage3/01-session/01-run.sh 'usermod -aG bluetooth'
 contains stage3/01-session/02-run.sh 'enable NetworkManager.service'
-contains stage3/01-session/files/tmux.conf 'cpz-tab-new'
-contains stage3/01-session/files/tmux.conf 'M-w'
-contains stage3/01-session/files/tmux.conf 'cpz-tab-close-key'
-contains stage3/01-session/files/tmux.conf 'bind -n M-Up copy-mode -u'
-contains stage3/01-session/files/tmux.conf 'bind -T copy-mode-vi M-Down send-keys -X page-down'
+contains stage3/01-session/files/cpz-keys 'cpz-tab-new'
+contains stage3/01-session/files/cpz-keys 'cpz-tab-close-key'
+contains stage3/01-session/files/tmux.conf 'bind -T copy-mode-vi C-u send-keys -X page-up'
+contains stage3/01-session/files/tmux.conf 'bind -T copy-mode-vi C-d send-keys -X page-down'
 contains stage3/01-session/files/tmux.conf 'bind -T copy-mode NPage send-keys -X page-down'
 contains stage3/01-session/files/cpz-tab-close-key 'confirm-before'
-contains stage3/01-session/files/cpz-help 'Alt+W'
-contains stage3/01-session/files/cpz-help 'Alt+Up / Alt+Down'
-contains stage3/01-session/files/cpz-help 'Fn+L / Fn+M'
-contains stage3/01-session/files/cpz-settings 'Alt+Up / Alt+Down'
-contains stage3/01-session/files/cpz-settings 'Fn+L / Fn+M'
 contains stage3/01-session/files/cpz-help 'less'
+not_contains stage3/01-session/files/cpz-help 'less -R -X -F'
 contains stage3/01-session/files/cpz-tab-close '@cpz_settings'
 not_contains stage3/01-session/files/cpz-tab-close '@cpz_main'
 contains stage3/01-session/files/cpz-tab-close 'terminals'
 contains stage3/01-session/files/cpz-tab-close 'Last tab stays open'
 contains stage3/01-session/files/cpz-tab-close-key '@cpz_settings'
 contains stage3/01-session/files/cpz-tab-close-key 'terminals'
-not_contains stage3/01-session/files/cpz-tab-info 'cpz_settings'
-not_contains stage3/01-session/files/cpz-tab-info 'current=S'
-contains stage3/01-session/files/cpz-tab-info 'cpz_tab_total'
 contains stage3/01-session/01-run.sh 'cpz-tab-close'
 contains stage3/01-session/files/cpz-session-ensure '@cpz_main'
 contains stage3/01-session/01-run.sh "kmscon"
@@ -838,6 +852,7 @@ have tests/run.sh
 have tests/lint.sh
 have tests/test_cpz_settings.py
 have tests/test_build_fast.py
+have tests/test_cpz_battery.py
 absent tests/shell/test-hdmi-console.sh
 have tools/build-fast.sh
 contains tools/build-fast.sh 'PREV_ROOTFS_DIR'
@@ -854,6 +869,20 @@ contains tests/lint.sh 'ruff'
 contains tests/lint.sh 'mypy'
 contains tests/run.sh 'unittest discover'
 contains tests/test_cpz_settings.py 'check_pages'
+
+echo "== UI rules =="
+have docs/CPZ-UI.md
+contains docs/CPZ-UI.md 'Purpose test for every string'
+have site/check.py
+not_contains stage3/01-session/files/cpz-settings 'Display & Brightness'
+not_contains stage3/01-session/files/cpz-settings 'Indicators hide while the interface is off'
+not_contains stage3/01-session/files/cpz-settings 'Settings refreshed'
+not_contains stage3/01-session/files/cpz-hint 'V/B split'
+contains stage3/01-session/files/cpz-settings '"label": "Connections"'
+contains stage3/01-session/files/cpz-settings '"label": "Text Size"'
+not_contains site/index.html 'data-i18n="why.intro"'
+not_contains site/index.html 'data-i18n="nav.why"'
+contains site/index.html 'data-i18n="nav.download"'
 
 echo "== release checks =="
 have VERSION

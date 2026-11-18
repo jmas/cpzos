@@ -1,0 +1,71 @@
+#!/bin/sh
+# Change or mute the default audio output volume.
+#
+# Bound by the cpz-keys registry to Alt+U / Alt+I / Alt+0 by default (rebindable
+# in Settings > Keyboard > Shortcuts). PipeWire's wpctl is the same backend as
+# Settings > Sound, so the status-bar volume token and the Settings page stay in
+# sync. The step matches the 5% step used by the Sound page.
+set -u
+
+target=@DEFAULT_AUDIO_SINK@
+step=5
+action=${1:-}
+
+case "$action" in
+	up | down | mute) ;;
+	*)
+		printf 'usage: %s up|down|mute\n' "${0##*/}" >&2
+		exit 2
+		;;
+esac
+
+say() {
+	if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+		tmux display-message -d 2000 "$1" >/dev/null 2>&1 || true
+		tmux refresh-client -S >/dev/null 2>&1 || true
+	fi
+}
+
+if ! command -v wpctl >/dev/null 2>&1; then
+	say "volume: wpctl not available"
+	exit 1
+fi
+
+status=$(wpctl get-volume "$target" 2>/dev/null) || status=
+[ -n "$status" ] || {
+	say "volume: no audio output"
+	exit 1
+}
+
+percent=$(printf '%s\n' "$status" | awk '{ printf "%d", ($2 * 100) + 0.5 }')
+case "$percent" in
+	'' | *[!0-9]*) percent=0 ;;
+esac
+
+case "$action" in
+	mute)
+		wpctl set-mute "$target" toggle >/dev/null 2>&1 || exit 1
+		;;
+	up)
+		percent=$((percent + step))
+		[ "$percent" -le 100 ] || percent=100
+		volume=$(awk -v p="$percent" 'BEGIN { printf "%.2f", p / 100 }')
+		wpctl set-volume "$target" "$volume" >/dev/null 2>&1 || exit 1
+		;;
+	down)
+		percent=$((percent - step))
+		[ "$percent" -ge 0 ] || percent=0
+		volume=$(awk -v p="$percent" 'BEGIN { printf "%.2f", p / 100 }')
+		wpctl set-volume "$target" "$volume" >/dev/null 2>&1 || exit 1
+		;;
+esac
+
+status=$(wpctl get-volume "$target" 2>/dev/null) || status=
+case "$status" in
+	*MUTED*) say "volume: muted" ;;
+	*)
+		percent=$(printf '%s\n' "$status" |
+			awk '{ printf "%d", ($2 * 100) + 0.5 }')
+		say "volume: ${percent}%"
+		;;
+esac

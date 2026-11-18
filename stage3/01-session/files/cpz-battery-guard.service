@@ -1,0 +1,16 @@
+[Unit]
+Description=CPZ low-battery guard
+# The gauge is on I2C and can appear a little after basic.target; cpz-battery
+# waits for the power_supply entry and then polls it.
+After=basic.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cpz-battery guard
+Restart=on-failure
+RestartSec=5
+# Keep the polling loop below the terminal session and audio.
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

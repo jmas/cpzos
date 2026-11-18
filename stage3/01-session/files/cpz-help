@@ -1,58 +1,44 @@
 #!/bin/sh
 # Key reference shown by Alt+H in a tmux popup.
 #
-# The list is taller than the 53x14 panel, so it is paged with less. -X keeps
-# the popup contents on screen instead of switching the alternate screen and -F
-# skips the pager when everything fits (for example on a large HDMI console).
+# The shortcut list comes from cpz-keys, the same registry that generates the
+# tmux bindings and drives Settings > Keyboard > Shortcuts. This page only adds
+# the status-bar legend. The list is taller than the 53x14 panel, so it is
+# paged with less. -X keeps the popup contents on screen instead of switching
+# the alternate screen. Do not add -F: less would quit as soon as the list fits
+# on a large HDMI console, so the popup flashed and closed before it could be
+# read. The pager must always wait for q.
 keys() {
+	if [ -x /usr/local/bin/cpz-keys ]; then
+		/usr/local/bin/cpz-keys help
+	else
+		cat <<'EOF'
+CPZ shortcuts
+The cpz-keys helper is not installed; the shortcut registry is unavailable.
+EOF
+	fi
+
 	cat <<'EOF'
-CPZ keys
-Every action below is a direct Alt+key binding: no tmux prefix is needed.
-==== Tabs ====
- Alt+Left / Alt+Right  prev / next tab
- Alt+1 .. Alt+9        select tab
- Alt+T                 new tab
- Alt+W                 close tab (asks)
- Alt+R                 rename tab
- Alt+L                 list tabs
-==== Panes ====
- Alt+V                 split left / right
- Alt+B                 split top / bottom
- Alt+N / Alt+P         next / previous pane
- Alt+Z                 zoom pane
- Alt+X                 close pane (asks)
- Alt+J / Alt+K         swap pane prev / next
-==== Scroll and copy ====
- Alt+Up / Alt+Down     enter copy mode, scroll
- Alt+PageUp / PgDown   page history (full keyboard)
- Fn+L / Fn+M           page up / down
- Alt+C                 copy mode (vi keys)
- j / k or Up / Down    line down / up
- Space                 start / stop selection
- Enter                 copy selection
- q                     leave copy mode
- Alt+Y                 paste tmux buffer
-==== Session and device ====
- Alt+Q                 detach
- Alt+S                 Settings
- Alt+H                 this help
- Alt+O                 search everything
- Alt+Plus / Alt+Minus  larger / smaller font (Sym+T / Sym+R)
- Ctrl+Plus / Ctrl+Minus  larger / smaller font
-                       the size is saved in Settings
- Alt+I / Alt+Space     switch input layout
- Sym+key               punctuation, or an extra letter of the layout
- Shift+Sym+key         uppercase of that letter, or a moved symbol
- Alt+D                 CPZ panel / auto display
- In Settings           Z/X/C/F move (Fn off)
-==== Search (Alt+O) ====
- / files   = calc   @ tools   $ buffers
- Enter open/run   Ctrl+Y copy   Ctrl+O dir
+
+==== Internal keyboard ====
+ Sym+key           punctuation or the layout's extra letters
+ Shift+Sym+key     uppercase, or a moved ASCII symbol
+ Fn+F/X/Z/C        arrow keys while Fn is held
+
+==== In-app keys ====
+ In Settings       Z/X/C/F move (Fn off)
+ In Applications   Enter info  i install  e run
+
+==== Status bar ====
+ 87% battery   + charging   ! low
+ Wi Wi-Fi      Eth Ethernet   Bt Bluetooth
+ V0-V4 volume  VM muted   L0-L10 brightness
+ US, UA, ...   active input layout
 EOF
 }
 
 if command -v less >/dev/null 2>&1; then
-	keys | less -R -X -F -P 'q close'
+	keys | less -R -X -P 'q close'
 	exit 0
 fi
 

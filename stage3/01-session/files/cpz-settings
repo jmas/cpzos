@@ -27,6 +27,8 @@ import textwrap
 import urllib.error
 import urllib.request
 from datetime import datetime
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 from typing import Any
 
 SYSTEM_SETTINGS = "/etc/cpz/settings.conf"
@@ -236,12 +238,12 @@ DATE_FORMAT_LABELS = {
 
 DISPLAY_LABELS = {
     "auto": "Auto",
-    "panel": "CPZ panel",
+    "panel": "Built-in screen",
     "hdmi": "HDMI",
 }
 
 SCREEN_TIMEOUT_LABELS = {
-    0: "never",
+    0: "Never",
     5: "5 min",
     10: "10 min",
     30: "30 min",
@@ -272,6 +274,36 @@ THEME_LABELS = {
     "cpz-mono": "Mono",
     "cpz-light-high-contrast": "Light High Contrast",
 }
+
+
+_KEY_MODULE: Any = None
+
+
+def keys_module() -> Any:
+    """Load cpz-keys, the single source of truth for keyboard shortcuts."""
+    global _KEY_MODULE
+    if _KEY_MODULE is not None:
+        return _KEY_MODULE
+    candidates = [
+        os.environ.get("CPZ_KEYS_SCRIPT", ""),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "cpz-keys"),
+        "/usr/local/bin/cpz-keys",
+    ]
+    for path in candidates:
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            loader = SourceFileLoader("cpz_keys", path)
+            spec = spec_from_loader(loader.name, loader)
+            if spec is None:
+                continue
+            module = module_from_spec(spec)
+            loader.exec_module(module)
+        except (ImportError, OSError):
+            continue
+        _KEY_MODULE = module
+        return module
+    raise FileNotFoundError("cpz-keys is not installed")
 
 
 def user_settings_path() -> str:
@@ -1220,7 +1252,7 @@ def close_modal(screen, popup) -> None:
 
 def show_message(
     screen,
-    message: str,
+    message: str | None,
     title: str = "Done",
     error: bool = False,
     wait: bool = True,
@@ -1244,7 +1276,7 @@ def show_message(
 
 def notify(
     screen,
-    message: str,
+    message: str | None,
     title: str | None = None,
     error: bool | None = None,
     wait: bool | None = None,
@@ -1344,8 +1376,8 @@ def value_text(
         return data["mode_keys"]
     if key == "keyboard_layout":
         return {
-            "auto": "Auto",
-            "cpz": "CPZ internal",
+            "auto": "Automatic",
+            "cpz": "Built-in keyboard",
             "standard": "Standard",
         }.get(data["keyboard_layout"], data["keyboard_layout"])
     if key == "keyboard_layouts":
@@ -1648,19 +1680,17 @@ def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: 
     screen.erase()
     height, width = screen.getmaxyx()
 
-    put(screen, 0, 0, " Bluetooth", curses.A_BOLD)
+    put(screen, 0, 0, " Bluetooth  (* connected  + paired)", curses.A_BOLD)
     put(screen, 1, 0, "-" * max(0, width - 1))
 
-    if notice:
-        put(screen, 2, 0, f" {notice}")
-    elif adapter["error"]:
-        put(screen, 2, 0, f" {adapter['error']}")
-    else:
-        state = "On" if adapter["powered"] else "Off"
-        put(screen, 2, 0, f" {adapter['name']}: {state}")
+    status = notice or adapter["error"]
+    top = 3 if status else 2
+    if status:
+        put(screen, 2, 0, f" {status}")
+    elif not devices:
+        put(screen, 4, 1, "No devices. Press r to scan.")
 
     items = ["power", "scan"] + devices
-    top = 3
     for index, item in enumerate(items):
         y = top + index
         if y >= height - 1:
@@ -1670,7 +1700,7 @@ def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: 
             label = f"Power: {'On' if adapter['powered'] else 'Off'}"
         elif item == "scan":
             mark = " "
-            label = "Scan for Devices"
+            label = "Scan"
         else:
             mark = "*" if item["connected"] else ("+" if item["paired"] else " ")
             label = item["name"]
@@ -1678,7 +1708,7 @@ def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: 
         attr = curses.A_REVERSE if index == selected else 0
         put(screen, y, 0, text.ljust(max(0, width - 1)), attr)
 
-    put(screen, height - 1, 0, "F/X move Enter toggle p power r scan q back")
+    put(screen, height - 1, 0, "F/X move  Enter toggle  r scan  q back")
     screen.refresh()
 
 
@@ -1705,24 +1735,6 @@ def bluetooth_screen(screen) -> None:
             result = bt_scan()
             if result:
                 notify(screen, result, title="Bluetooth")
-            adapter = bt_adapter()
-            devices = bt_devices()
-            selected = min(selected, 1 + len(devices))
-            continue
-        if key in (ord("p"), ord("P")):
-            result = bt_set_power(screen, not adapter["powered"])
-            if result:
-                notify(screen, result, title="Bluetooth")
-            adapter = bt_adapter()
-            devices = bt_devices()
-            selected = min(selected, 1 + len(devices))
-            continue
-        if key in (ord("d"), ord("D")) and selected > 1:
-            device = devices[selected - 2]
-            if device["connected"]:
-                notify(screen, bt_disconnect(device), title="Bluetooth")
-            else:
-                notify(screen, "Not connected", title="Bluetooth", error=False)
             adapter = bt_adapter()
             devices = bt_devices()
             selected = min(selected, 1 + len(devices))
@@ -1808,10 +1820,10 @@ def item_change(item: dict, data: dict, step: int, screen) -> None:
 
 
 def sound_volume_text(kind: str) -> str:
-    percent, muted = wpctl_status(kind)
+    percent, _muted = wpctl_status(kind)
     if percent is None:
-        return "unavailable"
-    return f"{percent}%" + (" muted" if muted else "")
+        return "Not available"
+    return f"{percent}%"
 
 
 def sound_volume_change(kind: str, step: int) -> None:
@@ -1824,14 +1836,14 @@ def sound_volume_change(kind: str, step: int) -> None:
 def sound_mute_text(kind: str) -> str:
     percent, muted = wpctl_status(kind)
     if percent is None:
-        return "unavailable"
-    return "On" if muted else "Off"
+        return "Not available"
+    return "Muted" if muted else "Not muted"
 
 
 def sound_device_text(kind: str) -> str:
     nodes = wpctl_nodes(kind.capitalize())
     if not nodes:
-        return "unavailable"
+        return "Not available"
     for _node_id, name, default in nodes:
         if default:
             return name
@@ -2046,47 +2058,38 @@ def load_info() -> str:
 
 
 def help_lines() -> list:
-    return [
-        "CPZ keys",
-        "Every action is a direct Alt+key binding; no prefix is needed.",
-        "",
-        "Tabs",
-        "Alt+Left/Right    previous / next tab",
-        "Alt+1 .. 9        select tab",
-        "Alt+T             new tab",
-        "Alt+W             close tab (asks)",
-        "Alt+R             rename tab",
-        "Alt+L             list tabs",
-        "",
-        "Panes",
-        "Alt+V             split left / right",
-        "Alt+B             split top / bottom",
-        "Alt+N / Alt+P     next / previous pane",
-        "Alt+Z             zoom pane",
-        "Alt+X             close pane (asks)",
-        "Alt+J / Alt+K     swap pane previous / next",
-        "",
-        "Scroll and copy",
-        "Alt+Up / Alt+Down enter copy mode, scroll",
-        "Alt+PageUp/PgDown page history",
-        "Fn+L / Fn+M       page up / down",
-        "Alt+C             copy mode (vi keys)",
-        "j / k or Up/Down  line down / up",
-        "Space, Enter      select, then copy",
-        "q                 leave copy mode",
-        "Alt+Y             paste tmux buffer",
-        "",
-        "Session and device",
-        "Alt+Q             detach",
-        "Alt+S             Settings",
-        "Alt+H             key help",
-        "Alt+Plus/Minus    font size (persisted)",
-        "Alt+I / Alt+Space switch input layout",
-        "Sym+key           punctuation or the layout's extra letters",
-        "Shift+Sym+key     uppercase, or a moved ASCII symbol",
-        "Alt+D             CPZ panel / auto display",
-        "In Settings       Z/X/C/F move (Fn off)",
-    ]
+    """Fallback help for hosts without /usr/local/bin/cpz-help.
+
+    The shortcut section comes from cpz-keys so it cannot drift from the live
+    bindings; this and the status-bar legend match cpz-help.
+    """
+    try:
+        lines = list(keys_module().shortcut_lines())
+    except FileNotFoundError:
+        lines = [
+            "CPZ shortcuts",
+            "The cpz-keys helper is not installed.",
+        ]
+    lines.extend(
+        [
+            "",
+            "==== Internal keyboard ====",
+            " Sym+key           punctuation or the layout's extra letters",
+            " Shift+Sym+key     uppercase, or a moved ASCII symbol",
+            " Fn+F/X/Z/C        arrow keys while Fn is held",
+            "",
+            "==== In-app keys ====",
+            " In Settings       Z/X/C/F move (Fn off)",
+            " In Applications   Enter info  i install  e run",
+            "",
+            "==== Status bar ====",
+            " 87% battery  + charging  ! low",
+            " Wi Wi-Fi  Eth Ethernet  Bt Bluetooth",
+            " V0-V4 volume  VM muted  L0-L10 brightness",
+            " US, UA, ...  active input layout",
+        ]
+    )
+    return lines
 
 
 def system_info_lines(data: dict) -> list:
@@ -2094,21 +2097,15 @@ def system_info_lines(data: dict) -> list:
     lines = [
         "Device",
         "",
-        f"Host: {platform.node() or 'unknown'}",
-        f"Kernel: {platform.release()}",
         f"CPZ version: {cpz_version()}",
         f"Uptime: {uptime_info()}",
-        f"CPU temp: {cpu_temperature()}",
         f"Memory: {memory_info()}",
-        f"Load: {load_info()}",
         f"Battery: {battery_info()}",
         f"Keyboard: {keyboard_status(data)}",
         f"Bluetooth: {bluetooth_summary()}",
-        f"Display: {DISPLAY_LABELS.get(display, display)} / HDMI {hdmi_status_text()}",
+        f"Display: {DISPLAY_LABELS.get(display, display)}",
         f"Output: {active_output_text(data)}",
-        f"HDMI EDID: {hdmi_edid_size()} bytes",
         f"SSH: {ssh_status()}",
-        f"Autologin: {autologin_status()}",
         "",
         "Network",
     ]
@@ -2135,14 +2132,29 @@ def system_info_lines(data: dict) -> list:
     return lines
 
 
+def diagnostic_lines(data: dict) -> list:
+    """Low-level details for support, kept out of the main About page."""
+    display = str(data.get("display", ""))
+    return [
+        f"Host: {platform.node() or 'unknown'}",
+        f"Kernel: {platform.release()}",
+        f"CPU temp: {cpu_temperature()}",
+        f"Load: {load_info()}",
+        f"HDMI: {hdmi_status_text()}",
+        f"HDMI EDID: {hdmi_edid_size()} bytes",
+        f"Display mode: {DISPLAY_LABELS.get(display, display)}",
+        f"Autologin: {autologin_status()}",
+    ]
+
+
 def keyboard_status(data: dict) -> str:
     mode = data.get("keyboard_layout", "auto")
     layout = layout_label(active_layout(data))
     if mode == "cpz":
-        return "CPZ internal (forced)"
+        return "Built-in keyboard (forced)"
     if mode == "standard":
         return f"Standard: {layout}"
-    return f"Standard: {layout}" if usb_keyboard_present() else "CPZ internal"
+    return f"Standard: {layout}" if usb_keyboard_present() else "Built-in keyboard"
 
 
 def reload_keyboard_layout(screen) -> int:
@@ -2160,11 +2172,218 @@ def keyboard_layout_change(data: dict, step: int, screen) -> None:
     reload_keyboard_layout(screen)
 
 
-def draw_layouts(screen, data: dict, selected: int) -> None:
+def shortcut_items(data: dict) -> list[dict[str, Any]]:
+    """One row per rebindable action, in the cpz-keys registry order."""
+    try:
+        keys = keys_module()
+    except FileNotFoundError:
+        return [
+            {
+                "label": "Unavailable",
+                "kind": "info",
+                "get": lambda _d: "cpz-keys missing",
+            }
+        ]
+    bindings = keys.effective_bindings()
+    items: list[dict[str, Any]] = []
+    for action in keys.ACTIONS:
+        binding = bindings.get(action["id"], {})
+        display = binding.get("display", "unbound")
+        items.append(
+            {
+                "label": action["label"],
+                "kind": "keybind",
+                "key_action": action,
+                "get": lambda _d, text=display: text,
+            }
+        )
+    items.append(
+        {
+            "label": "Reset Shortcuts",
+            "kind": "action",
+            "action": reset_shortcuts_action,
+        }
+    )
+    return items
+
+
+def shortcut_from_char(value: int, alt_prefix: bool = False) -> str:
+    """Map a captured curses value to a registry key, or return an empty string.
+
+    Alt+letter arrives either as ESC followed by the character or, with 8-bit
+    meta handling, as the character with the high bit set. A plain character
+    without either signal is not an Alt shortcut and is ignored, as are
+    Shift+Alt and Ctrl combinations: CPZ shortcuts are one modifier plus one
+    plain key.
+    """
+    meta = 128 <= value <= 255
+    if meta:
+        value -= 128
+    if not (alt_prefix or meta):
+        return ""
+    if value == ord(" "):
+        return "M-Space"
+    if 0 <= value < 128 and re.fullmatch(r"[a-z0-9]", chr(value)):
+        return "M-" + chr(value)
+    return ""
+
+
+def capture_shortcut(screen, action: dict) -> str | None:
+    """Ask for a new Alt+key. Returns a key, ``reset``, or None on cancel."""
+    popup = modal_window(
+        screen,
+        "Rebind " + action["label"],
+        "Press the new shortcut.\n\n"
+        "Alt+letter, Alt+digit or Alt+Space.\n"
+        "Backspace restores the default.\n"
+        "Esc cancels.",
+        " Alt+key only    Backspace reset    Esc cancel",
+    )
+    try:
+        while True:
+            popup.timeout(-1)
+            first = popup.getch()
+            if first in (curses.KEY_BACKSPACE, 8, 127):
+                return "reset"
+            if first in (10, 13):
+                return None
+            if first == 27:
+                # tmux/kmscon send Alt as ESC followed by the key. A bare Esc
+                # has no second byte; the short timeout keeps Esc usable as
+                # "cancel" without swallowing an Alt combination.
+                popup.timeout(150)
+                second = popup.getch()
+                popup.timeout(-1)
+                if second == -1:
+                    return None
+                choice = shortcut_from_char(second, alt_prefix=True)
+                if choice:
+                    return choice
+                continue
+            choice = shortcut_from_char(first)
+            if choice:
+                return choice
+            # Ctrl+letter and function keys are deliberately not accepted.
+    finally:
+        close_modal(screen, popup)
+
+
+def apply_shortcuts(screen) -> tuple[int, str]:
+    try:
+        return keys_module().apply_tmux()
+    except (FileNotFoundError, OSError) as error:
+        return 1, str(error)
+
+
+def rebind_action(screen, item: dict) -> None:
+    """Capture a new binding and apply it to the live tmux server."""
+    action = item["key_action"]
+    try:
+        keys = keys_module()
+    except FileNotFoundError as error:
+        notify(screen, str(error), title="Shortcuts", error=True)
+        return
+
+    current = keys.effective_bindings().get(action["id"], {})
+    previous = current.get("key", "")
+    choice = None
+    applied = True
+    try:
+        # Root-table bindings are consumed by tmux before they reach this pane,
+        # so a bound Alt+key could never be captured for a swap. Remove CPZ
+        # bindings for the duration of the dialog and rebuild them afterwards.
+        keys.suspend_tmux()
+        choice = capture_shortcut(screen, action)
+        if choice is None:
+            return
+        if choice == "reset":
+            try:
+                keys.clear_override(action["id"])
+            except OSError as error:
+                notify(screen, str(error), title="Shortcuts", error=True)
+                return
+            message = f"{action['label']} restored to {keys.display_key(action['default'])}"
+        else:
+            other = keys.conflict_for(action["id"], choice)
+            if other:
+                label = keys.ACTIONS_BY_ID[other]["label"]
+                notify(
+                    screen,
+                    f"{keys.display_key(choice)} is already used by {label}.",
+                    title="Shortcut",
+                    error=True,
+                )
+                return
+            if choice == previous:
+                return
+            try:
+                if keys.set_override(action["id"], choice) != 0:
+                    notify(
+                        screen,
+                        f"Could not save {keys.display_key(choice)}.",
+                        title="Shortcuts",
+                        error=True,
+                    )
+                    return
+            except OSError as error:
+                notify(screen, str(error), title="Shortcuts", error=True)
+                return
+            message = f"{action['label']}: {keys.display_key(choice)}"
+    finally:
+        rc, detail = apply_shortcuts(screen)
+        applied = rc == 0
+        if not applied:
+            notify(
+                screen,
+                "Shortcuts were saved but the new binding could not be applied."
+                + (f"\n{detail}" if detail else ""),
+                title="Shortcuts",
+                error=True,
+            )
+    if choice is not None and applied:
+        notify(screen, message, title="Shortcuts", wait=False)
+
+
+def reset_shortcuts_action(screen, _data) -> str | None:
+    if not confirm(
+        screen,
+        "Reset all shortcuts?",
+        title="Reset Shortcuts",
+        detail="Every action returns to its default Alt+key.",
+        danger=True,
+    ):
+        return None
+    try:
+        keys = keys_module()
+    except FileNotFoundError as error:
+        return str(error)
+    keys.clear_all_overrides()
+    rc, detail = apply_shortcuts(screen)
+    if rc != 0:
+        return "Shortcuts reset, apply failed" + (f": {detail}" if detail else "")
+    return "Shortcuts reset"
+
+
+def filter_rows(rows, query: str) -> list:
+    """Keep rows whose label or code contains the typed query."""
+    needle = query.casefold()
+    return [
+        row
+        for row in rows
+        if needle in row[1].casefold() or needle in row[0].casefold()
+    ]
+
+
+def draw_layouts(
+    screen, data: dict, shown: list, selected: int, query: str, searching: bool
+) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
     put(screen, 0, 0, " Layouts", curses.A_BOLD)
-    put(screen, 1, 0, "-" * max(0, width - 1))
+    if searching or query:
+        put(screen, 1, 0, f" /{query}" + ("_" if searching else ""))
+    else:
+        put(screen, 1, 0, "-" * max(0, width - 1))
 
     enabled = set(layout_codes(data))
     active = active_layout(data)
@@ -2173,22 +2392,28 @@ def draw_layouts(screen, data: dict, selected: int) -> None:
     first = 0
     if selected >= visible:
         first = selected - visible + 1
-    first = max(0, min(first, max(0, len(LAYOUTS) - visible)))
+    first = max(0, min(first, max(0, len(shown) - visible)))
 
-    for offset, (code, label) in enumerate(LAYOUTS[first : first + visible]):
+    for offset, (code, label) in enumerate(shown[first : first + visible]):
         row = first + offset
         mark = "[x]" if code in enabled else "[ ]"
         suffix = "  Active" if code == active else ""
         text = f"{'>' if row == selected else ' '} {mark} {label[:26]:<26}{suffix}"
         attr = curses.A_REVERSE if row == selected else 0
         put(screen, top + offset, 0, text.ljust(max(0, width - 1)), attr)
+    if not shown:
+        put(screen, top, 1, "No matches")
 
     if first > 0:
         put(screen, 1, width - 2, "^")
-    if first + visible < len(LAYOUTS):
+    if first + visible < len(shown):
         put(screen, 1, width - 2, "v" if first == 0 else "*")
 
-    put(screen, height - 1, 0, "F/X move Space toggle Alt+Space switch q back")
+    if searching:
+        footer = "Type to filter  Enter keep  Esc clear"
+    else:
+        footer = "F/X move  Space toggle  / filter  q back"
+    put(screen, height - 1, 0, footer)
     screen.refresh()
 
 
@@ -2198,39 +2423,77 @@ def layouts_screen(screen, data: dict) -> None:
         (index for index, (code, _label) in enumerate(LAYOUTS) if code == active),
         0,
     )
+    query = ""
+    searching = False
     changed = False
 
     while True:
-        draw_layouts(screen, data, selected)
+        shown = filter_rows(LAYOUTS, query)
+        selected = max(0, min(selected, len(shown) - 1))
+        draw_layouts(screen, data, shown, selected, query, searching)
         key = screen.getch()
 
+        if searching:
+            if key == 27:
+                if query:
+                    query = ""
+                    selected = 0
+                else:
+                    searching = False
+                continue
+            if key in (10, 13):
+                searching = False
+                continue
+            if key in (curses.KEY_BACKSPACE, 8, 127):
+                query = query[:-1]
+                selected = 0
+                continue
+            if key in NAV_UP and shown:
+                selected = (selected - 1) % len(shown)
+                continue
+            if key in NAV_DOWN and shown:
+                selected = (selected + 1) % len(shown)
+                continue
+            if 32 <= key < 127:
+                query += chr(key)
+                selected = 0
+                continue
+            continue
+
         if key in (ord("q"), ord("Q"), 27):
+            if key == 27 and query:
+                query = ""
+                selected = 0
+                continue
             if changed:
                 reload_keyboard_layout(screen)
             return
-        if key in NAV_UP:
-            selected = (selected - 1) % len(LAYOUTS)
+        if key == ord("/"):
+            searching = True
             continue
-        if key in NAV_DOWN:
-            selected = (selected + 1) % len(LAYOUTS)
+        if key in NAV_UP and shown:
+            selected = (selected - 1) % len(shown)
+            continue
+        if key in NAV_DOWN and shown:
+            selected = (selected + 1) % len(shown)
             continue
         page = max(1, screen.getmaxyx()[0] - 3)
-        if key in (curses.KEY_PPAGE,):
+        if key == curses.KEY_PPAGE:
             selected = max(0, selected - page)
             continue
-        if key in (curses.KEY_NPAGE,):
-            selected = min(len(LAYOUTS) - 1, selected + page)
+        if key == curses.KEY_NPAGE:
+            selected = min(len(shown) - 1, selected + page)
             continue
         if key in (curses.KEY_HOME, ord("g")):
             selected = 0
             continue
         if key in (curses.KEY_END, ord("G")):
-            selected = len(LAYOUTS) - 1
+            selected = max(0, len(shown) - 1)
             continue
-        if key not in (ord(" "), 10, 13):
+        if key not in (ord(" "), 10, 13) or not shown:
             continue
 
-        code, _label = LAYOUTS[selected]
+        code, _label = shown[selected]
         enabled = layout_codes(data)
         if code in enabled:
             if len(enabled) == 1:
@@ -2254,6 +2517,126 @@ def layouts_action(screen, data) -> None:
     layouts_screen(screen, data)
 
 
+def draw_timezone(
+    screen, shown: list, selected: int, query: str, searching: bool, current: str
+) -> None:
+    screen.erase()
+    height, width = screen.getmaxyx()
+    put(screen, 0, 0, " Time Zone", curses.A_BOLD)
+    if searching or query:
+        put(screen, 1, 0, f" /{query}" + ("_" if searching else ""))
+    else:
+        put(screen, 1, 0, "-" * max(0, width - 1))
+
+    top = 2
+    visible = max(1, height - 3)
+    first = 0
+    if selected >= visible:
+        first = selected - visible + 1
+    first = max(0, min(first, max(0, len(shown) - visible)))
+
+    for offset, (zone, _label) in enumerate(shown[first : first + visible]):
+        row = first + offset
+        mark = "*" if zone == current else " "
+        text = f"{'>' if row == selected else ' '} {mark} {zone}"
+        attr = curses.A_REVERSE if row == selected else 0
+        put(screen, top + offset, 0, text.ljust(max(0, width - 1)), attr)
+    if not shown:
+        put(screen, top, 1, "No matches")
+
+    if first > 0:
+        put(screen, 1, width - 2, "^")
+    if first + visible < len(shown):
+        put(screen, 1, width - 2, "v" if first == 0 else "*")
+
+    if searching:
+        footer = "Type to filter  Enter keep  Esc clear"
+    else:
+        footer = "F/X move  Enter set  / filter  q back"
+    put(screen, height - 1, 0, footer)
+    screen.refresh()
+
+
+def timezone_screen(screen) -> None:
+    rows = [(zone, zone) for zone in TIMEZONES]
+    current = timedatectl_value("Timezone")
+    zone_names = [zone for zone, _label in rows]
+    selected = zone_names.index(current) if current in zone_names else 0
+    query = ""
+    searching = False
+
+    while True:
+        shown = filter_rows(rows, query)
+        selected = max(0, min(selected, len(shown) - 1))
+        draw_timezone(screen, shown, selected, query, searching, current)
+        key = screen.getch()
+
+        if searching:
+            if key == 27:
+                if query:
+                    query = ""
+                    selected = 0
+                else:
+                    searching = False
+                continue
+            if key in (10, 13):
+                searching = False
+                continue
+            if key in (curses.KEY_BACKSPACE, 8, 127):
+                query = query[:-1]
+                selected = 0
+                continue
+            if key in NAV_UP and shown:
+                selected = (selected - 1) % len(shown)
+                continue
+            if key in NAV_DOWN and shown:
+                selected = (selected + 1) % len(shown)
+                continue
+            if 32 <= key < 127:
+                query += chr(key)
+                selected = 0
+                continue
+            continue
+
+        if key in (ord("q"), ord("Q"), 27):
+            if key == 27 and query:
+                query = ""
+                selected = 0
+                continue
+            return
+        if key == ord("/"):
+            searching = True
+            continue
+        if key in NAV_UP and shown:
+            selected = (selected - 1) % len(shown)
+            continue
+        if key in NAV_DOWN and shown:
+            selected = (selected + 1) % len(shown)
+            continue
+        page = max(1, screen.getmaxyx()[0] - 3)
+        if key == curses.KEY_PPAGE:
+            selected = max(0, selected - page)
+            continue
+        if key == curses.KEY_NPAGE:
+            selected = min(len(shown) - 1, selected + page)
+            continue
+        if key in (curses.KEY_HOME, ord("g")):
+            selected = 0
+            continue
+        if key in (curses.KEY_END, ord("G")):
+            selected = max(0, len(shown) - 1)
+            continue
+        if key not in (10, 13) or not shown:
+            continue
+
+        zone = shown[selected][0]
+        rc = run_privileged(screen, ["timedatectl", "set-timezone", zone])
+        if rc == 0:
+            notify(screen, f"Time zone set to {zone}", title="Time Zone", error=False)
+            return
+        notify(screen, "Time zone change failed", title="Time Zone")
+
+
 def show_help(screen, _data) -> None:
     # Use the same pager as Alt+H so the two help screens cannot drift.
     helper = "/usr/local/bin/cpz-help"
@@ -2265,6 +2648,10 @@ def show_help(screen, _data) -> None:
 
 def show_system(screen, data) -> None:
     text_page(screen, "About", system_info_lines(data))
+
+
+def show_diagnostics(screen, data) -> None:
+    text_page(screen, "Diagnostics", diagnostic_lines(data))
 
 
 def show_resources(screen, _data) -> None:
@@ -3017,7 +3404,7 @@ def trove_details_lines(
     else:
         lines.append("Apt package: not available")
     if apt.get("needs_update") == "1":
-        lines.append("Apt lists: update before install")
+        lines.append("Package lists: update before install")
     if record:
         lines.append(f"Remove: {record.get('uninstall_command') or 'apt-get purge ' + record.get('package', '')}")
     elif apt.get("status") == "available":
@@ -3058,7 +3445,7 @@ def trove_details_lines(
             )
             lines.append("")
     if tool.get("url"):
-        lines.append(f"Terminal Trove: {tool['url']}")
+        lines.append(f"Catalog: {tool['url']}")
     if tool.get("website"):
         lines.append(f"Website: {tool['website']}")
     return lines
@@ -3066,7 +3453,7 @@ def trove_details_lines(
 
 def trove_install_tool(
     screen, tool: dict[str, Any], apt_names: set[str] | None = None
-) -> str:
+) -> str | None:
     if apt_names is None:
         apt_names = trove_apt_names()
     apt = resolve_trove_apt(tool, apt_names)
@@ -3081,7 +3468,7 @@ def trove_install_tool(
     if package != name:
         detail = f"apt package: {package}"
     if not confirm(screen, question, title="Install App", detail=detail):
-        return "Cancelled"
+        return None
     if apt.get("needs_update") == "1":
         draw_loading(screen, "Updating apt lists...")
         rc = run_privileged(
@@ -3123,7 +3510,7 @@ def trove_install_tool(
     return f"Installed {name}"
 
 
-def trove_uninstall_tool(screen, record: dict[str, Any]) -> str:
+def trove_uninstall_tool(screen, record: dict[str, Any]) -> str | None:
     package = str(record.get("package", ""))
     name = str(record.get("name", package)) or package
     if package in PKG_CORE:
@@ -3149,7 +3536,7 @@ def trove_uninstall_tool(screen, record: dict[str, Any]) -> str:
         question = f"Remove {label} and {len(extra)} more package(s)?"
         detail = "Also removes: " + ", ".join(extra)
     if not confirm(screen, question, title="Remove App", detail=detail, danger=True):
-        return "Cancelled"
+        return None
     rc = run_privileged(
         screen,
         ["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "purge", "-y", package],
@@ -3163,6 +3550,99 @@ def trove_uninstall_tool(screen, record: dict[str, Any]) -> str:
     except OSError:
         return f"Removed {name} (manager state not saved)"
     return f"Removed {name}"
+
+
+def find_trove_tool(slug: str) -> dict[str, Any] | None:
+    slug = slug.strip()
+    if not slug:
+        return None
+    index = load_trove_index()
+    for tool in index.get("tools", []):
+        if str(tool.get("slug", "")).strip() == slug:
+            return tool
+    return None
+
+
+def pause_for_close() -> None:
+    """Keep the install output on screen when Search launches it in a pane."""
+    if not sys.stdin.isatty():
+        return
+    try:
+        input("\nPress Enter to close.")
+    except EOFError:
+        pass
+
+
+def cli_install_tool(slug: str) -> int:
+    """Install from CPZ Search without the curses Applications screen."""
+    tool = find_trove_tool(slug)
+    if tool is None:
+        print(f"cpz-settings: unknown app '{slug}'", file=sys.stderr)
+        return 2
+    name = str(tool.get("name", "")).strip() or slug
+    apt_names = trove_apt_names()
+    apt = resolve_trove_apt(tool, apt_names)
+    if apt["status"] == "installed":
+        print(f"{name} is already installed")
+        return 0
+    if apt["status"] == "missing":
+        print(f"{name} is not available in apt")
+        commands = trove_install_commands(tool)
+        if commands:
+            print("Install it manually:")
+            for manager, command in commands:
+                print(f"  {manager}: {command}")
+        return 1
+
+    package = apt["package"]
+    print(f"Installing {name} ({package})...")
+    if apt.get("needs_update") == "1":
+        print("Updating apt lists...")
+        rc = subprocess.call(
+            [
+                "sudo",
+                "env",
+                "DEBIAN_FRONTEND=noninteractive",
+                "apt-get",
+                "update",
+            ]
+        )
+        if rc != 0:
+            print("apt update failed", file=sys.stderr)
+            return 1
+        apt = resolve_trove_apt(tool, set())
+        if apt["status"] == "installed":
+            print(f"{name} is already installed")
+            return 0
+        if apt["status"] == "missing":
+            print(f"{name} is not available in apt after update", file=sys.stderr)
+            return 1
+        package = apt["package"]
+
+    rc = subprocess.call(["sudo", *TROVE_APT_INSTALL, package])
+    if rc != 0:
+        print("Install failed (try sudo apt update)", file=sys.stderr)
+        return 1
+
+    apps = read_trove_apps()
+    apps[slug] = {
+        "slug": slug,
+        "name": name,
+        "package": package,
+        "version": apt_status(package).get("version", ""),
+        "installed_at": datetime.now().isoformat(timespec="seconds"),
+        "install_command": catalog_trove_apt(tool).get("command")
+        or f"apt install {package}",
+        "uninstall_command": f"apt-get purge {package}",
+    }
+    try:
+        write_trove_apps(apps)
+    except OSError:
+        print(f"Installed {name} (manager state not saved)")
+        return 0
+    print(f"Installed {name}")
+    print("Open Search (Alt+O) to run it.")
+    return 0
 
 
 def simulate_removal(name: str) -> list[str] | None:
@@ -3209,9 +3689,9 @@ def draw_trove_list(
     height, width = screen.getmaxyx()
     title = " Applications"
     if index_count:
-        title += f"  {len(tools)}/{index_count}"
+        title += f" · {len(tools)} of {index_count}"
     else:
-        title += "  no catalog"
+        title += " · catalog not downloaded"
     put(screen, 0, 0, title, curses.A_BOLD)
 
     x = 0
@@ -3220,18 +3700,15 @@ def draw_trove_list(
         attr = curses.A_REVERSE if mode == tab_mode else curses.A_DIM
         put(screen, 1, x, piece, attr)
         x += len(piece)
-    if mode == "browse":
-        put(
-            screen,
-            1,
-            x + 1,
-            f"apt:{'on' if apt_only else 'all'}  "
-            f"cat:{category_label}  lang:{language_label}",
-            curses.A_DIM,
-        )
+    put(screen, 1, x + 1, "Tab", curses.A_DIM)
 
     if search_active:
         put(screen, 2, 0, f" Search: {query}_")
+    elif mode == "browse":
+        filters = [f"Category: {category_label}", f"Language: {language_label}"]
+        if apt_only:
+            filters.insert(0, "Apt only")
+        put(screen, 2, 0, (" " + " · ".join(filters))[: max(0, width - 1)])
     else:
         put(screen, 2, 0, "-" * max(0, width - 1))
 
@@ -3266,11 +3743,14 @@ def draw_trove_list(
             curses.A_REVERSE if row == selected else 0,
         )
     if not tools:
-        message = "No tools match the filters"
-        if mode == "installed":
-            message = "No apps installed through the manager"
+        if not index_count:
+            message = "No catalog. Press u to download it."
+        elif mode == "installed":
+            message = "Nothing installed yet. Tab opens Browse."
         elif apt_only:
-            message = "No apt tools match; press a for all"
+            message = "No apt tools match. Press a for all."
+        else:
+            message = "No matches. Esc clears the filter."
         put(screen, top, 1, message)
     if first > 0:
         put(screen, top, width - 2, "^")
@@ -3283,11 +3763,13 @@ def draw_trove_list(
         put(screen, summary_y, 1, str(chosen.get("summary", "")))
 
     if search_active:
-        hint = "Type to filter Enter keep Esc clear"
+        hint = "Type to filter  Enter keep  Esc clear"
+    elif not index_count:
+        hint = "u download catalog  q back"
     elif mode == "browse":
-        hint = "F/X move / search Enter info i install q back"
+        hint = "F/X move  / search  Enter info  i install  q back"
     else:
-        hint = "F/X move / search Enter info d remove q back"
+        hint = "F/X move  / search  Enter info  e run  q back"
     put(screen, height - 1, 0, hint)
     screen.refresh()
 
@@ -3322,7 +3804,7 @@ def trove_details_screen(
             screen,
             height - 1,
             0,
-            "F/X scroll i install d remove q back",
+            "F/X scroll i install d remove e run q",
         )
         screen.refresh()
 
@@ -3352,7 +3834,7 @@ def trove_details_screen(
             elif apt["status"] == "missing":
                 notify(
                     screen,
-                    "Not in apt; use the install instructions above",
+                    "No apt package. Use the install command above.",
                     title="Applications",
                 )
             else:
@@ -3361,6 +3843,11 @@ def trove_details_screen(
                     trove_install_tool(screen, tool, apt_names),
                     title="Applications",
                 )
+            continue
+        if key in (ord("e"), ord("E")):
+            error = run_trove_app(screen, tool, record)
+            if error:
+                notify(screen, error, title="Applications", error=False)
             continue
         if key in (ord("d"), ord("D")):
             if record:
@@ -3416,8 +3903,71 @@ def trove_command(tool: dict[str, Any], available: set[str]) -> str:
     return ""
 
 
+def package_executables(package: str) -> list[str]:
+    """Executable names that dpkg says an installed package provides."""
+    if not package or not APT_NAME_RE.fullmatch(package):
+        return []
+    rc, out, _ = nm_run(["dpkg", "-L", package], timeout=10)
+    if rc != 0:
+        return []
+    names = []
+    for path in out.splitlines():
+        path = path.strip()
+        if not path or os.path.dirname(path) not in (
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/local/sbin",
+            "/usr/sbin",
+            "/sbin",
+        ):
+            continue
+        try:
+            if os.path.isfile(path) and os.access(path, os.X_OK):
+                names.append(os.path.basename(path))
+        except OSError:
+            continue
+    return sorted(set(names))
+
+
+def managed_trove_command(
+    record: dict[str, Any], available: set[str]
+) -> str:
+    """Find the command of an app installed through the manager.
+
+    Most packages install a binary named like the package, but a few (for
+    example ``github-cli``) use a different name. dpkg -L covers those so an
+    installed app can still be run from Search.
+    """
+    name = str(record.get("name", "")).strip().lower()
+    candidates = (
+        str(record.get("slug", "")).strip(),
+        str(record.get("package", "")).strip(),
+        name.replace(" ", "-"),
+        name.replace(" ", ""),
+    )
+    for candidate in candidates:
+        if candidate and candidate in available:
+            return candidate
+    installed_names = [
+        name
+        for name in package_executables(str(record.get("package", "")).strip())
+        if name in available
+    ]
+    for candidate in candidates:
+        if candidate and candidate in installed_names:
+            return candidate
+    for name in installed_names:
+        if any(
+            candidate and (name.startswith(candidate) or candidate.startswith(name))
+            for candidate in candidates
+        ):
+            return name
+    return installed_names[0] if installed_names else ""
+
+
 def list_tools_payload() -> dict[str, Any]:
-    """Machine-readable tool list used by cpz-search (Alt+O, @ provider)."""
+    """Machine-readable app list used by CPZ Search (Alt+O, apps provider)."""
     index = load_trove_index()
     managed = read_trove_apps()
     available = executable_names()
@@ -3426,7 +3976,10 @@ def list_tools_payload() -> dict[str, Any]:
         slug = str(tool.get("slug", "")).strip()
         if not slug:
             continue
+        record = managed.get(slug)
         command = trove_command(tool, available)
+        if not command and record:
+            command = managed_trove_command(record, available)
         apt = catalog_trove_apt(tool)
         tools.append(
             {
@@ -3435,21 +3988,38 @@ def list_tools_payload() -> dict[str, Any]:
                 "summary": str(tool.get("summary", "")).strip(),
                 "categories": list(tool.get("categories") or []),
                 "command": command,
-                "installed": bool(command or slug in managed),
+                "installed": bool(command or record),
+                "managed": record is not None,
                 "apt": apt.get("package", ""),
             }
         )
     return {"schema": 1, "tools": tools}
 
 
+def run_trove_app(
+    screen,
+    tool: dict[str, Any],
+    record: dict[str, Any] | None = None,
+) -> str | None:
+    """Run an installed catalog app and return an error message, if any."""
+    available = executable_names()
+    command = trove_command(tool, available)
+    if not command and record:
+        command = managed_trove_command(record, available)
+    if not command:
+        return "No runnable command found"
+    run_interactive(screen, [command])
+    return None
+
+
 def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
-    draw_loading(screen, "Reading Terminal Trove catalog...")
+    draw_loading(screen, "Loading app catalog...")
     index = load_trove_index()
     tools = index.get("tools", [])
     managed = read_trove_apps()
     categories = trove_category_options(index)
     languages = trove_language_options(index)
-    draw_loading(screen, "Reading apt package names...")
+    draw_loading(screen, "Checking installable apps...")
     apt_names = trove_apt_names()
     apt_available = bool(apt_names)
     apt_only = apt_available and not focus_slug
@@ -3462,18 +4032,35 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
     if not tools:
         notify(
             screen,
-            "No catalog; press u to download it",
+            "Catalog not downloaded. Press u to update.",
             title="Applications",
             wait=True,
         )
     elif not apt_available:
         notify(
             screen,
-            "apt package list unavailable; showing all",
+            "Package list unavailable; showing all apps",
             title="Applications",
             wait=True,
             error=False,
         )
+    if focus_slug:
+        # CPZ Search's "Enter info" and Ctrl+O name one app, so show that app's
+        # details straight away. Landing on a filtered catalog list made it look
+        # as if the app page had not opened at all.
+        focused = next(
+            (
+                tool
+                for tool in tools
+                if str(tool.get("slug", "")).strip() == focus_slug
+            ),
+            None,
+        )
+        if focused is not None:
+            trove_details_screen(
+                screen, focused, managed.get(focus_slug), apt_names or None
+            )
+            return
 
     while True:
         if mode == "browse":
@@ -3543,7 +4130,7 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             if not apt_available:
                 notify(
                     screen,
-                    "apt package list unavailable",
+                    "Package list unavailable",
                     title="Applications",
                     wait=True,
                     error=False,
@@ -3561,6 +4148,10 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             )
             continue
         if key in (ord("q"), ord("Q"), 27):
+            if query:
+                query = ""
+                row[mode] = 0
+                continue
             return
         if key in (ord("/"), ord("s"), ord("S")):
             search_active = True
@@ -3575,25 +4166,12 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
                 tools = index.get("tools", [])
                 categories = trove_category_options(index)
                 languages = trove_language_options(index)
-                draw_loading(screen, "Reading apt package names...")
+                draw_loading(screen, "Checking installable apps...")
                 apt_names = trove_apt_names()
                 apt_available = bool(apt_names)
                 if not apt_available:
                     apt_only = False
                 row = {"browse": 0, "installed": 0}
-            continue
-        if key in (ord("r"), ord("R")):
-            index = load_trove_index()
-            tools = index.get("tools", [])
-            managed = read_trove_apps()
-            categories = trove_category_options(index)
-            languages = trove_language_options(index)
-            draw_loading(screen, "Reading apt package names...")
-            apt_names = trove_apt_names()
-            apt_available = bool(apt_names)
-            if not apt_available:
-                apt_only = False
-            notify(screen, "Reloaded", title="Applications", error=False)
             continue
         if key in (ord("t"), ord("T")) and mode == "browse":
             value = trove_filter_popup(screen, "Category", categories, category)
@@ -3659,6 +4237,15 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             )
             managed = read_trove_apps()
             continue
+        if key in (ord("e"), ord("E")) and shown:
+            tool = shown[position]
+            record = tool.get("_record") if mode == "installed" else managed.get(
+                str(tool.get("slug", ""))
+            )
+            error = run_trove_app(screen, tool, record)
+            if error:
+                notify(screen, error, title="Applications", error=False)
+            continue
         if key in (ord("d"), ord("D")) and mode == "installed" and shown:
             record = shown[position].get("_record") or managed.get(
                 str(shown[position].get("slug", ""))
@@ -3700,14 +4287,6 @@ def ntp_toggle(screen, _data) -> str | None:
     return None if rc == 0 else "Time sync change failed"
 
 
-def timezone_action(zone: str):
-    def action(screen, _data) -> str | None:
-        rc = run_privileged(screen, ["timedatectl", "set-timezone", zone])
-        return "Time zone set" if rc == 0 else "Time zone change failed"
-
-    return action
-
-
 def power_action(action: str, question: str, title: str):
     def run(screen, _data) -> None:
         danger = action in ("poweroff", "reboot")
@@ -3730,7 +4309,7 @@ def reset_settings_action(screen, data) -> str | None:
         screen,
         "Reset all settings?",
         title="Reset Settings",
-        detail="The factory defaults are restored.",
+        detail="Only preferences are reset. Files and apps are kept.",
         danger=True,
     ):
         return None
@@ -3739,18 +4318,18 @@ def reset_settings_action(screen, data) -> str | None:
     save_settings(data)
     for name in data:
         apply_live(data, name)
+    try:
+        keys = keys_module()
+        keys.clear_all_overrides()
+        keys.apply_tmux()
+    except FileNotFoundError:
+        pass
     reload_keyboard_layout(screen)
     return "Settings reset"
 
 
 def page_initial_index(page: str, data: dict) -> int:
-    """Start long lists on the value that is currently active."""
-    if page == "timezone":
-        current = timedatectl_value("Timezone")
-        try:
-            return TIMEZONES.index(current)
-        except ValueError:
-            return 0
+    """Return the row a page should open on."""
     return 0
 
 
@@ -3759,19 +4338,15 @@ PAGE_TITLES = {
     "statusbar": "Status Bar",
     "terminal": "Terminal",
     "sound": "Sound",
-    "network": "Network",
+    "network": "Connections",
     "vpn": "VPN",
     "datetime": "Date & Time",
-    "timezone": "Time Zone",
-    "display": "Display & Brightness",
+    "display": "Display",
     "power": "Power",
     "security": "Security",
     "keyboard": "Keyboard",
+    "shortcuts": "Shortcuts",
     "system": "System",
-}
-
-PAGE_HINTS = {
-    "statusbar": "Indicators hide while the interface is off",
 }
 
 
@@ -3786,19 +4361,13 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
     if name == "main":
         return [
             {
-                "label": "Network",
+                "label": "Connections",
                 "kind": "submenu",
                 "page": "network",
                 "get": lambda _d: wifi_summary(),
             },
             {
-                "label": "Bluetooth",
-                "kind": "action",
-                "get": lambda _d: bluetooth_summary(),
-                "action": lambda s, _d: bluetooth_screen(s),
-            },
-            {
-                "label": "Display & Brightness",
+                "label": "Display",
                 "kind": "submenu",
                 "page": "display",
             },
@@ -3814,9 +4383,9 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
             {"label": "System", "kind": "submenu", "page": "system"},
         ]
     if name == "keyboard":
-        return [
+        items: list[dict[str, Any]] = [
             {
-                "label": "Layout Mode",
+                "label": "Keyboard Mapping",
                 "kind": "special",
                 "get": lambda d: value_text(d, "keyboard_layout"),
                 "change": keyboard_layout_change,
@@ -3827,19 +4396,34 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "get": layouts_text,
                 "action": layouts_action,
             },
+        ]
+        if len(layout_codes(data)) > 1:
+            items.append(
+                {
+                    "label": "Active Layout",
+                    "kind": "cycle",
+                    "key": "keyboard_layout_active",
+                    "values": lambda: layout_codes(data),
+                    "labels": {code: label for code, label in LAYOUTS},
+                }
+            )
+        items.append(
             {
-                "label": "Active Layout",
-                "kind": "cycle",
-                "key": "keyboard_layout_active",
-                "values": lambda: layout_codes(data),
-                "labels": {code: label for code, label in LAYOUTS},
-            },
+                "label": "Shortcuts",
+                "kind": "submenu",
+                "page": "shortcuts",
+            }
+        )
+        items.append(
             {
-                "label": "Key Bindings",
+                "label": "Key List",
                 "kind": "action",
                 "action": show_help,
-            },
-        ]
+            }
+        )
+        return items
+    if name == "shortcuts":
+        return shortcut_items(data)
     if name == "display":
         return [
             {
@@ -3864,14 +4448,14 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "labels": SCREEN_TIMEOUT_LABELS,
             },
             {
-                "label": "Output",
+                "label": "Display Output",
                 "kind": "cycle",
                 "key": "display",
                 "values": DISPLAY_MODES,
                 "labels": DISPLAY_LABELS,
             },
             {
-                "label": "Font Size",
+                "label": "Text Size",
                 "kind": "cycle",
                 "key": "font_size",
                 "values": FONT_SIZES,
@@ -3880,11 +4464,11 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
             {"label": "Status Bar", "kind": "submenu", "page": "statusbar"},
         ]
     if name == "statusbar":
-        items: list[dict[str, Any]] = [
-            {"label": "Show Clock", "kind": "toggle", "key": "show_clock"},
+        status_items: list[dict[str, Any]] = [
+            {"label": "Clock", "kind": "toggle", "key": "show_clock"},
         ]
         if data.get("show_clock"):
-            items.append(
+            status_items.append(
                 {
                     "label": "Time Format",
                     "kind": "cycle",
@@ -3893,9 +4477,11 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                     "labels": {1: "24-hour", 0: "12-hour"},
                 }
             )
-        items.append({"label": "Show Date", "kind": "toggle", "key": "show_date"})
+        status_items.append(
+            {"label": "Date", "kind": "toggle", "key": "show_date"}
+        )
         if data.get("show_date"):
-            items.append(
+            status_items.append(
                 {
                     "label": "Date Format",
                     "kind": "cycle",
@@ -3904,42 +4490,27 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                     "labels": DATE_FORMAT_LABELS,
                 }
             )
-        items.extend(
+        status_items.extend(
             [
-                {"label": "Battery Indicator", "kind": "toggle", "key": "show_battery"},
-                {"label": "Volume Indicator", "kind": "toggle", "key": "show_volume"},
+                {"label": "Battery", "kind": "toggle", "key": "show_battery"},
+                {"label": "Volume", "kind": "toggle", "key": "show_volume"},
                 {
-                    "label": "Brightness Indicator",
+                    "label": "Brightness",
                     "kind": "toggle",
                     "key": "show_brightness",
                 },
-                {"label": "Network Indicator", "kind": "toggle", "key": "show_conn"},
+                {"label": "Network", "kind": "toggle", "key": "show_conn"},
             ]
         )
         if data.get("show_conn"):
-            items.extend(
+            status_items.extend(
                 [
-                    {
-                        "label": "Ethernet Indicator",
-                        "kind": "toggle",
-                        "key": "show_eth",
-                    },
-                    {
-                        "label": "Wi-Fi Indicator",
-                        "kind": "toggle",
-                        "key": "show_wifi",
-                    },
-                    {
-                        "label": "Bluetooth Indicator",
-                        "kind": "toggle",
-                        "key": "show_bt",
-                    },
+                    {"label": "Ethernet", "kind": "toggle", "key": "show_eth"},
+                    {"label": "Wi-Fi", "kind": "toggle", "key": "show_wifi"},
+                    {"label": "Bluetooth", "kind": "toggle", "key": "show_bt"},
                 ]
             )
-        items.append(
-            {"label": "Keyboard Indicator", "kind": "toggle", "key": "show_layout"}
-        )
-        return items
+        return status_items
     if name == "terminal":
         return [
             {"label": "Mouse Support", "kind": "toggle", "key": "mouse"},
@@ -3960,17 +4531,17 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "labels": {"vi": "Vi", "emacs": "Emacs"},
             },
             {
-                "label": "Refresh Rate",
+                "label": "Status Refresh",
                 "kind": "cycle",
                 "key": "status_interval",
                 "values": STATUS_INTERVALS,
                 "labels": {value: f"{value}s" for value in STATUS_INTERVALS},
             },
-            {"label": "Clipboard Sharing", "kind": "toggle", "key": "set_clipboard"},
-            {"label": "Auto-Rename Tabs", "kind": "toggle", "key": "automatic_rename"},
+            {"label": "Clipboard", "kind": "toggle", "key": "set_clipboard"},
+            {"label": "Auto-Rename", "kind": "toggle", "key": "automatic_rename"},
         ]
     if name == "sound":
-        return [
+        items = [
             {
                 "label": "Output Volume",
                 "kind": "special",
@@ -3989,25 +4560,35 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "get": lambda _d: sound_device_text("sink"),
                 "change": lambda _d, step, _s: sound_device_change("sink", step),
             },
-            {
-                "label": "Input Volume",
-                "kind": "special",
-                "get": lambda _d: sound_volume_text("source"),
-                "change": lambda _d, step, _s: sound_volume_change("source", step),
-            },
-            {
-                "label": "Input Mute",
-                "kind": "special",
-                "get": lambda _d: sound_mute_text("source"),
-                "change": lambda _d, _step, _s: wpctl_toggle_mute("source"),
-            },
-            {
-                "label": "Input Device",
-                "kind": "special",
-                "get": lambda _d: sound_device_text("source"),
-                "change": lambda _d, step, _s: sound_device_change("source", step),
-            },
         ]
+        if sound_device_text("source") != "Not available":
+            items.extend(
+                [
+                    {
+                        "label": "Input Volume",
+                        "kind": "special",
+                        "get": lambda _d: sound_volume_text("source"),
+                        "change": lambda _d, step, _s: sound_volume_change(
+                            "source", step
+                        ),
+                    },
+                    {
+                        "label": "Input Mute",
+                        "kind": "special",
+                        "get": lambda _d: sound_mute_text("source"),
+                        "change": lambda _d, _step, _s: wpctl_toggle_mute("source"),
+                    },
+                    {
+                        "label": "Input Device",
+                        "kind": "special",
+                        "get": lambda _d: sound_device_text("source"),
+                        "change": lambda _d, step, _s: sound_device_change(
+                            "source", step
+                        ),
+                    },
+                ]
+            )
+        return items
     if name == "network":
         items = [
             {
@@ -4015,6 +4596,12 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "kind": "action",
                 "get": lambda _d: wifi_info(),
                 "action": lambda _s, _d: open_network_tui(),
+            },
+            {
+                "label": "Bluetooth",
+                "kind": "action",
+                "get": lambda _d: bluetooth_summary(),
+                "action": lambda s, _d: bluetooth_screen(s),
             },
             {"label": "Ethernet", "kind": "info", "get": lambda _d: ethernet_info()},
         ]
@@ -4065,29 +4652,17 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
             },
             {
                 "label": "Time Zone",
-                "kind": "submenu",
-                "page": "timezone",
+                "kind": "action",
                 "get": lambda _d: timedatectl_value("Timezone"),
+                "action": lambda s, _d: timezone_screen(s),
             },
             {
-                "label": "Set Automatically",
+                "label": "Clock Sync",
                 "kind": "action",
                 "get": lambda _d: ntp_status(),
                 "action": ntp_toggle,
             },
         ]
-    if name == "timezone":
-        current = timedatectl_value("Timezone")
-        items = []
-        for zone in TIMEZONES:
-            items.append(
-                {
-                    "label": zone + (" *" if zone == current else ""),
-                    "kind": "action",
-                    "action": timezone_action(zone),
-                }
-            )
-        return items
     if name == "power":
         return [
             {"label": "Battery", "kind": "info", "get": lambda _d: battery_info()},
@@ -4125,9 +4700,14 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
         return [
             {"label": "About", "kind": "action", "action": show_system},
             {
-                "label": "Resources",
+                "label": "System Monitor",
                 "kind": "action",
                 "action": show_resources,
+            },
+            {
+                "label": "Diagnostics",
+                "kind": "action",
+                "action": show_diagnostics,
             },
             {"label": "Security", "kind": "submenu", "page": "security"},
             {"label": "Terminal", "kind": "submenu", "page": "terminal"},
@@ -4267,10 +4847,21 @@ def draw_page(screen, title: str, items: list, values: list, selected: int, data
     if hint:
         footer = " " + hint
     else:
-        footer = (
-            "F/X move Z/C change Enter open r refresh q "
-            + ("close" if is_main else "back")
-        )
+        kind = items[selected].get("kind") if items else "info"
+        if kind in ("submenu", "action"):
+            action = "Enter open"
+        elif kind == "info":
+            action = ""
+        elif kind == "toggle":
+            action = "Enter toggle"
+        elif kind == "keybind":
+            action = "Enter rebind"
+        elif kind == "cycle":
+            action = "Z/C change  Enter list"
+        else:
+            action = "Z/C change"
+        parts = ["F/X move"] + ([action] if action else []) + ["q " + ("close" if is_main else "back")]
+        footer = "  ".join(parts)
     put(screen, height - 1, 0, footer)
     screen.refresh()
 
@@ -4329,7 +4920,6 @@ def run(screen, start_page: str | None = None) -> None:
             data,
             issues,
             page_name == "main" or (start_page is not None and len(stack) == 1),
-            PAGE_HINTS.get(page_name, ""),
         )
         key = screen.getch()
 
@@ -4340,11 +4930,6 @@ def run(screen, start_page: str | None = None) -> None:
                 dirty = True
                 continue
             return
-        if key in (ord("r"), ord("R")):
-            data = load_settings()
-            dirty = True
-            notify(screen, "Settings refreshed", error=False)
-            continue
         if key in NAV_UP:
             stack[-1] = (page_name, (selected - 1) % len(items))
             continue
@@ -4382,6 +4967,11 @@ def run(screen, start_page: str | None = None) -> None:
                 dirty = True
             continue
         if kind == "info":
+            continue
+        if kind == "keybind":
+            if key in (*NAV_RIGHT, ord(" "), 10, 13):
+                rebind_action(screen, item)
+                dirty = True
             continue
         if kind == "cycle":
             if key in (10, 13, ord(" ")):
@@ -4452,6 +5042,15 @@ def main() -> int:
     if "--list-tools" in arguments:
         print(json.dumps(list_tools_payload(), ensure_ascii=False))
         return 0
+    if "--install-tool" in arguments:
+        index = arguments.index("--install-tool")
+        if index + 1 >= len(arguments):
+            print("cpz-settings: --install-tool needs a slug", file=sys.stderr)
+            return 2
+        try:
+            return cli_install_tool(arguments[index + 1])
+        finally:
+            pause_for_close()
 
     start_page = None
     start_tool = None

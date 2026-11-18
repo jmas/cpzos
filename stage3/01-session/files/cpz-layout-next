@@ -1,5 +1,6 @@
 #!/bin/sh
-# Cycle the active console input layout. Bound to Alt+Space in tmux.
+# Cycle the active console input layout. Bound to Alt+Space by default in the
+# cpz-keys registry (rebindable in Settings > Keyboard > Shortcuts).
 #
 # The enabled layouts live in keyboard_layouts; this updates
 # keyboard_layout_active in the user's settings and asks cpz-layout-apply (via

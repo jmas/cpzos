@@ -1,4 +1,4 @@
-"""Unit tests for the cpz-search omnisearch helpers.
+"""Unit tests for the CPZ Search (cpz-search) helpers.
 
 The popup itself needs fzf and a terminal. These tests cover the providers,
 item format, calculator and the Settings deep-link entry point.
@@ -36,20 +36,28 @@ def load_script(name: str, path: Path):
 class SearchItems(unittest.TestCase):
     def setUp(self):
         self.mod = load_script("cpz_search", SEARCH)
+        self.mod.list_settings_pages = lambda: [("network", "Network")]
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
+        old = os.environ.get("CPZ_AUTOMOUNT_STATE")
+        os.environ["CPZ_AUTOMOUNT_STATE"] = str(self.root / "automount")
+        self.addCleanup(self.restore_env, "CPZ_AUTOMOUNT_STATE", old)
 
     def test_item_round_trip(self):
-        item = self.mod.make_item("app", "vim", "vim  [app]")
+        item = self.mod.make_item("app", "vim", "vim  [app]", "", "installed")
         self.assertEqual(
-            self.mod.parse_item(item), ("app", "vim", "vim  [app]", "")
+            self.mod.parse_item(item),
+            ("app", "vim", "vim  [app]", "", "installed"),
         )
+        self.assertEqual(self.mod.item_flags(item), {"installed"})
         self.assertIsNone(self.mod.parse_item("not-an-item"))
 
     def test_control_characters_are_not_allowed_in_items(self):
         item = self.mod.make_item("app", "a\nb", "a\x1fb")
-        kind, payload, display, extra = self.mod.parse_item(item)
+        parsed = self.mod.parse_item(item)
+        assert parsed is not None
+        kind, payload, display, extra, _flags = parsed
         self.assertEqual(kind, "app")
         self.assertEqual(extra, "")
         self.assertNotIn("\n", payload)
@@ -60,21 +68,183 @@ class SearchItems(unittest.TestCase):
     def test_default_items_have_actions_settings_and_apps(self):
         self.mod.list_settings_pages = lambda: [("network", "Network")]
         self.mod.scan_apps = lambda: ["less", "vim"]
+        self.mod.trove_items = lambda: [
+            self.mod.make_item(
+                "tool",
+                "fzf",
+                "apps fzf  [run app]",
+                "fzf",
+                "managed,installed,runnable",
+            ),
+            self.mod.make_item(
+                "tool",
+                "lazygit",
+                "apps lazygit  [install app]",
+                "",
+                "installable",
+            ),
+        ]
+        self.mod.managed_app_items = lambda: [
+            self.mod.make_item(
+                "tool",
+                "fzf",
+                "fzf  [run app]",
+                "fzf",
+                "managed,installed,runnable",
+            )
+        ]
         parsed = [self.mod.parse_item(line) for line in self.mod.default_items()]
         kinds = [item[0] for item in parsed if item]
         self.assertIn("action", kinds)
         self.assertIn("settings", kinds)
         self.assertIn("app", kinds)
         self.assertIn(
-            ("settings", "network", "Network  [set]", ""),
+            ("settings", "network", "Network  [settings]", "", "settings"),
             parsed,
         )
-        self.assertIn(("app", "vim", "vim  [app]", ""), parsed)
+        self.assertIn(
+            ("app", "vim", "vim  [app]", "", "installed,runnable"), parsed
+        )
+        payloads = [item[1] for item in parsed if item]
+        self.assertEqual(payloads[0], "fzf")
+        self.assertIn("lazygit", payloads)
+        self.assertLess(payloads.index("fzf"), payloads.index("lazygit"))
+        self.assertNotIn(("tool", "fzf", "apps fzf  [run app]", "fzf", "managed,installed,runnable"), parsed)
 
-    def test_home_items_are_only_actions(self):
+    def test_home_items_hold_settings_and_actions_when_no_apps_are_managed(self):
+        self.mod.managed_app_items = lambda: []
         parsed = [self.mod.parse_item(line) for line in self.mod.home_items()]
-        self.assertEqual(len(parsed), len(self.mod.ACTIONS))
-        self.assertEqual({item[0] for item in parsed if item}, {"action"})
+        self.assertEqual(len(parsed), len(self.mod.ACTIONS) + 1)
+        self.assertEqual(
+            {item[0] for item in parsed if item}, {"action", "settings"}
+        )
+        self.assertEqual(parsed[0][0], "settings")
+        self.assertEqual(
+            parsed[0], ("settings", "network", "Network  [settings]", "", "settings")
+        )
+
+    def test_home_settings_rows_carry_the_searchable_page_title(self):
+        self.mod.managed_app_items = lambda: []
+        self.mod.list_settings_pages = lambda: [
+            ("network", "Connections"),
+            ("sound", "Sound"),
+        ]
+        displays = [
+            (self.mod.parse_item(line) or ("", "", ""))[2]
+            for line in self.mod.home_items()
+        ]
+        self.assertIn("Connections  [settings]", displays)
+        self.assertIn("Sound  [settings]", displays)
+
+    def test_home_prioritizes_managed_apps(self):
+        self.mod.managed_app_items = lambda: [
+            self.mod.make_item(
+                "tool",
+                "btop",
+                "btop  [run app]",
+                "btop",
+                "managed,installed,runnable",
+            )
+        ]
+        parsed = [self.mod.parse_item(line) for line in self.mod.home_items()]
+        self.assertEqual(parsed[0][0], "tool")
+        self.assertEqual(parsed[0][1], "btop")
+
+    def test_media_items_read_the_automount_state(self):
+        state = self.root / "state"
+        state.mkdir()
+        mount = self.root / "media" / "USB_STICK"
+        mount.mkdir(parents=True)
+        stale = self.root / "media" / "gone"
+        stale.mkdir()
+        (state / "sda1.mountpoint").write_text(f"{mount}\n", encoding="utf-8")
+        (state / "sdb1.mountpoint").write_text(f"{stale}\n", encoding="utf-8")
+        old = os.environ.get("CPZ_AUTOMOUNT_STATE")
+        os.environ["CPZ_AUTOMOUNT_STATE"] = str(state)
+        self.addCleanup(self.restore_env, "CPZ_AUTOMOUNT_STATE", old)
+
+        self.mod.is_mounted = lambda path: path == str(mount)
+        parsed = [self.mod.parse_item(line) for line in self.mod.media_items()]
+        self.assertEqual(
+            parsed,
+            [
+                (
+                    "media",
+                    "/dev/sda1",
+                    f"Unmount USB_STICK  [media]  {mount}",
+                    str(mount),
+                    "media",
+                )
+            ],
+        )
+
+    def test_media_items_need_the_state_directory(self):
+        old = os.environ.get("CPZ_AUTOMOUNT_STATE")
+        os.environ["CPZ_AUTOMOUNT_STATE"] = str(self.root / "missing")
+        self.addCleanup(self.restore_env, "CPZ_AUTOMOUNT_STATE", old)
+        self.assertEqual(self.mod.media_items(), [])
+
+    def test_home_lists_mounted_media_first(self):
+        self.mod.managed_app_items = lambda: []
+        self.mod.media_items = lambda: [
+            self.mod.make_item(
+                "media",
+                "/dev/sda1",
+                "Unmount USB_STICK  [media]  /media/USB_STICK",
+                "/media/USB_STICK",
+                "media",
+            )
+        ]
+        parsed = [self.mod.parse_item(line) for line in self.mod.home_items()]
+        self.assertEqual(parsed[0][0], "media")
+        self.assertEqual(parsed[0][1], "/dev/sda1")
+        self.assertIn("Enter unmount", self.mod.hint_line(self.mod.home_items()[0]))
+
+    def test_hint_line_depends_on_the_selected_item(self):
+        installed = self.mod.make_item(
+            "tool", "btop", "btop  [run app]", "btop",
+            "managed,installed,runnable",
+        )
+        missing = self.mod.make_item(
+            "tool", "lazygit", "lazygit  [install app]", "",
+            "installable",
+        )
+        self.assertIn("Enter run", self.mod.hint_line(installed))
+        self.assertIn("Enter info", self.mod.hint_line(missing))
+        self.assertIn("Type to search", self.mod.hint_line(""))
+
+    def test_managed_apps_are_runnable_when_the_command_exists(self):
+        self.mod.read_managed_apps = lambda: [
+            {"slug": "btop", "name": "btop", "package": "btop", "version": "1"}
+        ]
+        self.mod.scan_apps = lambda: ["btop", "vim"]
+        parsed = [
+            self.mod.parse_item(line) for line in self.mod.managed_app_items()
+        ]
+        self.assertEqual(
+            parsed[0],
+            (
+                "tool",
+                "btop",
+                "btop  [run app]",
+                "btop",
+                "managed,installed,runnable",
+            ),
+        )
+
+    def test_managed_apps_without_a_command_stay_installed(self):
+        self.mod.read_managed_apps = lambda: [
+            {"slug": "foo", "name": "foo", "package": "foo", "version": "1"}
+        ]
+        self.mod.scan_apps = lambda: []
+        self.mod.command_from_dpkg = lambda _package, _preferred=(): ""
+        parsed = [
+            self.mod.parse_item(line) for line in self.mod.managed_app_items()
+        ]
+        self.assertEqual(
+            parsed[0],
+            ("tool", "foo", "foo  [installed]", "", "managed,installed"),
+        )
 
     def test_buffer_items_from_tmux(self):
         bindir = self.root / "bin"
@@ -98,8 +268,8 @@ class SearchItems(unittest.TestCase):
         self.addCleanup(self.restore_env, "TMUX", old_tmux)
 
         parsed = [self.mod.parse_item(line) for line in self.mod.buffer_items()]
-        self.assertIn(("buffer", "0", "$0  [buf]  git status", ""), parsed)
-        self.assertIn(("buffer", "1", "$1  [buf]  echo hi", ""), parsed)
+        self.assertIn(("buffer", "0", "$0  [buf]  git status", "", ""), parsed)
+        self.assertIn(("buffer", "1", "$1  [buf]  echo hi", "", ""), parsed)
 
     def restore_env(self, name, old):
         if old is None:
@@ -112,6 +282,15 @@ class SearchItems(unittest.TestCase):
             "schema": 1,
             "tools": [
                 {
+                    "slug": "lazygit",
+                    "name": "lazygit",
+                    "summary": "",
+                    "categories": ["git", "tui"],
+                    "command": "",
+                    "installed": False,
+                    "apt": "lazygit",
+                },
+                {
                     "slug": "tmux",
                     "name": "tmux",
                     "summary": "terminal multiplexer",
@@ -119,12 +298,12 @@ class SearchItems(unittest.TestCase):
                     "installed": True,
                 },
                 {
-                    "slug": "lazygit",
-                    "name": "lazygit",
-                    "summary": "",
-                    "categories": ["git", "tui"],
-                    "command": "",
-                    "installed": False,
+                    "slug": "btop",
+                    "name": "btop",
+                    "summary": "resource monitor",
+                    "command": "btop",
+                    "installed": True,
+                    "managed": True,
                 },
                 {
                     "slug": "bad\nslug",
@@ -137,11 +316,28 @@ class SearchItems(unittest.TestCase):
             self.mod.parse_item(line)
             for line in self.mod.parse_trove_payload(json.dumps(payload))
         ]
+        self.assertEqual(items[0][1], "btop")
         self.assertIn(
-            ("tool", "tmux", "@tmux  [run]  terminal multiplexer", "tmux"), items
+            (
+                "tool",
+                "tmux",
+                "apps tmux  [run app]  terminal multiplexer",
+                "tmux",
+                "installed,runnable",
+            ),
+            items,
         )
-        self.assertIn(("tool", "lazygit", "@lazygit  [tool]  git, tui", ""), items)
-        self.assertEqual(len(items), 2)
+        self.assertIn(
+            (
+                "tool",
+                "lazygit",
+                "apps lazygit  [install app]  git, tui",
+                "",
+                "installable",
+            ),
+            items,
+        )
+        self.assertEqual(len(items), 3)
         self.assertEqual(self.mod.parse_trove_payload("not json"), [])
 
     def test_search_roots_uses_the_override_and_existing_directories(self):
@@ -264,11 +460,15 @@ class ModeSwitch(unittest.TestCase):
         self.assertEqual(output, "")
         self.assertEqual(state, "files")
 
-        output, state = self.run_mode("default", "@btop")
-        self.assertIn("--trove", output)
-        self.assertEqual(state, "trove")
+        output, state = self.run_mode("default", "apps")
+        self.assertIn("--apps", output)
+        self.assertEqual(state, "apps")
 
-        output, state = self.run_mode("trove", "btop")
+        output, state = self.run_mode("default", "apps btop")
+        self.assertIn("--apps", output)
+        self.assertEqual(state, "apps")
+
+        output, state = self.run_mode("apps", "btop")
         self.assertIn("--default", output)
         self.assertEqual(state, "default")
 
@@ -303,7 +503,12 @@ class Dispatch(unittest.TestCase):
             self.mod.dispatch("tool", "tmux", "", "/tmp", "tmux")
         launch.assert_called_once_with(["tmux"], "/tmp")
 
-    def test_uninstalled_tool_opens_the_catalog_details(self):
+    def test_installable_tool_opens_the_catalog_details(self):
+        with mock.patch.object(self.mod, "open_settings") as open_settings:
+            self.mod.dispatch("tool", "lazygit", "", "/tmp", "")
+        open_settings.assert_called_once_with("--tool", "lazygit")
+
+    def test_installed_tool_without_command_opens_the_catalog_details(self):
         with mock.patch.object(self.mod, "open_settings") as open_settings:
             self.mod.dispatch("tool", "lazygit", "", "/tmp", "")
         open_settings.assert_called_once_with("--tool", "lazygit")
@@ -322,6 +527,44 @@ class Dispatch(unittest.TestCase):
         with mock.patch.object(self.mod, "paste_buffer") as paste:
             self.mod.dispatch("buffer", "0", "", "/tmp")
         paste.assert_called_once_with("0")
+
+    def test_media_enter_unmounts(self):
+        with mock.patch.object(self.mod, "unmount_media") as unmount:
+            self.mod.dispatch("media", "/dev/sda1", "", "/tmp", "/media/USB")
+        unmount.assert_called_once_with("/dev/sda1", "/media/USB")
+
+
+class MediaUnmount(unittest.TestCase):
+    def setUp(self):
+        self.mod = load_script("cpz_search_media", SEARCH)
+
+    def test_uses_sudo_and_the_automount_helper(self):
+        completed = subprocess.CompletedProcess([], 0)
+        with mock.patch.object(
+            self.mod.shutil, "which", return_value="/usr/bin/sudo"
+        ), mock.patch.object(
+            self.mod, "helper", return_value="/usr/local/bin/cpz-automount"
+        ), mock.patch.object(
+            self.mod.subprocess, "run", return_value=completed
+        ) as run, mock.patch.object(self.mod, "notify") as notify:
+            self.mod.unmount_media("/dev/sda1", "/media/USB")
+        run.assert_called_once_with(
+            ["/usr/bin/sudo", "/usr/local/bin/cpz-automount", "umount", "/dev/sda1"],
+            check=False,
+        )
+        notify.assert_called_once_with("Unmounted USB")
+
+    def test_failure_is_reported(self):
+        completed = subprocess.CompletedProcess([], 1)
+        with mock.patch.object(
+            self.mod.shutil, "which", return_value="/usr/bin/sudo"
+        ), mock.patch.object(
+            self.mod, "helper", return_value="/usr/local/bin/cpz-automount"
+        ), mock.patch.object(
+            self.mod.subprocess, "run", return_value=completed
+        ), mock.patch.object(self.mod, "notify") as notify:
+            self.mod.unmount_media("/dev/sda1", "/media/USB")
+        notify.assert_called_once_with("cpz-search: cannot unmount USB")
 
 
 class SettingsDeepLink(unittest.TestCase):
@@ -344,7 +587,7 @@ class SettingsDeepLink(unittest.TestCase):
         pages = dict(
             line.split("\t", 1) for line in result.stdout.splitlines() if "\t" in line
         )
-        self.assertEqual(pages.get("network"), "Network")
+        self.assertEqual(pages.get("network"), "Connections")
         self.assertEqual(pages.get("main"), "Settings")
 
     def test_unknown_page_is_rejected_before_the_tty_check(self):
@@ -384,6 +627,36 @@ class OpenSettings(unittest.TestCase):
         ) as exec_settings:
             self.mod.open_settings("--page", "network")
         exec_settings.assert_called_once_with("--page", "network")
+
+
+class PopupChrome(unittest.TestCase):
+    """The tmux popup draws the frame, so fzf must not draw a second one.
+
+    A nested fzf border plus its separator showed up as extra ASCII lines in
+    the middle of the Search window and ate four rows and columns of results.
+    """
+
+    def setUp(self):
+        self.mod = load_script("cpz_search_chrome", SEARCH)
+        self.arguments = self.mod.fzf_args("/tmp/cpz-search")
+
+    def test_fzf_draws_no_second_frame(self):
+        self.assertIn("--no-border", self.arguments)
+        self.assertIn("--no-separator", self.arguments)
+        borders = [
+            argument
+            for argument in self.arguments
+            if argument.startswith("--border")
+        ]
+        self.assertEqual(borders, [])
+
+    def test_footer_preview_stays_chromeless(self):
+        preview = next(
+            argument
+            for argument in self.arguments
+            if argument.startswith("--preview-window=")
+        )
+        self.assertIn("border-none", preview)
 
 
 class SettingsRequests(unittest.TestCase):

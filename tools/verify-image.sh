@@ -278,17 +278,19 @@ for file in usr/local/bin/cpz-first-login \
     usr/local/bin/cpz-kmscon usr/local/bin/cpz-kmscon-config \
     usr/local/bin/cpz-kmscon-output usr/local/bin/cpz-login \
     usr/local/bin/cpz-hint usr/local/bin/cpz-help \
-    usr/local/bin/cpz-search usr/bin/fzf \
+    usr/local/bin/cpz-keys usr/local/bin/cpz-search usr/bin/fzf \
     usr/local/bin/cpz-session-save usr/local/bin/cpz-session-restore \
-    usr/local/bin/cpz-tab-info usr/local/bin/cpz-tab-close-key \
+    usr/local/bin/cpz-tab-close-key \
     usr/local/bin/cpz-tab-mount \
     usr/local/bin/cpz-session-save-as-user usr/local/bin/cpz-conn-status \
     usr/local/bin/cpz-brightness usr/local/bin/cpz-font \
+    usr/local/bin/cpz-volume \
     usr/local/bin/cpz-keyboard-layout \
     usr/local/bin/cpz-layout-map \
     usr/local/share/cpz/xkb/cpz.template \
     usr/local/bin/cpz-layout-next usr/local/bin/cpz-display-toggle \
     usr/local/bin/cpz-automount \
+    usr/local/bin/cpz-battery \
     usr/bin/kmscon \
     etc/kmscon/kmscon.conf \
     etc/systemd/system/kmsconvt@.service.d/10-cpz.conf \
@@ -298,6 +300,8 @@ for file in usr/local/bin/cpz-first-login \
     etc/udev/rules.d/99-cpz-kmscon-nudge.rules \
     etc/udev/rules.d/99-cpz-automount.rules \
     etc/systemd/system/cpz-automount@.service \
+    etc/systemd/system/cpz-battery-guard.service \
+    etc/cpz/battery.conf \
     etc/systemd/system/cpz-keyboard-layout.service \
     etc/systemd/system/cpz-keyboard-layout.path \
     etc/systemd/system/cardputerzero-keymap.service \
@@ -416,10 +420,22 @@ else
     fail "tmux: window-size largest MISSING"
 fi
 
-if debugfs -R "cat etc/tmux.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-search"; then
-    pass "tmux: Alt+O omnisearch binding"
+if debugfs -R "cat etc/tmux.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-keys write"; then
+    pass "tmux: generated shortcut bindings"
 else
-    fail "tmux: Alt+O omnisearch binding MISSING"
+    fail "tmux: cpz-keys source line MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-keys" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-search"; then
+    pass "cpz-keys: Search action present"
+else
+    fail "cpz-keys: Search action MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "rebind_action"; then
+    pass "cpz-settings: Keyboard > Shortcuts present"
+else
+    fail "cpz-settings: shortcut rebinding MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-search" "$TMPDIR/root.ext4" 2>/dev/null | grep -q -- "--with-nth=3"; then
@@ -438,6 +454,12 @@ if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null |
     pass "cpz-settings: cpz-search tool list present"
 else
     fail "cpz-settings: cpz-search tool list MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q -- "--install-tool"; then
+    pass "cpz-settings: Search install entry point present"
+else
+    fail "cpz-settings: Search install entry point MISSING"
 fi
 
 if debugfs -R "stat etc/systemd/system/tmp.mount" "$TMPDIR/root.ext4" 2>/dev/null | grep -q 'Fast link dest:.*/dev/null'; then
@@ -505,6 +527,12 @@ if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4
     pass "cpz-bt-agent enabled"
 else
     fail "cpz-bt-agent NOT enabled"
+fi
+
+if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-battery-guard"; then
+    pass "cpz-battery-guard enabled"
+else
+    fail "cpz-battery-guard NOT enabled"
 fi
 
 FIRST_USER_NAME=$(debugfs -R "cat etc/passwd" "$TMPDIR/root.ext4" 2>/dev/null |
@@ -776,20 +804,6 @@ else
     fail "cpz-status language layout fallback MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-tab-info" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -qF 'set-option -t "$session"'; then
-    pass "status bar tab counters update the session"
-else
-    fail "status bar tab counter session target MISSING"
-fi
-
-if debugfs -R "cat usr/local/bin/cpz-tab-info" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -qF 'set-option -t "=$session"'; then
-    fail "tab counter uses the tmux 3.5-invalid =session target"
-else
-    pass "tab counter avoids the tmux 3.5-invalid =session target"
-fi
-
 if debugfs -R "cat usr/local/bin/cpz-session-save" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -qF 'display-message -p -t "$id"'; then
     pass "session save queries window fields without tab delimiters"
@@ -797,10 +811,11 @@ else
     fail "session save tab-delimited fields MISSING"
 fi
 
-if debugfs -R "cat etc/tmux.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "M-Space"; then
-    pass "tmux: Alt+Space switches layout"
+if debugfs -R "cat usr/local/bin/cpz-keys" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "cpz-layout-next"; then
+    pass "cpz-keys: Alt+Space switches layout"
 else
-    fail "tmux: layout switch binding MISSING"
+    fail "cpz-keys: layout switch action MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-session-save" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "session.tsv"; then
@@ -905,7 +920,7 @@ else
     fail "persistent font zoom helper MISSING"
 fi
 
-if debugfs -R "cat etc/tmux.conf" "$TMPDIR/root.ext4" 2>/dev/null |
+if debugfs -R "cat usr/local/bin/cpz-keys" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "cpz-font up"; then
     pass "font zoom key bindings configured"
 else
@@ -920,8 +935,10 @@ else
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-help" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "larger / smaller font"; then
-    pass "help lists font size shortcuts"
+    grep -q "cpz-keys help" &&
+    debugfs -R "cat usr/local/bin/cpz-keys" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "Font Bigger"; then
+    pass "help lists the registry shortcuts (font size)"
 else
     fail "help font size shortcuts MISSING"
 fi

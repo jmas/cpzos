@@ -35,4 +35,16 @@ case "$tty_name" in
 		;;
 esac
 
+# A flat pack cannot survive the load of starting the session: the voltage
+# collapses and the board resets. Show the warning on this pty and power off
+# before login(1) starts anything.
+if [ -x /usr/local/bin/cpz-battery ] &&
+	! /usr/local/bin/cpz-battery boot; then
+	# kmsconvt@.service uses Restart=always. Keep this child alive while
+	# systemd powers off instead of relaunching the check every second.
+	while :; do
+		sleep 60
+	done
+fi
+
 exec /bin/login -f "$user"

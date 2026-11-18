@@ -140,8 +140,8 @@ if [ "$show_volume" = "1" ] && command -v wpctl >/dev/null 2>&1; then
 	[ -n "$vol" ] && out="${out}${out:+ }${vol}"
 fi
 
-# Panel brightness as B plus a level from B0 to B10. Prefer the live sysfs
-# value so the token follows the actual backlight and shows B0 when the panel
+# Panel brightness as L plus a level from L0 to L10. Prefer the live sysfs
+# value so the token follows the actual backlight and shows L0 when the panel
 # is off; fall back to the saved setting when no backlight is readable.
 if [ "$show_brightness" = "1" ]; then
 	percent=
@@ -169,7 +169,7 @@ if [ "$show_brightness" = "1" ]; then
 	[ "$percent" -le 100 ] || percent=100
 	level=$(( (percent + 5) / 10 ))
 	[ "$level" -le 10 ] || level=10
-	out="${out}${out:+ }B${level}"
+	out="${out}${out:+ }L${level}"
 fi
 
 if [ "$show_battery" = "1" ]; then
@@ -208,17 +208,18 @@ fi
 
 conn=""
 if [ "$show_conn" = "1" ]; then
-	# cpz-conn-status caches one "E/E+ W/W+ B/B+" string. Filter it here so
-	# each indicator can be shown or hidden on its own (Ethernet is off by
-	# default; the cached file is shared by every user).
+	# cpz-conn-status caches one "E/E+ W/W+ B/B+" string. Only the connected
+	# forms become tokens, so an idle adapter does not look like a warning.
+	# Filter here so each indicator can be shown or hidden on its own.
 	cached=$(head -n 1 "${CPZ_CONN_FILE:-/run/cpz-conn}" 2>/dev/null || true)
 	for token in $cached; do
 		case "$token" in
-			E*) [ "$show_eth" = "1" ] || continue ;;
-			W*) [ "$show_wifi" = "1" ] || continue ;;
-			B*) [ "$show_bt" = "1" ] || continue ;;
+			E+) [ "$show_eth" = "1" ] || continue; label=Eth ;;
+			W+) [ "$show_wifi" = "1" ] || continue; label=Wi ;;
+			B+) [ "$show_bt" = "1" ] || continue; label=Bt ;;
+			*) continue ;;
 		esac
-		conn="${conn}${conn:+ }${token}"
+		conn="${conn}${conn:+ }${label}"
 	done
 fi
 [ -n "$conn" ] && out="${out}${out:+ }${conn}"

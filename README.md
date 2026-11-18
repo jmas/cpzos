@@ -19,19 +19,22 @@ There is no desktop, launcher, NOOBS, cloud-init, Mathematica, or desktop/full
 image stage. Those paths were removed so the build is shorter and the boot
 surface is limited to the CPZ terminal session.
 
-kmscon owns tty1 and starts tmux with a top status bar (`current / total`
-working tabs, language layout, optional volume/brightness, battery, clock),
-window 1 as the shell and the last window as the `cpz-settings` TUI. The tab
-counter includes Settings; closing a tab (Alt+W) keeps Settings and the last
-terminal tab open, so a shell is always available. Text is rendered by
-kmscon from the Terminus OTB font; the panel uses a 12px cell (53x14) by
-default. Settings → Display & Brightness → Font Size selects any size from
-10 to 64 px, the same range as `Alt+Plus` / `Alt+Minus` (Sym+T / Sym+R on the
-internal keyboard), and the choice is persisted across restarts. kmscon keeps
-the panel grid and scales the font up on HDMI, so the same layout fits both
-screens. Daily tmux actions are direct two-key `Alt+letter` bindings
-(`Alt+V` / `Alt+B` split, `Alt+N` / `Alt+P` switch pane, `Alt+Z` zoom and so
-on), so no tmux prefix is needed on the small CPZ keyboard.
+kmscon owns tty1 and starts tmux with a top status bar (numbered tabs,
+connected network tokens, input layout, optional volume/brightness, battery and
+clock), window 1 as the shell and the last window as the `cpz-settings` TUI.
+Closing a tab (Alt+W) keeps Settings and the last terminal tab open, so a shell
+is always available. Text is rendered by kmscon from the Terminus OTB font; the
+panel uses a 12px cell (53x14) by default. Settings → Display → Text Size
+selects any size from 10 to 64 px, the same range as `Alt+G` / `Alt+M`, and the
+choice is persisted across restarts. kmscon keeps the panel grid and scales the
+font up on HDMI, so the same layout fits both screens. Daily tmux actions are
+direct two-key `Alt+letter` bindings (`Alt+V` / `Alt+B` split, `Alt+N` /
+`Alt+P` switch pane, `Alt+Z` zoom and so on), so no tmux prefix is needed on
+the small CPZ keyboard. Volume is `Alt+U` / `Alt+I` and mute is `Alt+0` (5%
+steps through the same `wpctl` sink as Settings → Sound). Every binding can be
+reassigned in Settings → Keyboard → Shortcuts; see
+[docs/CPZ-KEYS.md](docs/CPZ-KEYS.md) for the complete default list and the
+shortcut rules.
 
 Settings confirms destructive actions and reports results in a centred modal.
 Successful results fade after a moment; errors stay until `Enter`/`Esc`.
@@ -40,7 +43,8 @@ already blocking.
 
 Themes are switchable from Settings: Campbell (default), Homebrew, Ocean, Red
 Sands, Terminal Basic, Man Page, Novel and PaperColor Light, plus Mono and
-Light High Contrast for accessibility.
+Light High Contrast for accessibility. The rules for labels, navigation and
+new UI patterns are in [docs/CPZ-UI.md](docs/CPZ-UI.md).
 
 There is exactly one working output at a time. kmscon uses
 `multi-monitor=largest`: the session is drawn on HDMI and the panel screen is
@@ -64,6 +68,16 @@ The hardware stage still supports the CM0 panel, keyboard, audio, battery,
 backlight, WiFi/Bluetooth and boot splash. The terminal session replaces the
 old APPLaunch/desktop UI. See [docs/CPZ-KMSCON.md](docs/CPZ-KMSCON.md) for the
 boot path, output policy and recovery/debug image details.
+
+On battery, `cpz-battery-guard.service` polls the BQ27220 fuel gauge. It shows
+a low-battery notice at 20% and powers off cleanly at 10% (or at 3.35 V if the
+pack collapses earlier); running the pack down to the gauge's 3.15 V hardware
+cutoff makes the voltage sag under load and the board resets, which looks like
+an unexpected reboot. `cpz-login` also checks the gauge before starting the
+session: if the pack is too low, it prints the charge and a countdown on the
+panel and powers off unless the charger is connected. The thresholds live in
+`/etc/cpz/battery.conf`; `cpz-battery status` and `cpz-battery check` show the
+current state.
 
 USB hard disks, sticks and card readers are mounted automatically when they are
 plugged in, appear under `/media/<label>` in a new tab, and are ready to use
@@ -244,35 +258,51 @@ the manager. The catalog's Debian/Ubuntu command is preferred; if Terminal
 Trove does not publish one, the tool slug/name is checked in apt. When no apt
 package exists, the screen shows the published install instructions and marks
 the tool as not managed. Those commands are never executed automatically.
-Tracked apps are listed in the Installed tab and can be removed with one
-confirmation; the manager records its state in
+Tracked apps are listed in the Installed tab and can be run with `e` or
+removed with one confirmation; the manager records its state in
 `~/.local/state/cpz/trove-apps.json`.
 
 ## Search
 
-`Alt+O` opens the CPZ omnisearch in a tmux popup. It opens like Spotlight on a
-short list of common CPZ actions; typing anything loads the searchable
-providers:
+`Alt+O` opens CPZ Search in a short tmux popup. It starts with the mounted USB
+drives, the apps installed through Applications, one row per Settings page and
+the daily CPZ actions with their current (possibly rebound) keys; typing
+anything loads the searchable providers:
 
 | Input | Provider |
 | --- | --- |
-| no prefix | PATH commands, common CPZ actions and every Settings page |
+| no prefix | mounted media, installed apps, Settings pages, CPZ actions, catalog apps and PATH commands |
 | `/` | files under `$HOME`, `/etc`, `/usr/local`, `/opt`, `/srv`, `/media` and `/mnt` |
 | `=` | calculator |
-| `@` | Terminal Trove tools (installed tools run, others open Applications details) |
+| `apps` | Terminal Trove apps (installed apps first, the rest show `[install app]`) |
 | `$` | tmux paste buffers, searchable by name or content preview |
 
-`Enter` acts on the highlighted row, including the first row before anything is
-typed. It launches a command in a new tab, opens a file in `vim` (or `lf` for a
-directory), opens the selected Settings page in the Settings tab, runs an
-installed Terminal Trove tool or opens its Applications details, and pastes a
-tmux buffer. `Ctrl+Y` copies the selected path/command/result to the tmux
-buffer, so `Alt+Y` pastes it; `Ctrl+O` opens the containing directory in `lf`
-(or the Trove details for a tool). Settings targets are queued for the running
-Settings tab instead of starting a second TUI inside the popup, so the popup
-closes immediately and `q` behaves like normal Settings.
+The result list uses one state tag per app: `[run app]` (installed),
+`[install app]` (missing, apt-backed), `[installed]` (installed but no
+runnable command) and `[info]` (missing without an apt package). `[run app]`
+rows launch with `Enter`; every other app row opens its Applications details
+page in the Settings tab, so the description, the install instructions and the
+apt package are visible before anything changes. On that page `i` installs
+through the same apt policy as Applications, `e` runs the app and `d` removes
+a managed install. Apps installed through the manager are listed first and
+stay runnable from Search after installation. The footer shows the keys that
+apply to the highlighted row, and the match counter sits on the right of the
+prompt line.
 
-The `@` provider uses the local Terminal Trove snapshot that Applications
+`Enter` acts on the highlighted row, including the first row before anything is
+typed. It launches an installed app or command in a new tab, opens a
+non-runnable app's Applications details page in the Settings tab, opens a file
+in `vim` (or `lf` for a directory), opens the selected Settings page, pastes a
+tmux buffer, and unmounts a mounted USB drive after the `sudo` prompt. `Ctrl+Y`
+copies the selected path/command/result to the tmux buffer, so `Alt+Y` pastes
+it; `Ctrl+O` opens the containing directory in
+`lf` (or the Applications details for an app). Settings targets are queued for
+the running Settings tab instead of starting a second TUI inside the popup, so
+the popup closes immediately and `q` behaves like normal Settings. A target
+that names one app opens that app's page directly, so Search never drops you on
+the catalog list and leaves you to find the app again.
+
+The `apps` provider uses the local Terminal Trove snapshot that Applications
 already maintains; the search itself never fetches from the network. The `$`
 provider reads the same tmux buffers as `Alt+Y`, so older buffers can be
 selected and pasted without leaving the keyboard.
@@ -299,7 +329,7 @@ tools/verify-stage.sh        host-side structural checks (no root)
 tools/verify-image.sh        full image content checks (Linux, root)
 tests/                       unit tests and linter entry points
 .github/workflows/           build/publish, CI and os-list workflows
-docs/                        CPZ boot path, M5 Imager and Applications notes
+docs/                        UI rules, boot path, M5 Imager and Applications notes
 ```
 
 ## Verify before flashing

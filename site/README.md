@@ -1,7 +1,7 @@
 # CPZ site
 
-Static site for the CPZ image: why CPZ, install and first-boot steps, key
-reference, Settings and help. It is published with GitHub Pages by
+Static site for the CPZ image: why CPZ, install and first-boot steps, keys,
+Settings and help. It is published with GitHub Pages by
 `.github/workflows/pages.yml`; there is no build step.
 
 ## Preview
@@ -35,11 +35,15 @@ it before deploying.
 
 ## Release version
 
-The site does not print a version number. The hero, install section and footer
-link to GitHub Releases (`releases/latest` and the full list), so the page
-cannot drift from `VERSION`.
+The site does not print a version number. The hero, navigation and install section link
+to GitHub Releases (`releases/latest` and the full list), so the page cannot
+drift from `VERSION`.
 
 ## Design rules
+
+The canonical product-wide rules live in
+[`docs/CPZ-UI.md`](../docs/CPZ-UI.md). The site-specific rules below are a
+short version of that document.
 
 - Plain HTML, CSS and a small script. No frameworks, fonts or trackers.
 - English text lives in the HTML so the page is readable without JavaScript.
@@ -48,7 +52,7 @@ cannot drift from `VERSION`.
 - Write for someone who has never used Linux. Explain or drop jargon such as
   `kmscon`, `tmux`, `TUI`, `apt` and `PipeWire`; keep it in the documentation.
 - In translations, translate the site chrome and descriptions but keep
-  on-device menu names in English (`Settings`, `Network`, `Power`, ...), so they
+  on-device menu names in English (`Settings`, `Connections`, `Power`, ...), so they
   match what the device shows.
 - Keep the first-boot facts in sync with `config.cpz.example`: default login
-  `cpz` / `cpz` and Wi-Fi off until it is enabled in Settings.
+  `cpz` / `cpz` and Wi-Fi off until it is enabled in Settings → Connections.
