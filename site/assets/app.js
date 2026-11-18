@@ -45,6 +45,11 @@
       var text = data[el.getAttribute("data-i18n")];
       if (typeof text === "string") el.textContent = text;
     });
+
+    document.querySelectorAll("[data-i18n-aria-label]").forEach(function (el) {
+      var text = data[el.getAttribute("data-i18n-aria-label")];
+      if (typeof text === "string") el.setAttribute("aria-label", text);
+    });
   }
 
   function setUrl(lang) {

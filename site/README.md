@@ -29,9 +29,9 @@ To add a language:
 3. Add the code to the `supported` array in `assets/app.js`.
 4. Run `python3 site/check.py` from the repository root.
 
-`check.py` rejects missing or extra keys, empty values, placeholder changes and
-keys referenced from the HTML that do not exist. CI and the Pages workflow run
-it before deploying.
+`check.py` rejects missing or extra keys, empty values, placeholder or
+`aria-label` changes and keys referenced from the HTML that do not exist. CI
+and the Pages workflow run it before deploying.
 
 ## Release version
 

@@ -49,6 +49,7 @@ class PageParser(HTMLParser):
         self.stack: list[dict[str, Any] | None] = []
         self.entries: list[dict[str, Any]] = []
         self.placeholders: list[tuple[str, str, int]] = []
+        self.aria_labels: list[tuple[str, str, int]] = []
         self.title: list[str] = []
         self.description = ""
         self._in_title = 0
@@ -70,6 +71,14 @@ class PageParser(HTMLParser):
                 (
                     values["data-i18n-placeholder"] or "",
                     values.get("placeholder") or "",
+                    self.getpos()[0],
+                )
+            )
+        if "data-i18n-aria-label" in values:
+            self.aria_labels.append(
+                (
+                    values["data-i18n-aria-label"] or "",
+                    values.get("aria-label") or "",
                     self.getpos()[0],
                 )
             )
@@ -143,7 +152,7 @@ def main() -> int:
                 fail(f"{path.name}: placeholder mismatch in {key!r}")
 
     html = HTML.read_text(encoding="utf-8")
-    used = set(re.findall(r'data-i18n(?:-placeholder)?="([^"]+)"', html))
+    used = set(re.findall(r'data-i18n(?:-placeholder|-aria-label)?="([^"]+)"', html))
     unknown = used - set(en) - DYNAMIC_KEYS
     for key in sorted(unknown):
         fail(f"index.html: unknown i18n key {key!r}")
@@ -174,6 +183,13 @@ def main() -> int:
         if expected is not None and normalize(value) != expected:
             fail(
                 f"index.html:{line}: placeholder for {key!r} "
+                "does not match en.json"
+            )
+    for key, value, line in page.aria_labels:
+        expected = en.get(key)
+        if expected is not None and normalize(value) != expected:
+            fail(
+                f"index.html:{line}: aria-label for {key!r} "
                 "does not match en.json"
             )
 

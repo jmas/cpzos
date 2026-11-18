@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CPZ — CardputerZero OS</title>
-<meta name="description" content="CPZ is a terminal-first Linux for the CardputerZero handheld. It starts in a text terminal, keeps your tabs open, and manages Wi-Fi, Bluetooth, sound and power from one Settings menu.">
+<meta name="description" content="CPZ is a Linux for the CardputerZero handheld that boots into a text terminal. It keeps your tabs open and manages Wi-Fi, Bluetooth, sound and power from a single Settings menu.">
 <meta name="color-scheme" content="dark light">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%230c0c0c'/%3E%3Ctext x='32' y='42' font-family='monospace' font-size='26' fill='%239ece6a' text-anchor='middle'%3ECPZ%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="assets/site.css">
@@ -15,7 +15,7 @@
 <header class="top">
   <div class="top-inner">
     <a class="brand" href="#top"><span class="brand-mark">CPZ</span><span class="brand-sub">CardputerZero OS</span></a>
-    <nav class="sections" aria-label="Sections">
+    <nav class="sections" aria-label="Sections" data-i18n-aria-label="nav.sections">
       <a href="#install" data-i18n="nav.install">Install</a>
       <a href="#keys" data-i18n="nav.keys">Keys</a>
       <a href="#settings" data-i18n="nav.settings">Settings</a>
@@ -46,7 +46,7 @@
 <section class="hero" id="top">
   <p class="kicker" data-i18n="hero.kicker">CardputerZero · Debian 13</p>
   <h1>CPZ</h1>
-  <p class="lead" data-i18n="hero.lead">A Linux for the CardputerZero handheld that starts in a text terminal instead of a desktop. Open tabs, split the screen, connect Wi-Fi and change settings — all from the keyboard.</p>
+  <p class="lead" data-i18n="hero.lead">A Linux for the CardputerZero handheld that boots into a text terminal instead of a desktop. Open tabs, split the screen, join Wi-Fi and change settings — all from the keyboard.</p>
   <div class="actions">
     <a class="button" href="https://github.com/jmas/cpzos/releases/latest" data-i18n="hero.cta.download">Download image</a>
     <a class="button ghost" href="#install" data-i18n="nav.install">Install</a>
@@ -60,9 +60,9 @@
     </div>
   </div>
   <ol class="principles">
-    <li><h3 data-i18n="w1.t">Fast and light in a terminal</h3><p data-i18n="w1.d">CPZ starts straight into a terminal. It boots quickly, uses little memory and runs a large catalog of text apps that fit the small screen.</p></li>
-    <li><h3 data-i18n="w2.t">Fits small and large screens</h3><p data-i18n="w2.d">Use the built-in panel or connect an HDMI monitor. Text and layout scale to either screen, and your session keeps running while you switch.</p></li>
-    <li><h3 data-i18n="w3.t">Simple to set up and use</h3><p data-i18n="w3.d">Settings, search and the app catalog share one keyboard-driven interface. No config files, extra tools or desktop to learn.</p></li>
+    <li><h3 data-i18n="w1.t">Fast and light in a terminal</h3><p data-i18n="w1.d">CPZ starts straight into a terminal. It boots quickly, uses little memory and comes with a wide choice of text apps that fit the small screen.</p></li>
+    <li><h3 data-i18n="w2.t">Fits small and large screens</h3><p data-i18n="w2.d">Use the built-in screen or connect an HDMI monitor. Text and layout adapt to either one, and your session keeps running while you switch.</p></li>
+    <li><h3 data-i18n="w3.t">Simple to set up and use</h3><p data-i18n="w3.d">Settings, search and the app catalog all work from one keyboard-driven interface. No config files, extra tools or desktop to learn.</p></li>
   </ol>
 </section>
 
@@ -76,11 +76,11 @@
   <div class="install-grid">
     <ol class="steps">
       <li data-i18n="install.s1">Download the .img.xz file from Releases.</li>
-      <li data-i18n="install.s2">Write it to a microSD card with Raspberry Pi Imager, balenaEtcher, dd or M5 Imager. Writing erases the card.</li>
+      <li data-i18n="install.s2">Write it to a microSD card with Raspberry Pi Imager, balenaEtcher, dd or M5 Imager. Writing erases the whole card.</li>
       <li data-i18n="install.s3">Insert the card and power on. The first boot takes a little longer than later boots.</li>
     </ol>
     <aside class="download">
-      <p data-i18n="install.note">The release page lists the SHA-256; check it before writing.</p>
+      <p data-i18n="install.note">The release page lists a SHA-256 checksum; check it before writing.</p>
       <div class="actions">
         <a class="button" href="https://github.com/jmas/cpzos/releases/latest" data-i18n="install.latest">Latest release</a>
         <a class="button ghost" href="https://github.com/jmas/cpzos/releases" data-i18n="install.all">All releases</a>
@@ -91,8 +91,8 @@
       <ul>
         <li data-i18n="install.after.login">Log in as cpz / cpz, then set a new password in Settings → System.</li>
         <li data-i18n="install.after.wifi">Turn on Wi-Fi in Settings → Connections. It is off by default.</li>
-        <li data-i18n="install.after.power">Power off from Settings → Power. Do not pull the power.</li>
-        <li data-i18n="install.after.usb">Plug in a USB drive; it opens in a new tab under /media.</li>
+        <li data-i18n="install.after.power">Power off from Settings → Power. Don't just unplug the device.</li>
+        <li data-i18n="install.after.usb">Plug in a USB drive and it opens in a new tab under /media.</li>
       </ul>
     </article>
   </div>
@@ -102,7 +102,7 @@
   <div class="section-head">
     <div>
       <h2 data-i18n="keys.title">Keys</h2>
-      <p class="intro" data-i18n="keys.intro">Hold Alt and press the key. This is the short list; Alt+H on the device shows every binding, including copy, paste and tab selection. Every shortcut can be reassigned in Settings → Keyboard → Shortcuts.</p>
+      <p class="intro" data-i18n="keys.intro">Hold Alt and press a key. This is the short list; Alt+H on the device shows every binding, including copy, paste and tab selection. Any shortcut can be reassigned in Settings → Keyboard → Shortcuts.</p>
     </div>
   </div>
   <article class="panel keys-panel">
@@ -122,7 +122,7 @@
         <tr><td class="combo"><kbd>Alt</kbd>+<kbd>G</kbd> / <kbd>M</kbd></td><td data-i18n="k.session.font">Make the text bigger / smaller (saved in Settings)</td></tr>
         <tr><td class="combo"><kbd>Alt</kbd>+<kbd>U</kbd> / <kbd>I</kbd></td><td data-i18n="k.session.volume">Raise / lower the output volume</td></tr>
         <tr><td class="combo"><kbd>Alt</kbd>+<kbd>0</kbd></td><td data-i18n="k.session.mute">Mute or unmute the output</td></tr>
-        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>Q</kbd></td><td data-i18n="k.session.detach">Hide the session; log in again to return</td></tr>
+        <tr><td class="combo"><kbd>Alt</kbd>+<kbd>Q</kbd></td><td data-i18n="k.session.detach">Detach the session; log back in to return to it</td></tr>
       </tbody>
     </table>
   </article>
@@ -139,14 +139,14 @@
     <table class="grid">
       <thead><tr><th data-i18n="settings.h.page">Section</th><th data-i18n="settings.h.controls">What you can do</th></tr></thead>
       <tbody>
-        <tr><td><code>Connections</code></td><td data-i18n="settings.network">Join Wi-Fi, pair Bluetooth devices, check Ethernet and manage VPNs and addresses</td></tr>
-        <tr><td><code>Display</code></td><td data-i18n="settings.display">Theme, brightness, screen timeout, text size, status bar and display output</td></tr>
-        <tr><td><code>Sound</code></td><td data-i18n="settings.sound">Volume, mute, input and output device</td></tr>
+        <tr><td><code>Connections</code></td><td data-i18n="settings.network">Join Wi-Fi, pair Bluetooth devices, check Ethernet and manage VPNs and IP addresses</td></tr>
+        <tr><td><code>Display</code></td><td data-i18n="settings.display">Theme, brightness, screen timeout, text size, status bar and screen output</td></tr>
+        <tr><td><code>Sound</code></td><td data-i18n="settings.sound">Volume, mute, input and output devices</td></tr>
         <tr><td><code>Keyboard</code></td><td data-i18n="settings.keyboard">Keyboard mapping, layouts, shortcut rebinding and the key list</td></tr>
         <tr><td><code>Date &amp; Time</code></td><td data-i18n="settings.datetime">Date, time, time zone and automatic clock sync</td></tr>
-        <tr><td><code>Power</code></td><td data-i18n="settings.power">Battery status, restart, shut down and suspend</td></tr>
+        <tr><td><code>Power</code></td><td data-i18n="settings.power">Battery status, restart, power off and suspend</td></tr>
         <tr><td><code>Applications</code></td><td data-i18n="settings.apps">Browse, install and remove terminal apps</td></tr>
-        <tr><td><code>System</code></td><td data-i18n="settings.system">About, system monitor, diagnostics, password, remote access (SSH) and reset</td></tr>
+        <tr><td><code>System</code></td><td data-i18n="settings.system">About, System Monitor, Diagnostics, password, remote access (SSH) and reset</td></tr>
       </tbody>
     </table>
   </div>
@@ -156,7 +156,7 @@
   <div class="section-head">
     <div>
       <h2 data-i18n="help.title">Help</h2>
-      <p class="intro" data-i18n="help.intro">Most answers are one shortcut away on the device: Alt+H for keys, Alt+O for search and Alt+S for Settings.</p>
+      <p class="intro" data-i18n="help.intro">The device answers most questions with one shortcut: Alt+H for keys, Alt+O for search and Alt+S for Settings.</p>
     </div>
   </div>
   <div class="download help">
