@@ -901,7 +901,7 @@ contains tools/release.sh 'refs/tags/$tag'
 contains tools/release.sh 'git commit -m "chore(release): $tag"'
 contains tools/release.sh 'title="CardputerZero CPZ $tag"'
 contains tools/release.sh '--publish'
-contains tools/release.sh 'gh release create "$tag" --verify-tag'
+contains tools/release.sh 'gh release create "$tag" --repo "$repo_slug" --verify-tag'
 have .github/workflows/build.yml
 contains .github/workflows/build.yml 'types: [published]'
 not_contains .github/workflows/build.yml 'push:

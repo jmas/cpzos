@@ -279,11 +279,11 @@ if [ "$push" = 1 ]; then
 			channel_flag=--latest
 		fi
 		printf 'Publishing GitHub Release "%s"...\n' "$title"
-		if ! gh release create "$tag" --verify-tag \
+		if ! gh release create "$tag" --repo "$repo_slug" --verify-tag \
 			--title "$title" --notes-file "$notes_file" "$channel_flag"; then
-			die "the tag is pushed but the release was not published; retry with: gh release create $tag --title '$title' --notes-file $notes_file $channel_flag"
+			die "the tag is pushed but the release was not published; retry with: gh release create $tag --repo $repo_slug --title '$title' --notes-file $notes_file $channel_flag"
 		fi
-		release_url=$(gh release view "$tag" --json url --jq .url)
+		release_url=$(gh release view "$tag" --repo "$repo_slug" --json url --jq .url)
 		printf 'Published: %s\n' "$release_url"
 		printf 'The image build has started.\n'
 	else
