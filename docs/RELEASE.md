@@ -109,12 +109,15 @@ hand-upload release images:
 | build metadata | `build-info.json` |
 | optional | `cardputerzero-trixie-arm64-vX.Y.Z.sbom[.xz]`, `...bmap` |
 
-The image is also copied to
-`oss://cardputer-zero-repo/cardputerzero-trixie-arm64-vX.Y.Z.img.xz`. Stable
-releases additionally refresh the moving alias
-`cardputerzero-trixie-arm64-stable.img.xz`; prereleases never touch it.
+The GitHub Release is the canonical download and MUST contain the assets
+above. If `OSS_ACCESS_KEY_ID` and `OSS_ACCESS_KEY_SECRET` are configured, the
+workflow also mirrors the image to
+`oss://cardputer-zero-repo/cardputerzero-trixie-arm64-vX.Y.Z.img.xz` and
+refreshes the moving alias `cardputerzero-trixie-arm64-stable.img.xz` for
+stable releases. Without those secrets the mirror steps are skipped with a
+warning; the release itself is still complete and usable.
 
-`scripts/update_os_list.py` writes the M5 Imager entry as
+When the mirror runs, `scripts/update_os_list.py` writes the M5 Imager entry as
 `CardputerZero CPZ (Trixie arm64) vX.Y.Z` (plus ` (Beta)` for a prerelease).
 That name is generated; do not edit `os-list.json` by hand.
 
@@ -143,8 +146,9 @@ checkbox set. This flag, not the title, selects the channel.
    publishes the GitHub Release with the standard title and the notes file.
    Publishing starts `.github/workflows/build.yml`.
 
-5. Watch the **Build and publish CPZ image** workflow. It verifies the image,
-   attaches the assets, uploads to OSS and refreshes `os-list.json`.
+5. Watch the **Build and publish CPZ image** workflow. It verifies the image
+   and attaches the assets. If OSS credentials are configured it also uploads
+   the mirror and refreshes `os-list.json`.
 6. Verify the release page: title, notes, `.img.xz`, `.info`,
    `build-info.json`, channel and stable alias.
 
@@ -161,5 +165,5 @@ title, notes template and prerelease flag.
 - [ ] Body has the title, summary, `Highlights`, `Changes`, `Install`.
 - [ ] Channel is correct (`-beta.N` / `-rc.N` and pre-release flag, or stable).
 - [ ] Workflow finished and attached all assets.
-- [ ] OSS copy and `os-list.json` entry exist; stable alias updated only for a
-      stable release.
+- [ ] OSS copy and `os-list.json` entry exist when the mirror is configured;
+      stable alias updated only for a stable release.

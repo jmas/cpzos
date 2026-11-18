@@ -911,6 +911,8 @@ contains .github/workflows/build.yml 'CardputerZero CPZ $TAG'
 contains .github/workflows/build.yml 'TARGET_HOSTNAME=cpz'
 contains .github/workflows/build.yml 'FIRST_USER_NAME=cpz'
 contains .github/workflows/build.yml 'FIRST_USER_PASS=cpz'
+contains .github/workflows/build.yml 'Check OSS mirror credentials'
+contains .github/workflows/build.yml "if: steps.oss.outputs.enabled == 'true'"
 contains .github/workflows/build.yml 'scripts/update_os_list.py'
 contains .github/workflows/build.yml 'VERSION ($FILE_VERSION) does not match tag'
 contains scripts/update_os_list.py 'os_entry_name'

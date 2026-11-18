@@ -187,9 +187,10 @@ which:
 - builds `cardputerzero-trixie-arm64-vX.Y.Z.img.xz`;
 - verifies the image contents;
 - attaches the image, `.info` and `build-info.json` to the release;
-- uploads the image to OSS and refreshes the `-stable.img.xz` alias for stable
-  releases;
-- updates `os-list.json` for M5 Imager.
+- mirrors the image to OSS, refreshes the `-stable.img.xz` alias for stable
+  releases and updates `os-list.json` when OSS credentials are configured;
+  without them those mirror steps are skipped and the GitHub release remains
+  the canonical download.
 
 The release's *pre-release* checkbox decides the channel when the build comes
 from a published release. Manual rebuilds derive it from the tag: a tag with a

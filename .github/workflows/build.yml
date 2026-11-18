@@ -211,6 +211,7 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
           PRERELEASE: ${{ steps.meta.outputs.prerelease }}
           OSS_NAME: ${{ steps.meta.outputs.image }}
+          OSS_KEY: ${{ secrets.OSS_ACCESS_KEY_ID }}
           KERNEL_VER: ${{ steps.components.outputs.kernel_version }}
           DRIVER_COMMIT: ${{ steps.components.outputs.driver_commit }}
           PIGEN_COMMIT: ${{ steps.meta.outputs.commit }}
@@ -254,10 +255,14 @@ jobs:
             echo ""
             echo "### Install"
             echo ""
-            echo "Download [\`${OSS_NAME}\`](${OSS_URL}) from this release and write it"
+            if [ -n "${OSS_KEY:-}" ]; then
+              echo "Download [\`${OSS_NAME}\`](${OSS_URL}) from this release and write it"
+            else
+              echo "Download \`${OSS_NAME}\` from this release and write it"
+            fi
             echo "to a microSD card with Raspberry Pi Imager, balenaEtcher, \`dd\` or"
             echo "M5 Imager."
-            if [ "$PRERELEASE" != "true" ]; then
+            if [ "$PRERELEASE" != "true" ] && [ -n "${OSS_KEY:-}" ]; then
               echo ""
               echo "**Stable alias:** [${IMG_BASENAME}-stable.img.xz](https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/${IMG_BASENAME}-stable.img.xz)"
             fi
@@ -302,7 +307,21 @@ jobs:
               "${FLAGS[@]}"
           fi
 
+      - name: Check OSS mirror credentials
+        id: oss
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+        run: |
+          if [ -n "${OSS_ACCESS_KEY_ID:-}" ] && [ -n "${OSS_ACCESS_KEY_SECRET:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=OSS mirror skipped::OSS_ACCESS_KEY_ID/OSS_ACCESS_KEY_SECRET are not configured; the GitHub release is still complete."
+          fi
+
       - name: Upload to Aliyun OSS
+        if: steps.oss.outputs.enabled == 'true'
         uses: manyuanrong/setup-ossutil@v3.0
         with:
           endpoint: oss-cn-shenzhen.aliyuncs.com
@@ -310,6 +329,7 @@ jobs:
           access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
 
       - name: Copy image to OSS
+        if: steps.oss.outputs.enabled == 'true'
         env:
           TAG: ${{ steps.meta.outputs.tag }}
           PRERELEASE: ${{ steps.meta.outputs.prerelease }}
@@ -324,6 +344,7 @@ jobs:
           fi
 
       - name: Update os-list.json
+        if: steps.oss.outputs.enabled == 'true'
         env:
           TAG: ${{ steps.meta.outputs.tag }}
           PRERELEASE: ${{ steps.meta.outputs.prerelease }}
@@ -367,6 +388,7 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
           PRERELEASE: ${{ steps.meta.outputs.prerelease }}
           OSS_NAME: ${{ steps.meta.outputs.image }}
+          OSS_ENABLED: ${{ steps.oss.outputs.enabled }}
           FILE: ${{ steps.image.outputs.path }}
         run: |
           {
@@ -375,6 +397,7 @@ jobs:
             echo "- Version: ${VERSION}"
             echo "- Prerelease: ${PRERELEASE}"
             echo "- Asset: ${OSS_NAME}"
+            echo "- OSS mirror: ${OSS_ENABLED}"
             echo "- Release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
             echo ""
             echo '```'
