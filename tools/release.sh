@@ -3,7 +3,8 @@
 #
 # The tag alone builds nothing: publish a GitHub Release for it and
 # .github/workflows/build.yml builds the image, attaches it to that release
-# and publishes it to OSS/os-list.
+# and publishes it to OSS/os-list. `--publish` creates that release with the
+# canonical title and the notes template from docs/RELEASE.md.
 #
 # Usage:
 #   ./tools/release.sh                 # bump patch: 0.1.0 -> 0.1.1
@@ -12,6 +13,7 @@
 #   ./tools/release.sh 0.3.0-beta.1    # explicit (prerelease) version
 #   ./tools/release.sh patch --dry-run # show what would happen
 #   ./tools/release.sh patch --no-push # commit + tag locally only
+#   ./tools/release.sh minor --publish --notes deploy/release-notes-v0.5.0.md
 #
 # Environment:
 #   RELEASE_BRANCH   branch to release from (default: current branch)
@@ -21,6 +23,8 @@ BRANCH="${RELEASE_BRANCH:-}"
 bump="patch"
 explicit=""
 push=1
+publish=0
+notes_file=""
 dry_run=0
 assume_yes=0
 skip_checks=0
@@ -33,6 +37,8 @@ Usage: tools/release.sh [patch|minor|major|X.Y.Z[-prerelease]] [options]
 
 Options:
   --no-push       commit and tag locally, do not push
+  --notes FILE    release notes that follow docs/RELEASE.md
+  --publish       create the GitHub Release after pushing (needs --notes)
   --dry-run       print the next version and tag, change nothing
   --yes, -y       do not ask for confirmation
   --skip-checks   do not run verify-stage.sh / tests/run.sh first
@@ -59,6 +65,12 @@ while [ $# -gt 0 ]; do
 			exit 0
 			;;
 		--no-push) push=0 ;;
+		--notes)
+			[ $# -ge 2 ] || die "--notes requires a file"
+			notes_file=$2
+			shift
+			;;
+		--publish) publish=1 ;;
 		--dry-run) dry_run=1 ;;
 		-y | --yes) assume_yes=1 ;;
 		--skip-checks) skip_checks=1 ;;
@@ -132,6 +144,29 @@ if [ "$new" = "$current" ]; then
 fi
 
 tag="v$new"
+title="CardputerZero CPZ $tag"
+prerelease=0
+case "$new" in
+	*-*) prerelease=1 ;;
+esac
+
+if [ -n "$notes_file" ]; then
+	[ -f "$notes_file" ] || die "notes file not found: $notes_file"
+	[ -s "$notes_file" ] || die "notes file is empty: $notes_file"
+	first_line=$(sed -n '1p' "$notes_file")
+	[ "$first_line" = "## $title" ] ||
+		die "notes must start with '## $title' (see docs/RELEASE.md)"
+	for section in '### Highlights' '### Changes' '### Install'; do
+		grep -Fqx "$section" "$notes_file" ||
+			die "notes are missing the '$section' section (see docs/RELEASE.md)"
+	done
+fi
+
+if [ "$publish" = 1 ]; then
+	[ -n "$notes_file" ] || die "--publish requires --notes FILE"
+	[ "$push" = 1 ] || die "--publish requires a push; remove --no-push"
+	command -v gh >/dev/null 2>&1 || die "--publish requires the GitHub CLI (gh)"
+fi
 
 if [ "$dry_run" = 1 ]; then
 	printf 'release (dry run)\n'
@@ -142,7 +177,11 @@ if [ "$dry_run" = 1 ]; then
 		printf '  version: %s -> %s\n' "$current" "$new"
 	fi
 	printf '  tag:     %s\n' "$tag"
+	printf '  title:   %s\n' "$title"
+	printf '  channel: %s\n' "$([ "$prerelease" = 1 ] && echo prerelease || echo stable)"
 	printf '  push:    %s\n' "$([ "$push" = 1 ] && echo yes || echo no)"
+	printf '  publish: %s\n' "$([ "$publish" = 1 ] && echo yes || echo no)"
+	[ -n "$notes_file" ] && printf '  notes:   %s\n' "$notes_file"
 	exit 0
 fi
 
@@ -191,6 +230,9 @@ if [ "$tag_current" = 1 ]; then
 else
 	printf '  version: %s -> %s\n' "$current" "$new"
 fi
+printf '  title:   %s\n' "$title"
+printf '  channel: %s\n' "$([ "$prerelease" = 1 ] && echo prerelease || echo stable)"
+[ -n "$notes_file" ] && printf '  notes:   %s\n' "$notes_file"
 printf '  changes:\n'
 git log --oneline "$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD)"..HEAD |
 	sed 's/^/    /'
@@ -230,11 +272,28 @@ if [ "$push" = 1 ]; then
 	repo_slug="${repo_slug#*github.com}"
 	repo_slug="${repo_slug#[:/]}"
 	printf '\nPushed %s.\n' "$tag"
-	printf 'Publish a GitHub Release for %s to start the image build:\n' "$tag"
-	printf '  https://github.com/%s/releases/new?tag=%s\n' "$repo_slug" "$tag"
+	if [ "$publish" = 1 ]; then
+		if [ "$prerelease" = 1 ]; then
+			channel_flag=--prerelease
+		else
+			channel_flag=--latest
+		fi
+		printf 'Publishing GitHub Release "%s"...\n' "$title"
+		if ! gh release create "$tag" --verify-tag \
+			--title "$title" --notes-file "$notes_file" "$channel_flag"; then
+			die "the tag is pushed but the release was not published; retry with: gh release create $tag --title '$title' --notes-file $notes_file $channel_flag"
+		fi
+		release_url=$(gh release view "$tag" --json url --jq .url)
+		printf 'Published: %s\n' "$release_url"
+		printf 'The image build has started.\n'
+	else
+		printf 'Publish a GitHub Release titled "%s" to start the image build:\n' "$title"
+		printf '  https://github.com/%s/releases/new?tag=%s\n' "$repo_slug" "$tag"
+		printf 'Follow docs/RELEASE.md, or use --publish --notes FILE to create it with the standard title and notes.\n'
+	fi
 else
 	printf '\nCreated %s locally. Push it with:\n' "$tag"
 	printf '  git push origin HEAD:refs/heads/%s\n' "$BRANCH"
 	printf '  git push origin refs/tags/%s\n' "$tag"
-	printf 'The image build starts when the GitHub Release for %s is published.\n' "$tag"
+	printf 'The image build starts when the GitHub Release "%s" is published.\n' "$title"
 fi

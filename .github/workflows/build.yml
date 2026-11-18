@@ -120,9 +120,9 @@ jobs:
           ARCHIVE_FILENAME=${IMG_BASENAME}-${TAG}
           RELEASE=trixie
           DEPLOY_COMPRESSION=xz
-          TARGET_HOSTNAME=cardputerzero
-          FIRST_USER_NAME=pi
-          FIRST_USER_PASS=raspberry
+          TARGET_HOSTNAME=cpz
+          FIRST_USER_NAME=cpz
+          FIRST_USER_PASS=cpz
           ENABLE_SSH=0
           LOCALE_DEFAULT=en_US.UTF-8
           KEYBOARD_KEYMAP=us
@@ -235,6 +235,12 @@ jobs:
             echo "## CardputerZero CPZ ${TAG}"
             echo ""
             echo "Terminal-first Linux console + tmux image for CardputerZero."
+            if [ "$PRERELEASE" = "true" ]; then
+              echo ""
+              echo "> Beta release: expect rough edges and keep a known-good card."
+            fi
+            echo ""
+            echo "### Highlights"
             echo ""
             echo "- **Version:** ${VERSION}"
             echo "- **Kernel:** ${KERNEL_VER}"
@@ -242,11 +248,23 @@ jobs:
             echo "- **pi-gen commit:** ${PIGEN_COMMIT}"
             echo "- **CONFIG_CARDPUTERO_V0_5:** y"
             echo ""
-            echo "**OSS download:** [${OSS_NAME}](${OSS_URL})"
+            echo "### Changes"
+            echo ""
+            echo "See the commits on this tag."
+            echo ""
+            echo "### Install"
+            echo ""
+            echo "Download [\`${OSS_NAME}\`](${OSS_URL}) from this release and write it"
+            echo "to a microSD card with Raspberry Pi Imager, balenaEtcher, \`dd\` or"
+            echo "M5 Imager."
             if [ "$PRERELEASE" != "true" ]; then
               echo ""
               echo "**Stable alias:** [${IMG_BASENAME}-stable.img.xz](https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com/${IMG_BASENAME}-stable.img.xz)"
             fi
+            echo ""
+            echo "Default login: \`cpz\` / \`cpz\`. Wi-Fi is off until it is enabled in Settings."
+            echo ""
+            echo "Documentation: https://github.com/jmas/cpzos/tree/master/docs"
           } > release-notes.md
 
           cat release-notes.md
@@ -279,7 +297,7 @@ jobs:
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
           else
             gh release create "$TAG" "${ASSETS[@]}" \
-              --title "$TAG" \
+              --title "CardputerZero CPZ $TAG" \
               --notes-file release-notes.md \
               "${FLAGS[@]}"
           fi

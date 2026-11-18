@@ -154,41 +154,49 @@ removes repeated package downloads without changing package contents.
 ## Release
 
 `VERSION` is the single source of truth for the release version. It is written
-into the image as `/etc/cpz-version` and shown in *Settings → About*. A release
-is a `vX.Y.Z` tag whose version matches `VERSION`.
+into the image as `/etc/cpz-version` and shown in *Settings → About*. The one
+valid release format is defined in [docs/RELEASE.md](docs/RELEASE.md): a
+SemVer tag `vX.Y.Z[-prerelease]`, the title
+`CardputerZero CPZ vX.Y.Z`, hand-written notes with `Highlights`, `Changes` and
+`Install`, and the assets produced by the release workflow.
 
 ```bash
 ./tools/release.sh patch         # 0.1.0 -> 0.1.1
 ./tools/release.sh minor         # 0.1.1 -> 0.2.0
 ./tools/release.sh major         # 0.2.0 -> 1.0.0
 ./tools/release.sh 0.3.0-beta.1  # explicit prerelease
-./tools/release.sh patch --dry-run
+```
+
+Write the notes file first, then choose between a dry run and the full release:
+
+```bash
+./tools/release.sh minor --notes deploy/release-notes-v0.5.0.md --dry-run
+./tools/release.sh minor --publish --notes deploy/release-notes-v0.5.0.md
 ```
 
 For the first release, `./tools/release.sh 0.1.0` tags the current commit
 without creating an empty bump commit (`VERSION` already contains `0.1.0`).
 
-The command refuses to run on a dirty or outdated branch, bumps `VERSION`,
-creates a `chore(release): vX.Y.Z` commit, adds an annotated tag and pushes
-both. It runs `tools/verify-stage.sh` and `tests/run.sh` before tagging; use
-`--skip-checks` to bypass that or `--no-push` to keep the commit and tag local.
+The command refuses to run on a dirty or outdated branch or with notes that do
+not follow the template. It runs `tools/verify-stage.sh` and `tests/run.sh`,
+bumps `VERSION`, creates a `chore(release): vX.Y.Z` commit, adds an annotated
+tag, pushes both and, with `--publish`, creates the GitHub Release with the
+standard title and channel. Publishing starts `.github/workflows/build.yml`,
+which:
 
-Pushing a tag does not build anything. Publishing the GitHub Release for the
-tag (`Releases → Draft a new release`, pick the tag, write the notes, then
-*Publish release*) starts `.github/workflows/build.yml`, which:
-
-- builds `cardputerzero-trixie-arm64-<tag>.img.xz`;
+- builds `cardputerzero-trixie-arm64-vX.Y.Z.img.xz`;
 - verifies the image contents;
-- attaches the image to the published GitHub Release without rewriting the
-  notes you wrote there;
+- attaches the image, `.info` and `build-info.json` to the release;
 - uploads the image to OSS and refreshes the `-stable.img.xz` alias for stable
-  tags;
+  releases;
 - updates `os-list.json` for M5 Imager.
 
 The release's *pre-release* checkbox decides the channel when the build comes
 from a published release. Manual rebuilds derive it from the tag: a tag with a
 prerelease suffix (`v0.2.0-beta.1`) is treated as a prerelease. To rebuild an
-existing tag, run the workflow manually (`workflow_dispatch`) and pass the tag.
+existing tag, run the workflow manually (`workflow_dispatch`) and pass the tag;
+never retag a published release. Use `--no-push` to keep the commit and tag
+local or `--skip-checks` only for recovery.
 
 ## Website
 

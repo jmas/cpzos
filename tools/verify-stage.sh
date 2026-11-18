@@ -889,15 +889,28 @@ have VERSION
 if grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' VERSION; then ok; else bad "VERSION is not SemVer"; fi
 contains build.sh 'CPZ_VERSION'
 contains export-image/05-finalise/01-run.sh 'cpz-version'
+have docs/RELEASE.md
+contains docs/RELEASE.md 'CardputerZero CPZ vX.Y.Z'
+contains docs/RELEASE.md '### Highlights'
+contains docs/RELEASE.md '### Changes'
+contains docs/RELEASE.md '### Install'
+contains README.md 'docs/RELEASE.md'
 have tools/release.sh
 contains tools/release.sh 'git tag -a'
 contains tools/release.sh 'refs/tags/$tag'
 contains tools/release.sh 'git commit -m "chore(release): $tag"'
+contains tools/release.sh 'title="CardputerZero CPZ $tag"'
+contains tools/release.sh '--publish'
+contains tools/release.sh 'gh release create "$tag" --verify-tag'
 have .github/workflows/build.yml
 contains .github/workflows/build.yml 'types: [published]'
 not_contains .github/workflows/build.yml 'push:
     tags:'
 contains .github/workflows/build.yml 'gh release create'
+contains .github/workflows/build.yml 'CardputerZero CPZ $TAG'
+contains .github/workflows/build.yml 'TARGET_HOSTNAME=cpz'
+contains .github/workflows/build.yml 'FIRST_USER_NAME=cpz'
+contains .github/workflows/build.yml 'FIRST_USER_PASS=cpz'
 contains .github/workflows/build.yml 'scripts/update_os_list.py'
 contains .github/workflows/build.yml 'VERSION ($FILE_VERSION) does not match tag'
 contains scripts/update_os_list.py 'os_entry_name'
