@@ -337,9 +337,8 @@ meaning, not a word order to copy.
 45. Name what appears on screen, not the place the system "starts in":
     `opens a terminal instead of a desktop`, not `starts in a terminal instead
     of on a desktop`.
-46. Keep every noun phrase complete. `for the CardputerZero handheld` /
-    `для кишенькового комп'ютера CardputerZero`, not a bare adjective with an
-    implied noun.
+46. Keep every noun phrase complete. `for the CardputerZero handheld`, not a
+    bare adjective with an implied noun.
 47. Keep contrasts parallel. Compare two interfaces or two places, not an
     interface with a place: `a terminal, not a desktop`, not `in a terminal,
     not on a desktop`.

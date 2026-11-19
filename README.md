@@ -322,7 +322,9 @@ package downloads without changing package contents.
 | `CPZ_DEBUG_BOOT` | `1` builds the verbose recovery image |
 | `CPZ_DTOVERLAYS_REF` | Pinned CardputerZero driver commit/tag; `main` tracks upstream |
 | `CPZ_HDMI_VIDEO` | Optional fixed HDMI mode, e.g. `HDMI-A-1:1920x1080@60`; empty uses EDID |
-| `CPZ_TROVE_INDEX_URL` | Terminal Trove catalog index (JSON or gzip); empty uses the hosted default |
+| `CPZ_TROVE_INDEX_URL` | Terminal Trove catalog index (JSON or gzip); empty uses the hosted default, `none` skips the build-time download |
+| `CPZ_OFFLINE` | `1` skips build-time network downloads (Trove catalog) |
+| `CPZ_EXPORT_DIST_UPGRADE` | `0` skips the final export-image dist-upgrade for fast local builds |
 
 Additional pi-gen options such as `APT_PROXY`, `PUBKEY_SSH_FIRST_USER`,
 `PUBKEY_ONLY_SSH`, `USE_QEMU`, `WORK_DIR`, `DEPLOY_DIR` and `CLEAN` are still

@@ -312,8 +312,10 @@ The session no longer waits for HDMI at boot:
 - the hotplug unit waits briefly for EDID before deciding;
 - font and theme changes replace only the visible foot;
 - display-mode changes apply through a path unit immediately;
-- the boot-time battery check waits at most 3 s for the gauge;
-- the first-login password reminder defaults to a 3 s timeout;
+- the boot-time battery check and DRM/EDID preparation run concurrently, so
+  their bounded waits overlap instead of adding up;
+- the first-login password reminder opens in a popup after the first frame and
+  defaults to a 3 s timeout;
 - the output timer is a 5 s fallback, with immediate DRM-hotplug and Settings
   triggers.
 
@@ -378,6 +380,8 @@ systemd logs are visible.
 /usr/local/bin/cpz-foot-config      # foot.ini renderer
 /usr/local/bin/cpz-foot-reload      # render and replace the visible foot
 /usr/local/bin/cpz-getty            # tty1 autologin wrapper
+/usr/local/bin/cpz-getty-prepare    # concurrent battery + DRM boot checks
+/usr/local/bin/cpz-first-login-popup # factory-password popup after the first frame
 /usr/local/bin/cpz-locale-apply     # writes the system locale; sudo allowlist
 /usr/local/bin/cpz-run              # applies Wayland/X11 env, then execs
 /usr/local/bin/cpz-tmux             # foot command; attaches tmux
