@@ -27,9 +27,11 @@ while a terminal tab exists, and the last window as the `cpz-settings` TUI.
 Closing the last terminal tab leaves Settings open so a new tab can be started
 from there. Closing a tab (Alt+W) never closes Settings; any terminal tab,
 including the last one, can be closed. Text is rendered by foot from the
-Terminus OTB font; the panel uses a 12px cell (53x14) by default. Settings →
-Display → Text Size selects any size from 10 to 64 px, the same range as
-`Alt+G` / `Alt+M`, and the choice is persisted across restarts. Daily tmux
+Terminus OTB font; the panel uses a 12px cell (53x14) by default. The internal
+panel and HDMI remember their own text size: Settings → Display → Text Size
+(or `Alt+G` / `Alt+M`) changes the size of the active output, and switching
+outputs restores the size saved for that screen. Both use 10 to 64 px and are
+persisted across restarts. Daily tmux
 actions are direct two-key `Alt+letter` bindings (`Alt+V` / `Alt+B` split,
 `Alt+N` / `Alt+P` switch pane, `Alt+Z` zoom and so on), so no tmux prefix is
 needed on the small CPZ keyboard. Volume is `Alt+U` / `Alt+I` and mute is
@@ -308,6 +310,24 @@ the tool as not managed. Those commands are never executed automatically.
 Tracked apps are listed in the Installed tab and can be run with `e` or
 removed with one confirmation; the manager records its state in
 `~/.local/state/cpz/trove-apps.json`.
+
+## Images and video
+
+Two minimal Wayland viewers are installed for the terminal file managers:
+
+- `imv-wayland` shows images (PNG, JPEG, GIF, WebP, BMP, SVG) and browses a
+  directory with the arrow keys;
+- `mpv` plays video. It is configured with `vo=wlshm` and `hwdec=no`, because
+  cage renders with pixman and cannot import the dmabuf/GL window a normal GPU
+  video output would create.
+
+Pressing `Enter` on a media file opens the right viewer from both file
+managers. Midnight Commander is redirected with `MC_XDG_OPEN`, which its
+`image.sh`/`video.sh` helpers already honour; lf gets a `cmd open` in
+`~/.config/lf/lfrc` that calls the same `/usr/local/bin/cpz-open` dispatcher.
+Text files keep the usual editor. `q` closes either viewer and returns to the
+file manager; the player OSD is available with the mouse or the usual mpv
+keys.
 
 ## Search
 

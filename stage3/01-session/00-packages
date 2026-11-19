@@ -30,6 +30,11 @@ util-linux
 fzf
 htop
 chafa
+
+# Minimal Wayland viewers for mc/lf. imv renders through wl_shm and mpv uses
+# its wlshm output, because cage (pixman) cannot import dmabuf/GL windows.
+imv
+mpv
 rsync
 python3
 # terminfo for tmux-256color, used by the Settings TUI and other curses apps.

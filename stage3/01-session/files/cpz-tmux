@@ -45,6 +45,11 @@ fi
 tmux set-environment -g SDL_VIDEODRIVER wayland 2>/dev/null || true
 tmux set-environment -g SDL_RENDER_DRIVER software 2>/dev/null || true
 
+# mc's image/video helpers open files through MC_XDG_OPEN. Point them at the
+# CPZ dispatcher so Enter launches imv/mpv instead of a missing desktop
+# opener.
+tmux set-environment -g MC_XDG_OPEN /usr/local/bin/cpz-open 2>/dev/null || true
+
 # Keep the factory-password reminder inside the terminal session, not on the
 # compositor's bare background. A foot replacement (theme or font) must not
 # bring the prompt back; one answer per boot is enough.

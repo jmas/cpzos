@@ -215,6 +215,10 @@ for file in \
 	stage3/01-session/files/cpz-panel-backlight \
 	stage3/01-session/files/cpz-cage-sleep \
 	stage3/01-session/files/cpz-cage.tmpfiles \
+	stage3/01-session/files/cpz-open \
+	stage3/01-session/files/lfrc \
+	stage3/01-session/files/mpv.conf \
+	stage3/01-session/files/imv-config \
 	stage3/01-session/files/cpz-pointer \
 	stage3/01-session/files/cpz-i18n \
 	stage3/01-session/files/i18n/en.json \
@@ -440,10 +444,23 @@ contains stage3/01-session/files/10-ssh.conf 'PasswordAuthentication yes'
 contains stage3/01-session/files/cpz-tmux.service 'RemainAfterExit=yes'
 contains stage3/01-session/files/cpz-tmux.service 'Requires=user-runtime-dir@1000.service'
 contains stage3/01-session/files/cpz-foot-config 'font=Terminus:pixelsize='
+contains stage3/01-session/files/cpz-foot-config 'font_size_hdmi'
+contains stage3/01-session/files/cpz-settings 'font_size_panel'
+contains stage3/01-session/files/cpz-settings 'def font_key()'
+contains stage3/01-session/files/cpz-font 'font_size_panel'
+contains stage3/01-session/files/settings.conf 'font_size_hdmi=16'
 contains stage3/01-session/files/cpz-tmux-start 'cpz-session-ensure main'
+contains stage3/01-session/00-packages 'imv'
+contains stage3/01-session/00-packages 'mpv'
+contains stage3/01-session/files/cpz-tmux 'MC_XDG_OPEN /usr/local/bin/cpz-open'
+contains stage3/01-session/files/cpz-open 'imv-wayland'
+contains stage3/01-session/files/cpz-open '--vo=wlshm'
+contains stage3/01-session/files/lfrc '/usr/local/bin/cpz-open'
+contains stage3/01-session/files/mpv.conf 'vo=wlshm'
+contains stage3/01-session/01-run.sh "user_config/lf/lfrc"
 not_contains stage3/01-session/files/cpz-settings 'Panel Text Size'
 not_contains stage3/01-session/files/cpz-settings 'HDMI Text Size'
-contains stage3/01-session/files/settings.conf 'font_size=12'
+contains stage3/01-session/files/settings.conf 'font_size_panel=12'
 contains stage3/01-session/01-run.sh 'cpz-cage-output.timer'
 contains stage3/01-session/01-run.sh '99-cpz-cage-output.rules'
 contains stage3/01-session/files/cpz-cage-output 'devices=$hdmi_dev'
@@ -821,6 +838,7 @@ contains stage2/05-cardputerzero/02-run.sh "fb_load.service"
 contains stage2/05-cardputerzero/01-run.sh 'panel-mipi-dbi-m.c'
 contains stage2/05-cardputerzero/01-run.sh 'drm_client_setup_with_fourcc'
 contains stage2/05-cardputerzero/01-run.sh 'cpz-keep-panel-fbdev'
+contains stage2/05-cardputerzero/01-run.sh 'cma-128'
 contains stage2/05-cardputerzero/02-run.sh '99-cardputer-zero-lcd.rules'
 contains stage2/05-cardputerzero/02-run.sh '99-cpz-display.rules'
 have stage2/05-cardputerzero/files/99-cpz-display.rules

@@ -1,0 +1,32 @@
+#!/bin/sh
+# Open an image or a video with the CPZ viewer.
+#
+# Midnight Commander calls this through MC_XDG_OPEN (set in the tmux
+# environment) and lf through its `open` command. Only the two GUI viewers the
+# image ships are handled; anything else exits 1 so the caller keeps its own
+# text handling.
+#
+# The viewers must not use the GPU: cage renders with pixman and cannot import
+# dmabuf, so an EGL/GL window stays black. mpv therefore gets the wlshm output
+# (software rendering into wl_shm) and imv uses its native Wayland backend.
+set -eu
+
+[ "$#" -ge 1 ] || exit 1
+case "$1" in
+	-*) exit 1 ;;
+esac
+
+mime=$(file -b --mime-type -- "$1" 2>/dev/null || true)
+case "$mime" in
+	image/*)
+		if command -v imv-wayland >/dev/null 2>&1; then
+			exec /usr/local/bin/cpz-run imv-wayland "$@"
+		fi
+		;;
+	video/*)
+		if command -v mpv >/dev/null 2>&1; then
+			exec /usr/local/bin/cpz-run mpv --vo=wlshm --hwdec=no "$@"
+		fi
+		;;
+esac
+exit 1

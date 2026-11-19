@@ -1,0 +1,15 @@
+# CPZ lf configuration.
+#
+# Images and videos open in the GUI viewers; text files keep the usual editor.
+# The viewers run inside the cage session, so cpz-open applies the Wayland
+# environment from /run/cpz-cage/client.env before exec.
+
+cmd open ${{
+    for f in $fx; do
+        mime=$(file --mime-type -Lb "$f" 2>/dev/null)
+        case "$mime" in
+            image/*|video/*) /usr/local/bin/cpz-open "$f" ;;
+            text/*) ${EDITOR:-nano} "$f" ;;
+        esac
+    done
+}}

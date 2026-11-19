@@ -1,0 +1,4 @@
+# CPZ image viewer defaults (imv-wayland).
+[options]
+# Match the foot background so the image floats on the same surface.
+background=#101418
