@@ -79,7 +79,7 @@ sudo apt-get purge -y PACKAGE
 ```
 
 A removal is simulated first and refused if it would remove core CPZ packages
-(`kmscon`, `tmux`, `systemd`, etc.). Core package names are listed in
+(`cage`, `foot`, `tmux`, `systemd`, etc.). Core package names are listed in
 `PKG_CORE` in `cpz-settings`.
 
 Only apps installed through Applications are tracked. A package that was

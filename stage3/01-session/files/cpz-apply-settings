@@ -75,9 +75,9 @@ if [ -n "$style" ] && [ -n "$active_style" ]; then
 	done
 fi
 
-# Match tmux's 16-colour palette to the theme. The kmscon terminal palette is
-# rendered by cpz-kmscon-config and applied when cpz-kmscon-output restarts
-# the session for the changed configuration.
+# Match tmux's 16-colour palette to the theme. The foot terminal palette is
+# rendered by cpz-foot-config and applied when cpz-cage-output restarts the
+# compositor for the changed configuration.
 embedded=$(sed -n 's/^# palette //p' "$conf" 2>/dev/null || true)
 if [ -n "$embedded" ]; then
 	printf '%s\n' "$embedded" | apply_palette
@@ -113,6 +113,21 @@ case "$(get mouse)" in
 	1 | on | true | yes) tmux set -g mouse on ;;
 	*) tmux set -g mouse off ;;
 esac
+# The same setting also decides whether a connected mouse may draw the cage
+# cursor. The path unit reopens the pointer devices; this is idempotent, so
+# the extra trigger from tmux.conf is harmless.
+touch /run/cpz-pointer/request 2>/dev/null || true
+
+# New panes inherit the CPZ language from the tmux global environment. Existing
+# shells keep the locale they started with; the CPZ TUIs read the setting
+# directly and switch immediately.
+case "$(get language)" in
+	uk) cpz_locale=uk_UA.UTF-8 ;;
+	de) cpz_locale=de_DE.UTF-8 ;;
+	*) cpz_locale=en_US.UTF-8 ;;
+esac
+tmux set-environment -g LANG "$cpz_locale" 2>/dev/null || true
+tmux set-environment -g LC_MESSAGES "$cpz_locale" 2>/dev/null || true
 
 history=$(get history_limit)
 case "$history" in
@@ -176,6 +191,6 @@ case "$(get automatic_rename)" in
 	*) tmux set -g automatic-rename on ;;
 esac
 
-# Restore brightness from the user settings. Screen blanking is kmscon's
-# dpms-timeout, rendered into the config by cpz-kmscon-config.
+# Restore brightness from the user settings. The foot config is rendered by
+# cpz-foot-reload, which replaces only the visible terminal when it changes.
 /usr/local/bin/cpz-brightness 2>/dev/null || true

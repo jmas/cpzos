@@ -4,3 +4,10 @@ deploy/
 apt-cacher-ng/
 .git/objects/*
 .build-fast.*
+# Development-only trees; they are not part of the image and would otherwise
+# be uploaded on every docker build (the virtualenv alone is ~150 MB).
+.venv/
+.mypy_cache/
+.ruff_cache/
+**/__pycache__/
+*.pyc

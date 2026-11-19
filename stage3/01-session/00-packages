@@ -1,5 +1,5 @@
-# CPZ terminal session (kmscon + tmux). kmscon itself is installed by
-# 00-kmscon.
+# CPZ graphical session (cage + foot + tmux). cage, foot and the Mesa DRI
+# drivers are installed by 00-graphics.
 tmux
 
 # Input, network and audio plumbing used by the CPZ status bar and settings.
@@ -12,8 +12,8 @@ bluez-tools
 pipewire
 wireplumber
 
-# Fonts: kmscon renders Terminus through FreeType, so the OTB build is
-# required. The PSF build stays for the fbcon recovery consoles on tty2/tty3.
+# Fonts: foot renders Terminus through fontconfig/FreeType, so the OTB build
+# is required. The PSF build stays for the fbcon recovery consoles on tty2/tty3.
 fonts-dejavu-core
 fontconfig
 fonts-terminus

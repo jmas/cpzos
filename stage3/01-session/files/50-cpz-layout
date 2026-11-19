@@ -1,5 +1,5 @@
 # Allow members of the sudo group to apply the layout selected with Alt+Space.
 # The helper takes no caller-controlled arguments and only starts
 # cpz-keyboard-layout.service, which updates both the console keymap and the
-# runtime kmscon keymap.
+# XKB layout used by cage.
 %sudo ALL=(root) NOPASSWD: /usr/local/bin/cpz-layout-apply

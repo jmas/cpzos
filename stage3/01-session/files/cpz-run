@@ -1,0 +1,30 @@
+#!/bin/sh
+# Launch an application with the current CPZ graphics environment.
+#
+# The tmux server is independent of cage and is started before the compositor.
+# It therefore cannot inherit Wayland/Xwayland variables from foot. cpz-tmux
+# publishes the current values in client.env; this wrapper applies them before
+# running the command. Search and Settings use it for every app launch, and a
+# shell can use it for a direct command too.
+set -eu
+
+env_file=/run/cpz-cage/client.env
+if [ -r "$env_file" ]; then
+	set -a
+	# shellcheck disable=SC1090  # generated key=value file
+	. "$env_file"
+	set +a
+fi
+
+# The cage fallback is pixman-only and cannot import dmabuf buffers, so its
+# clients must use the SDL software path.
+: "${SDL_VIDEODRIVER:=wayland}"
+: "${SDL_RENDER_DRIVER:=software}"
+export SDL_VIDEODRIVER SDL_RENDER_DRIVER
+
+if [ "$#" -eq 0 ]; then
+	printf 'usage: %s command [argument ...]\n' "${0##*/}" >&2
+	exit 2
+fi
+
+exec "$@"

@@ -1,6 +1,8 @@
 #!/bin/bash -e
 
-echo "${TIMEZONE_DEFAULT}" > "${ROOTFS_DIR}/etc/timezone"
+timezone=${TIMEZONE_DEFAULT:-UTC}
+[ -n "$timezone" ] || timezone=UTC
+echo "$timezone" > "${ROOTFS_DIR}/etc/timezone"
 rm "${ROOTFS_DIR}/etc/localtime"
 
 on_chroot << EOF

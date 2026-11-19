@@ -1,9 +1,14 @@
 #!/bin/sh
-# Keep the Settings tab alive. cpz-settings is a normal TUI; when it exits we
-# show a prompt instead of letting the tab disappear.
+# Keep the Settings tab usable. cpz-settings is a normal TUI; when it exits
+# (Esc/q at the main page, or a settings restart) start it again immediately.
+# The Settings tab has no shell prompt to return to: open another tab with
+# Alt+T when a shell is needed.
 while :; do
-	/usr/local/bin/cpz-settings
-	printf '\nPress Enter to reopen Settings...'
-	read -r _ || exit 0
-	clear
+	if /usr/local/bin/cpz-settings; then
+		clear
+	else
+		# Avoid a tight restart loop if the TUI cannot start at all.
+		clear
+		sleep 1
+	fi
 done

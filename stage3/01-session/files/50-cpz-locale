@@ -1,0 +1,4 @@
+# Allow members of the sudo group to apply the system language selected in
+# Settings > System > Language. The helper validates the code and writes only
+# the three locales generated for the image.
+%sudo ALL=(root) NOPASSWD: /usr/local/bin/cpz-locale-apply

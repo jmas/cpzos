@@ -1,5 +1,5 @@
 [Unit]
-Description=Keep the CPZ kmscon session on one output (HDMI or panel)
+Description=Keep the CPZ cage session on one output (HDMI or panel)
 # The reconciler is idempotent and short-lived. A monitor can emit a burst of
 # DRM hotplug uevents, so do not let systemd's start rate limit turn a
 # legitimate hotplug into a failed unit.
@@ -7,4 +7,4 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/cpz-kmscon-output
+ExecStart=/usr/local/bin/cpz-cage-output

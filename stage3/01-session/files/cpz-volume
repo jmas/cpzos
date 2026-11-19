@@ -2,7 +2,7 @@
 # Change or mute the default audio output volume.
 #
 # Bound by the cpz-keys registry to Alt+U / Alt+I / Alt+0 by default (rebindable
-# in Settings > Keyboard > Shortcuts). PipeWire's wpctl is the same backend as
+# in Settings > Input > Shortcuts). PipeWire's wpctl is the same backend as
 # Settings > Sound, so the status-bar volume token and the Settings page stay in
 # sync. The step matches the 5% step used by the Sound page.
 set -u

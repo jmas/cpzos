@@ -270,13 +270,18 @@ else
 fi
 
 echo ""
-echo "[4/6] CPZ kmscon session"
+echo "[4/6] CPZ graphics session"
 
 for file in usr/local/bin/cpz-first-login \
     usr/local/bin/cpz-settings usr/local/bin/cpz-status \
     usr/local/bin/cpz-apply-settings \
-    usr/local/bin/cpz-kmscon usr/local/bin/cpz-kmscon-config \
-    usr/local/bin/cpz-kmscon-output usr/local/bin/cpz-login \
+    usr/local/bin/cpz-cage usr/local/bin/cpz-cage-output \
+    usr/local/bin/cpz-cage-session usr/local/bin/cpz-foot-reload \
+    usr/local/bin/cpz-pointer usr/local/bin/cpz-i18n \
+    usr/share/cpz/i18n/en.json usr/share/cpz/i18n/uk.json \
+    usr/share/cpz/i18n/de.json \
+    usr/local/bin/cpz-foot-config usr/local/bin/cpz-getty usr/local/bin/cpz-run \
+    usr/local/bin/cpz-tmux usr/local/bin/cpz-tmux-start \
     usr/local/bin/cpz-hint usr/local/bin/cpz-help \
     usr/local/bin/cpz-keys usr/local/bin/cpz-search usr/bin/fzf \
     usr/local/bin/cpz-session-save usr/local/bin/cpz-session-restore \
@@ -291,13 +296,13 @@ for file in usr/local/bin/cpz-first-login \
     usr/local/bin/cpz-layout-next usr/local/bin/cpz-display-toggle \
     usr/local/bin/cpz-automount \
     usr/local/bin/cpz-battery \
-    usr/bin/kmscon \
-    etc/kmscon/kmscon.conf \
-    etc/systemd/system/kmsconvt@.service.d/10-cpz.conf \
+    usr/bin/cage usr/bin/foot \
+    etc/systemd/system/cpz-tmux.service \
+    etc/systemd/system/getty@tty1.service.d/10-cpz.conf \
     etc/udev/rules.d/99-cpz-backlight.rules \
     etc/udev/rules.d/99-cpz-keyboard.rules \
-    etc/udev/rules.d/99-cpz-kmscon-output.rules \
-    etc/udev/rules.d/99-cpz-kmscon-nudge.rules \
+    etc/udev/rules.d/99-cpz-cage-output.rules \
+    etc/udev/rules.d/99-zz-cpz-input.rules \
     etc/udev/rules.d/99-cpz-automount.rules \
     etc/systemd/system/cpz-automount@.service \
     etc/systemd/system/cpz-battery-guard.service \
@@ -305,9 +310,14 @@ for file in usr/local/bin/cpz-first-login \
     etc/systemd/system/cpz-keyboard-layout.service \
     etc/systemd/system/cpz-keyboard-layout.path \
     etc/systemd/system/cardputerzero-keymap.service \
-    etc/systemd/system/cpz-kmscon-output.service \
-    etc/systemd/system/cpz-kmscon-output.timer \
-    etc/systemd/system-sleep/cpz-kmscon \
+    etc/systemd/system/cpz-cage-output.service \
+    etc/systemd/system/cpz-cage-output.timer \
+    etc/systemd/system/cpz-cage-output.path \
+    etc/systemd/system/cpz-cage-output-hotplug.service \
+    etc/systemd/system/cpz-pointer.service \
+    etc/systemd/system/cpz-pointer.path \
+    etc/systemd/system/cpz-pointer-cursor.service \
+    etc/systemd/system-sleep/cpz-cage \
     etc/systemd/system/cpz-session-save.service \
     etc/systemd/system/cpz-session-save.timer \
     etc/systemd/system/cpz-conn-status.service \
@@ -390,10 +400,10 @@ else
     fail "cpz-settings: Resources entry MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "palette-background"; then
-    pass "cpz-kmscon-config renders the theme palette"
+if debugfs -R "cat usr/local/bin/cpz-foot-config" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "background="; then
+    pass "cpz-foot-config renders the theme palette"
 else
-    fail "cpz-kmscon-config palette rendering MISSING"
+    fail "cpz-foot-config palette rendering MISSING"
 fi
 
 if debugfs -R "cat etc/cpz/themes/cpz-mono.palette" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "15="; then
@@ -433,7 +443,7 @@ else
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "rebind_action"; then
-    pass "cpz-settings: Keyboard > Shortcuts present"
+    pass "cpz-settings: Input > Shortcuts present"
 else
     fail "cpz-settings: shortcut rebinding MISSING"
 fi
@@ -483,17 +493,26 @@ else
     fail "rpi-update apt pin MISSING"
 fi
 
-if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "kmsconvt@tty1"; then
-    pass "kmsconvt@tty1 enabled"
+# The <ZENK> keycode name is added to xkb-data's evdev file; an xkb-data
+# upgrade would replace it and break Sym+Shift.
+if debugfs -R "cat etc/apt/preferences.d/99-cpz-xkb-data.pref" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "Package: xkb-data"; then
+    pass "xkb-data is pinned (keeps the <ZENK> patch)"
 else
-    fail "kmsconvt@tty1 NOT enabled"
+    fail "xkb-data apt pin MISSING"
+fi
+
+if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "getty@tty1"; then
+    pass "tty1 getty enabled"
+else
+    fail "tty1 getty NOT enabled"
 fi
 
 if debugfs -R "stat etc/systemd/system/getty@tty1.service" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "/dev/null"; then
-    pass "getty@tty1 masked (kmscon owns tty1)"
+    fail "getty@tty1 is masked"
 else
-    fail "getty@tty1 NOT masked"
+    pass "getty@tty1 enabled for the cage login session"
 fi
 
 for vt in tty2 tty3; do
@@ -502,12 +521,6 @@ for vt in tty2 tty3; do
         pass "getty@$vt fbcon recovery login enabled"
     else
         fail "getty@$vt NOT enabled"
-    fi
-    if debugfs -R "ls etc/systemd/system/getty.target.wants" "$TMPDIR/root.ext4" 2>/dev/null |
-        grep -q "kmsconvt@$vt"; then
-        fail "kmsconvt@$vt should not run a second kmscon"
-    else
-        pass "kmsconvt@$vt not enabled"
     fi
 done
 
@@ -545,10 +558,11 @@ else
     fail "first user NOT in bluetooth group"
 fi
 
-if debugfs -R "cat etc/systemd/system/kmsconvt@.service.d/10-cpz.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "/usr/local/bin/cpz-kmscon"; then
-    pass "kmscon autologin wrapper"
+if debugfs -R "cat etc/systemd/system/getty@tty1.service.d/10-cpz.conf" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "/usr/local/bin/cpz-getty"; then
+    pass "tty1 getty starts the cage login session"
 else
-    fail "kmscon autologin wrapper MISSING"
+    fail "cpz-getty drop-in MISSING"
 fi
 
 if debugfs -R "ls etc/systemd/system/paths.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-keyboard-layout.path"; then
@@ -592,10 +606,10 @@ else
     fi
 fi
 
-if debugfs -R "ls etc/systemd/system/timers.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-kmscon-output.timer"; then
-    pass "cpz-kmscon-output timer enabled"
+if debugfs -R "ls etc/systemd/system/timers.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-cage-output.timer"; then
+    pass "cpz-cage-output timer enabled"
 else
-    fail "cpz-kmscon-output timer NOT enabled"
+    fail "cpz-cage-output timer NOT enabled"
 fi
 
 if debugfs -R "ls etc/systemd/system/timers.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-session-save.timer"; then
@@ -608,6 +622,18 @@ if debugfs -R "ls etc/systemd/system/timers.target.wants" "$TMPDIR/root.ext4" 2>
     pass "cpz-conn-status timer enabled"
 else
     fail "cpz-conn-status timer NOT enabled"
+fi
+
+if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-pointer.service"; then
+    pass "pointer policy applied at boot"
+else
+    fail "cpz-pointer.service NOT enabled"
+fi
+
+if debugfs -R "ls etc/systemd/system/paths.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-pointer.path"; then
+    pass "pointer policy follows Settings changes"
+else
+    fail "cpz-pointer.path NOT enabled"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-conn-status" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "E+"; then
@@ -652,18 +678,18 @@ else
     fail "settings: font size MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null |
+if debugfs -R "cat usr/local/bin/cpz-foot-config" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "get_setting font_size"; then
-    pass "cpz-kmscon-config reads the font size setting"
+    pass "cpz-foot-config reads the font size setting"
 else
-    fail "cpz-kmscon-config font size setting MISSING"
+    fail "cpz-foot-config font size setting MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "font-size=%s"; then
-    pass "cpz-kmscon-config renders the kmscon font size"
+if debugfs -R "cat usr/local/bin/cpz-foot-config" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "pixelsize="; then
+    pass "cpz-foot-config renders the foot font size"
 else
-    fail "cpz-kmscon-config font size MISSING"
+    fail "cpz-foot-config font size MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "page_items"; then
@@ -712,6 +738,38 @@ if debugfs -R "cat usr/local/bin/cpz-keyboard-layout" "$TMPDIR/root.ext4" 2>/dev
     pass "internal keyboard detection present"
 else
     fail "internal keyboard detection MISSING"
+fi
+
+if debugfs -R "cat etc/udev/rules.d/99-zz-cpz-input.rules" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-pointer --udev"; then
+    pass "pointer policy udev hook present"
+else
+    fail "pointer policy udev hook MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-pointer" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "LIBINPUT_IGNORE_DEVICE"; then
+    pass "phantom pointer suppression present"
+else
+    fail "cpz-pointer phantom pointer suppression MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-pointer" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "seat-cpz-no-pointer"; then
+    pass "pure pointers can be moved off the cage seat"
+else
+    fail "cpz-pointer hard pointer exclusion MISSING"
+fi
+
+if debugfs -R "cat etc/libinput/local-overrides.quirks" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "AttrEventCode=-EV_REL;-EV_ABS;"; then
+    pass "phantom keyboards/CEC cannot advertise pointer axes"
+else
+    fail "libinput phantom pointer quirk MISSING"
+fi
+
+if debugfs -R "cat usr/share/cpz/i18n/uk.json" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Пошук"; then
+    pass "Ukrainian interface catalog present"
+else
+    fail "Ukrainian interface catalog MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-keyboard-layout" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "ckbcomp"; then
@@ -830,11 +888,25 @@ else
     fail "cpz-session-restore invalid or MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "vt_nudge"; then
-    fail "cpz-kmscon-output still contains the fbdev vt nudge"
+if debugfs -R "cat usr/local/bin/cpz-cage-output" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "WLR_DRM_DEVICES"; then
+    pass "cpz-cage-output writes the cage output environment"
 else
-    pass "cpz-kmscon-output has no fbdev vt nudge"
+    fail "cpz-cage-output output environment MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-cage-output" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -qF 'devices=$hdmi_dev'; then
+    pass "HDMI runs as the primary DRM card (no secondary-GPU pixman path)"
+else
+    fail "HDMI is not the primary DRM card"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-cage-output" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -qF 'devices="$panel_dev:$hdmi_dev"'; then
+    fail "cage still receives the panel:HDMI multi-GPU device list"
+else
+    pass "cage receives a single DRM card at a time"
 fi
 
 if debugfs -R "cat etc/udev/rules.d/99-cpz-display.rules" "$TMPDIR/root.ext4" 2>/dev/null |
@@ -865,52 +937,45 @@ else
     pass "vendor display rule removed"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "hdmi_probe"; then
-    pass "cpz-kmscon-output probes the HDMI connector"
+if debugfs -R "cat usr/local/bin/cpz-cage-output" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "hdmi_probe"; then
+    pass "cpz-cage-output probes the HDMI connector"
 else
-    fail "cpz-kmscon-output invalid or MISSING"
+    fail "cpz-cage-output invalid or MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null |
+if debugfs -R "cat usr/local/bin/cpz-cage-output" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "bl_power"; then
-    pass "cpz-kmscon-output switches the panel backlight off"
+    pass "cpz-cage-output switches the panel backlight off"
 else
-    fail "cpz-kmscon-output panel power-off MISSING"
+    fail "cpz-cage-output panel power-off MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null |
+if debugfs -R "cat usr/local/bin/cpz-cage-output" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "hdmi_pinned"; then
-    pass "cpz-kmscon-output honours a pinned HDMI mode without EDID"
+    pass "cpz-cage-output honours a pinned HDMI mode without EDID"
 else
-    fail "cpz-kmscon-output pinned-mode override MISSING"
+    fail "cpz-cage-output pinned-mode override MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null |
+if debugfs -R "cat usr/local/bin/cpz-cage-output" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q "hdmi_debounce"; then
-    pass "cpz-kmscon-output debounces the HDMI switch"
+    pass "cpz-cage-output debounces the HDMI switch"
 else
-    fail "cpz-kmscon-output debounce MISSING"
+    fail "cpz-cage-output debounce MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon-output" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "confirm_hdmi"; then
-    pass "cpz-kmscon-output confirms readable-EDID hotplug quickly"
+if debugfs -R "cat usr/local/bin/cpz-cage-output" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "hdmi_usable"; then
+    pass "cpz-cage-output confirms readable-EDID hotplug quickly"
 else
-    fail "cpz-kmscon-output fast HDMI confirmation MISSING"
+    fail "cpz-cage-output HDMI readiness check MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon-config" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "dpms-timeout=%s"; then
-    pass "cpz-kmscon-config renders the screen timeout"
+if debugfs -R "cat usr/local/bin/cpz-foot-config" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "initial-window-mode=fullscreen"; then
+    pass "cpz-foot-config renders the foot session"
 else
-    fail "cpz-kmscon-config dpms-timeout MISSING"
-fi
-
-if debugfs -R "cat etc/kmscon/kmscon.conf" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "multi-monitor=largest"; then
-    pass "kmscon draws on one screen"
-else
-    fail "kmscon multi-monitor config MISSING"
+    fail "cpz-foot-config session MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-font" "$TMPDIR/root.ext4" 2>/dev/null |
@@ -943,39 +1008,53 @@ else
     fail "help font size shortcuts MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-kmscon" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q -- "--login -- /usr/local/bin/cpz-login"; then
-    pass "cpz-kmscon starts the autologin wrapper"
+if debugfs -R "cat etc/systemd/system/cpz-tmux.service" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "RemainAfterExit=yes"; then
+    pass "tmux server is independent of the compositor"
 else
-    fail "cpz-kmscon autologin wiring MISSING"
+    fail "cpz-tmux service MISSING"
 fi
 
-if debugfs -R "cat etc/udev/rules.d/99-cpz-kmscon-nudge.rules" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "HOTPLUG"; then
-    pass "kmscon hotplug nudge rule present"
-else
-    fail "kmscon hotplug nudge rule MISSING"
-fi
-
-if debugfs -R "cat etc/systemd/system-sleep/cpz-kmscon" "$TMPDIR/root.ext4" 2>/dev/null |
+if debugfs -R "cat etc/systemd/system-sleep/cpz-cage" "$TMPDIR/root.ext4" 2>/dev/null |
     grep -q -- "--force"; then
-    pass "cpz-kmscon resume hook"
+    pass "cpz-cage resume hook"
 else
-    fail "cpz-kmscon resume hook MISSING"
+    fail "cpz-cage resume hook MISSING"
 fi
 
-if debugfs -R "cat etc/udev/rules.d/99-cpz-kmscon-output.rules" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "systemctl --no-block start"; then
-    pass "HDMI hotplug wakes the kmscon reconciler"
+if debugfs -R "cat etc/udev/rules.d/99-cpz-cage-output.rules" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "cpz-cage-output-hotplug.service"; then
+    pass "HDMI hotplug wakes the EDID-aware cage reconciler"
 else
     fail "HDMI hotplug udev rule MISSING"
 fi
 
-if debugfs -R "cat etc/systemd/system/cpz-kmscon-output.timer" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "AccuracySec"; then
-    pass "cpz-kmscon-output timer keeps sub-second accuracy"
+if debugfs -R "ls etc/systemd/system/paths.target.wants" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "cpz-cage-output.path"; then
+    pass "display-setting path unit enabled"
 else
-    fail "cpz-kmscon-output timer accuracy MISSING"
+    fail "display-setting path unit NOT enabled"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-cage-output" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "CPZ_CAGE_TARGET"; then
+    fail "cage output environment still contains the target"
+else
+    pass "HDMI target is not part of the cage environment"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-cage" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "cpz-cage-session"; then
+    pass "cage runs the session supervisor"
+else
+    fail "cage session supervisor MISSING"
+fi
+
+if debugfs -R "cat etc/systemd/system/cpz-cage-output.timer" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "OnUnitActiveSec=5s"; then
+    pass "cpz-cage-output timer is a slow 5s fallback (udev handles hotplug)"
+else
+    fail "cpz-cage-output timer interval is not the 5s fallback"
 fi
 
 if debugfs -R "cat etc/udev/rules.d/99-cpz-automount.rules" "$TMPDIR/root.ext4" 2>/dev/null |
@@ -1019,18 +1098,6 @@ else
     fail "/media mount root MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-login" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "getent passwd 1000"; then
-    pass "cpz-login: resolves uid 1000"
-else
-    fail "cpz-login: uid 1000 resolution MISSING"
-fi
-
-if debugfs -R "cat etc/profile.d/cpz-session.sh" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "/run/cpz-kmscon/session.tty1.tty"; then
-    pass "cpz-session.sh attaches only to the kmscon pty"
-else
-    fail "cpz-session.sh kmscon pty detection MISSING"
-fi
 
 if debugfs -R "ls etc/systemd/system/multi-user.target.wants" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "rpi-preseed"; then
     pass "rpi-preseed enabled"
@@ -1080,10 +1147,22 @@ set +e
 debugfs -R "cat var/lib/dpkg/status" "$TMPDIR/root.ext4" > "$TMPDIR/dpkg_status" 2>/dev/null
 echo "  dpkg_status size: $(wc -c < "$TMPDIR/dpkg_status") bytes"
 
-if grep -q "^Package: kmscon$" "$TMPDIR/dpkg_status"; then
-    pass "kmscon installed"
+if grep -q "^Package: cage$" "$TMPDIR/dpkg_status"; then
+    pass "cage installed"
 else
-    fail "kmscon package MISSING"
+    fail "cage package MISSING"
+fi
+
+if grep -q "^Package: foot$" "$TMPDIR/dpkg_status"; then
+    pass "foot installed"
+else
+    fail "foot package MISSING"
+fi
+
+if grep -q "^Package: xwayland$" "$TMPDIR/dpkg_status"; then
+    pass "xwayland installed"
+else
+    fail "xwayland package MISSING"
 fi
 
 if grep -q "^Package: fonts-terminus-otb$" "$TMPDIR/dpkg_status"; then

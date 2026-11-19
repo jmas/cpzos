@@ -56,8 +56,11 @@ and backs Settings → Input → Shortcuts.
 | | Display toggle (panel / auto) | `Alt+D` |
 | | Font bigger / smaller | `Alt+G` / `Alt+M` |
 
-`Alt+Tab` moves to the next tab and `Alt+Shift+Tab` to the previous one, the
-same order as a browser. Tab numbers remain the fastest way to jump directly.
+`Alt+Tab` moves to the next live terminal tab and `Alt+Shift+Tab` to the
+previous one, wrapping at the ends in the same order as a browser. The
+Settings tab and tabs whose pane has died are skipped, so cycling cannot land
+on a blank screen; `Alt+S` opens Settings. Tab numbers remain the fastest way
+to jump directly.
 `Alt+U` / `Alt+I` change the default output volume in the same 5% steps as
 Settings → Sound; `Alt+0` toggles mute. Both paths use `wpctl`, so the
 status-bar volume token stays in sync.

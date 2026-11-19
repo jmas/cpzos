@@ -70,23 +70,32 @@ class MountOptionsTest(unittest.TestCase):
     def test_fat_is_owned_by_the_console_user(self):
         self.assertEqual(
             call("mount_options", "vfat", "1000", "1000"),
-            "uid=1000,gid=1000,umask=0022,iocharset=utf8,noatime",
+            "uid=1000,gid=1000,umask=0022,iocharset=utf8,noatime,nosuid,nodev",
         )
 
     def test_exfat_is_owned_by_the_console_user(self):
         self.assertEqual(
             call("mount_options", "exfat", "1000", "1000"),
-            "uid=1000,gid=1000,umask=0022,iocharset=utf8,noatime",
+            "uid=1000,gid=1000,umask=0022,iocharset=utf8,noatime,nosuid,nodev",
         )
 
     def test_ntfs_uses_umask(self):
         self.assertEqual(
             call("mount_options", "ntfs", "1000", "1000"),
-            "uid=1000,gid=1000,umask=0022,noatime",
+            "uid=1000,gid=1000,umask=0022,noatime,nosuid,nodev",
         )
 
     def test_native_filesystems_keep_their_ownership(self):
-        self.assertEqual(call("mount_options", "ext4", "1000", "1000"), "noatime")
+        self.assertEqual(
+            call("mount_options", "ext4", "1000", "1000"),
+            "noatime,nosuid,nodev",
+        )
+
+    def test_untrusted_media_never_honours_setuid_or_device_nodes(self):
+        for fstype in ("vfat", "exfat", "ntfs", "ext4", "btrfs", "iso9660"):
+            options = call("mount_options", fstype, "1000", "1000").split(",")
+            self.assertIn("nosuid", options, fstype)
+            self.assertIn("nodev", options, fstype)
 
     def test_ntfs_tries_the_kernel_driver_first(self):
         self.assertEqual(call("filesystem_types", "ntfs"), "ntfs3 ntfs")

@@ -1,0 +1,15 @@
+[Unit]
+Description=Apply CPZ mouse and cursor setting changes immediately
+# cpz-settings and cpz-apply-settings touch the request file after saving the
+# mouse setting. The service reopens the pointer devices with udev, so cage
+# does not need a restart.
+StartLimitIntervalSec=0
+
+[Path]
+# PathModified (rather than PathChanged) is used because cpz-settings only
+# updates the timestamp; the file content is never written.
+PathModified=/run/cpz-pointer/request
+Unit=cpz-pointer.service
+
+[Install]
+WantedBy=paths.target

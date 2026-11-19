@@ -3,7 +3,7 @@
 # The internal panel is a pure DRM display (panel-mipi-dbi-m, card1/SPI-1).
 # The normal image does not register the driver's fbdev emulation, so there is
 # no /dev/fb1 and fbcon has nothing to draw on. Disable fbcon entirely and let
-# kmscon set the panel mode through KMS. The debug image keeps the panel fbdev
+# cage set the panel mode through KMS. The debug image keeps the panel fbdev
 # and maps fbcon to it (stage3/01-session/02-run.sh).
 quiet loglevel=3 vt.global_cursor_default=0 logo.nologo nowatchdog
 fbcon=map:off

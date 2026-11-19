@@ -1,0 +1,17 @@
+[Unit]
+Description=Apply CPZ display setting changes immediately
+# cpz-settings and cpz-display-toggle touch output.request after they save a
+# new display mode. The reconciler itself is idempotent, so a burst of touches
+# is safe. The five-second timer stays as the fallback for edits that bypass
+# the UI.
+StartLimitIntervalSec=0
+
+[Path]
+# PathModified (rather than PathChanged) is used because cpz-settings and
+# cpz-display-toggle only update the timestamp; the file content is never
+# written.
+PathModified=/run/cpz-cage/output.request
+Unit=cpz-cage-output.service
+
+[Install]
+WantedBy=paths.target

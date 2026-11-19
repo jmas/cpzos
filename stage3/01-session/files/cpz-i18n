@@ -1,0 +1,245 @@
+#!/usr/bin/python3
+"""CPZ language selection and translation catalogs.
+
+The catalog key is the English source string, so an untranslated string is
+still readable instead of showing a blank or a symbolic key. Shell helpers can
+use ``cpz-i18n get KEY [DEFAULT]`` for the few strings that live outside the
+Python TUIs.
+
+Catalog files are JSON objects in /usr/share/cpz/i18n/<code>.json. The build
+installs en, uk and de; adding a language is one file plus one entry in
+SUPPORTED/LANGUAGE_LABELS.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pwd
+import re
+import sys
+
+SUPPORTED = ("en", "uk", "de")
+LANGUAGE_LABELS = {
+    "en": "English",
+    "uk": "Українська",
+    "de": "Deutsch",
+}
+DEFAULT_LANGUAGE = "en"
+PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+
+
+def script_dir() -> str:
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def catalog_dirs() -> list[str]:
+    override = os.environ.get("CPZ_I18N_DIR")
+    candidates = []
+    if override:
+        candidates.append(override)
+    candidates.append(os.path.join(script_dir(), "i18n"))
+    candidates.append("/usr/share/cpz/i18n")
+    return candidates
+
+
+def catalog_path(code: str) -> str:
+    for directory in catalog_dirs():
+        path = os.path.join(directory, code + ".json")
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def normalize_language(value: object) -> str:
+    text = str(value or "").strip().lower().replace("-", "_")
+    if not text:
+        return ""
+    code = text.split("_", 1)[0].split(".", 1)[0]
+    return code if code in SUPPORTED else ""
+
+
+def settings_paths() -> list[str]:
+    override = os.environ.get("CPZ_I18N_SETTINGS")
+    if override:
+        return [path for path in override.split(os.pathsep) if path]
+
+    paths: list[str] = []
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    home = os.environ.get("HOME")
+    if not home or os.geteuid() == 0:
+        try:
+            home = pwd.getpwuid(1000).pw_dir
+        except KeyError:
+            pass
+    if xdg:
+        paths.append(os.path.join(xdg, "cpz", "settings.conf"))
+    if home:
+        paths.append(os.path.join(home, ".config", "cpz", "settings.conf"))
+    paths.append("/etc/cpz/settings.conf")
+    return paths
+
+
+def read_text(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return ""
+
+
+def current_language() -> str:
+    override = normalize_language(os.environ.get("CPZ_LANG", ""))
+    if override:
+        return override
+
+    for path in settings_paths():
+        value = ""
+        for line in read_text(path).splitlines():
+            if line.startswith("language="):
+                value = line.split("=", 1)[1].strip()
+        code = normalize_language(value)
+        if code:
+            return code
+
+    for name in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        code = normalize_language(os.environ.get(name, ""))
+        if code:
+            return code
+    return DEFAULT_LANGUAGE
+
+
+_CATALOGS: dict[str, dict[str, str]] = {}
+
+
+def catalog(code: str | None = None) -> dict[str, str]:
+    language = normalize_language(code) or current_language()
+    if language not in _CATALOGS:
+        path = catalog_path(language)
+        values: dict[str, str] = {}
+        if path:
+            try:
+                parsed = json.loads(read_text(path))
+                if isinstance(parsed, dict):
+                    values = {
+                        str(key): str(value)
+                        for key, value in parsed.items()
+                        if isinstance(key, str) and isinstance(value, str)
+                    }
+            except ValueError:
+                values = {}
+        _CATALOGS[language] = values
+    return _CATALOGS[language]
+
+
+def translate(text: str, lang: str | None = None, **values: object) -> str:
+    """Translate an English source string, falling back to English then source."""
+    source = str(text)
+    translated = catalog(lang).get(source)
+    if translated is None:
+        translated = catalog(DEFAULT_LANGUAGE).get(source, source)
+    if values:
+        try:
+            return translated.format(**values)
+        except (KeyError, IndexError, ValueError):
+            return translated
+    return translated
+
+
+def get(text: str, default: str | None = None, **values: object) -> str:
+    """Translate an explicit catalog key, with a caller-provided fallback."""
+    source = str(text)
+    translated = catalog().get(source)
+    if translated is None:
+        translated = catalog(DEFAULT_LANGUAGE).get(source)
+    if translated is None:
+        translated = default if default is not None else source
+    if values:
+        try:
+            return translated.format(**values)
+        except (KeyError, IndexError, ValueError):
+            return translated
+    return translated
+
+
+def placeholders(text: str) -> set[str]:
+    return set(PLACEHOLDER_RE.findall(text))
+
+
+def check_catalogs() -> int:
+    errors = []
+    base = catalog("en")
+    if not base:
+        errors.append("en.json is missing or empty")
+    for code in SUPPORTED:
+        values = catalog(code)
+        if not values:
+            errors.append(f"{code}.json is missing or empty")
+            continue
+        missing = sorted(set(base) - set(values))
+        extra = sorted(set(values) - set(base))
+        if missing:
+            errors.append(f"{code}: missing {len(missing)} keys (e.g. {missing[0]})")
+        if extra:
+            errors.append(f"{code}: {len(extra)} unknown keys (e.g. {extra[0]})")
+        for key, value in values.items():
+            if placeholders(key) != placeholders(value):
+                errors.append(f"{code}: placeholder mismatch for {key!r}")
+                break
+    if errors:
+        for message in errors:
+            print(f"cpz-i18n: {message}", file=sys.stderr)
+        return 1
+    print(f"cpz-i18n: {len(SUPPORTED)} languages, {len(base)} strings OK")
+    return 0
+
+
+def main(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="CPZ language catalogs")
+    parser.add_argument("--value", action="store_true", help="print the language code")
+    parser.add_argument("--label", nargs="?", const="", help="print a language label")
+    parser.add_argument("--list", action="store_true", help="list language code<TAB>label")
+    parser.add_argument("--check", action="store_true", help="validate all catalogs")
+    parser.add_argument(
+        "--field",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="substitute a {placeholder} in get output",
+    )
+    parser.add_argument("command", nargs="?", help="get")
+    parser.add_argument("key", nargs="?")
+    parser.add_argument("default", nargs="?")
+    args = parser.parse_args(arguments)
+
+    if args.check:
+        return check_catalogs()
+    if args.list:
+        for code in SUPPORTED:
+            print(f"{code}\t{LANGUAGE_LABELS[code]}")
+        return 0
+    if args.label is not None:
+        code = normalize_language(args.label) if args.label else current_language()
+        print(LANGUAGE_LABELS.get(code or DEFAULT_LANGUAGE, LANGUAGE_LABELS[DEFAULT_LANGUAGE]))
+        return 0
+    if args.command == "get":
+        if not args.key:
+            print("cpz-i18n: get needs a key", file=sys.stderr)
+            return 2
+        fields = {}
+        for item in args.field:
+            name, separator, value = item.partition("=")
+            if separator and name:
+                fields[name] = value
+        print(get(args.key, args.default, **fields))
+        return 0
+    if args.command not in (None, "value"):
+        print(f"cpz-i18n: unknown command {args.command}", file=sys.stderr)
+        return 2
+    print(current_language())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

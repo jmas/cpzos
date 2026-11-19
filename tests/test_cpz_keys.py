@@ -88,6 +88,10 @@ class KeysRegistry(unittest.TestCase):
         self.assertEqual(self.mod.normalize_key("m-t"), "M-t")
         self.assertEqual(self.mod.normalize_key("Alt+T"), "M-t")
         self.assertEqual(self.mod.normalize_key("alt + space"), "M-Space")
+        self.assertEqual(self.mod.normalize_key("Alt+Tab"), "M-Tab")
+        self.assertEqual(self.mod.normalize_key("M-BTab"), "M-BTab")
+        self.assertEqual(self.mod.normalize_key("Alt+Shift+Tab"), "M-BTab")
+        self.assertEqual(self.mod.normalize_key("Alt+BackTab"), "M-BTab")
         for value in (
             "Ctrl+t",
             "C-t",
@@ -103,7 +107,20 @@ class KeysRegistry(unittest.TestCase):
         self.assertEqual(self.mod.display_key("M-t"), "Alt+T")
         self.assertEqual(self.mod.display_key("M-1"), "Alt+1")
         self.assertEqual(self.mod.display_key("M-Space"), "Alt+Space")
+        self.assertEqual(self.mod.display_key("M-Tab"), "Alt+Tab")
+        self.assertEqual(self.mod.display_key("M-BTab"), "Alt+Shift+Tab")
         self.assertEqual(self.mod.display_key(""), "unbound")
+
+    def test_tabs_use_alt_tab_and_shift_alt_tab(self):
+        bindings = self.mod.effective_bindings()
+        self.assertEqual(bindings["next-tab"]["key"], "M-Tab")
+        self.assertEqual(bindings["next-tab"]["display"], "Alt+Tab")
+        self.assertEqual(bindings["prev-tab"]["key"], "M-BTab")
+        self.assertEqual(bindings["prev-tab"]["display"], "Alt+Shift+Tab")
+
+    def test_detach_is_not_a_global_shortcut(self):
+        self.assertNotIn("detach", self.mod.ACTIONS_BY_ID)
+        self.assertNotIn("M-q", self.mod.DEFAULT_KEYS)
 
     def test_user_override_wins_and_default_keys_stay_unique(self):
         path = Path(self.mod.user_keys_path())
@@ -113,7 +130,7 @@ class KeysRegistry(unittest.TestCase):
         bindings = self.mod.effective_bindings()
         self.assertEqual(bindings["search"]["key"], "M-e")
         # next-tab tried to steal New Tab's default, so it falls back.
-        self.assertEqual(bindings["next-tab"]["key"], "M-f")
+        self.assertEqual(bindings["next-tab"]["key"], "M-Tab")
         active = [binding["key"] for binding in bindings.values()]
         self.assertEqual(len(active), len(set(active)))
 
@@ -190,6 +207,19 @@ class KeysRegistry(unittest.TestCase):
                 for line in text.splitlines()
             )
         )
+
+    def test_tmux_conf_closes_finished_tabs_silently(self):
+        text = (FILES / "tmux.conf").read_text(encoding="utf-8")
+        self.assertIn("set -g remain-on-exit off", text)
+        self.assertIn("set-hook -g pane-died", text)
+        self.assertIn('kill-pane -t "#{pane_id}"', text)
+
+    def test_tmux_conf_copies_a_mouse_selection_to_the_clipboard(self):
+        text = (FILES / "tmux.conf").read_text(encoding="utf-8")
+        self.assertIn("set -g mouse on", text)
+        self.assertIn("set -g set-clipboard on", text)
+        self.assertIn("terminal-features 'foot:clipboard'", text)
+        self.assertIn("MouseDragEnd1Pane send-keys -X copy-selection-and-cancel", text)
         for line in text.splitlines():
             self.assertFalse(line.lstrip().startswith("bind -n "), line)
 
@@ -234,6 +264,18 @@ class KeysConsumers(unittest.TestCase):
         )
         self.assertEqual(
             settings.shortcut_from_char(ord(" "), alt_prefix=True), "M-Space"
+        )
+        self.assertEqual(
+            settings.shortcut_from_char(9, alt_prefix=True), "M-Tab"
+        )
+        self.assertEqual(
+            settings.shortcut_from_char(settings.curses.KEY_BTAB), ""
+        )
+        self.assertEqual(
+            settings.shortcut_from_char(
+                settings.curses.KEY_BTAB, alt_prefix=True
+            ),
+            "M-BTab",
         )
         self.assertEqual(settings.shortcut_from_char(128 + ord("7")), "M-7")
 

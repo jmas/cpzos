@@ -1,0 +1,642 @@
+#!/usr/bin/python3
+"""Apply the CPZ pointer policy to the cage session.
+
+cage draws a cursor whenever any input device advertises pointer capability.
+Some devices do that without a usable mouse behind them: the vc4 HDMI
+controller exposes a CEC input node with relative axes, and the internal
+TCA8418 keyboard has a few pointer bits.  A real USB/Bluetooth mouse should
+still get a cursor, but only when Settings > Input > Mouse Support is on.
+
+`--udev` is the per-device hook used by 99-zz-cpz-input.rules.  It prints
+libinput properties that strip the pointer capabilities from phantom devices,
+or from every pointer while mouse support is off.  The keyboard half of a
+combined device (for example HDMI CEC) stays untouched.  A device that is only
+a pointer is moved to a seat that cage does not watch: libinput applies ID_SEAT
+before it classifies the device, so no cursor can leak even if a later udev
+rule restores a pointer tag.
+
+`--apply` re-evaluates existing devices after a settings change.  libinput only
+handles udev "add" and "remove" events, not "change", so a synthetic remove/add
+pair makes it reopen each real pointer with the new policy.  That avoids
+restarting cage and blanking the screen for a cursor setting.
+
+`--status`, `--json` and `--value` are read-only. Settings uses them for the
+Mouse and Cursor rows, and `cpz-pointer --status` is the diagnostic view.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import glob
+import json
+import os
+import pwd
+import re
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from typing import Mapping, TextIO
+
+SYSFS_ROOT = os.environ.get("CPZ_SYSFS_ROOT", "/sys")
+RUN_DIR = os.environ.get("CPZ_POINTER_RUN_DIR", "/run/cpz-pointer")
+STATE_FILE = "state"
+LOCK_FILE = "apply.lock"
+NUDGE_STAMP = "nudge.stamp"
+
+# sysfs capability bits
+REL_X = 0
+REL_Y = 1
+ABS_X = 0
+ABS_Y = 1
+ABS_MT_POSITION_X = 0x2F
+ABS_MT_POSITION_Y = 0x30
+INPUT_PROP_DIRECT = 1
+BTN_MOUSE = 0x110
+BTN_JOYSTICK = 0x120
+BTN_TOOL_PEN = 0x140
+BTN_TOUCH = 0x14A
+BTN_STYLUS = 0x14B
+KEY_BTN_MISC = 0x100
+
+# linux/input.h bus types
+BUS_USB = 0x03
+BUS_BLUETOOTH = 0x05
+BUS_I8042 = 0x11
+BUS_SERIO = 0x13
+
+POINTER_TAGS = (
+    "ID_INPUT_MOUSE",
+    "ID_INPUT_TOUCHPAD",
+    "ID_INPUT_POINTINGSTICK",
+    "ID_INPUT_TABLET",
+    "ID_INPUT_TABLET_PAD",
+    "ID_INPUT_TRACKBALL",
+)
+PHANTOM_TAGS = POINTER_TAGS + ("ID_INPUT_TOUCHSCREEN",)
+
+PHANTOM_NAMES = (
+    "pwr_button",
+    "power button",
+    "gpio-keys",
+    "video bus",
+    "axp20x",
+    "cardputer-zero-internal",
+)
+PHANTOM_PATH_MARKERS = ("vc4-hdmi", "3f804000.i2c")
+PHANTOM_NAME_RE = re.compile(r"(^|[^a-z])cec([^a-z]|$)")
+
+TRUE_VALUES = {"1", "on", "true", "yes", "enabled"}
+FALSE_VALUES = {"0", "off", "false", "no", "disabled", ""}
+
+# libinput only attaches devices whose ID_SEAT matches the seat requested by
+# the compositor ("seat0").  Moving a device to this seat is therefore a hard
+# removal from cage, independent of which ID_INPUT_* tags a later rule sets.
+NO_POINTER_SEAT = "seat-cpz-no-pointer"
+
+
+@dataclass
+class Device:
+    event: str
+    path: str
+    name: str
+    bustype: int
+    pointer: bool
+    direct: bool
+    phantom: bool
+    real: bool
+    keyboard: bool
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "event": self.event,
+            "name": self.name,
+            "pointer": self.pointer,
+            "direct": self.direct,
+            "phantom": self.phantom,
+            "mouse": self.real,
+        }
+
+
+def sysfs(*parts: str) -> str:
+    return os.path.join(SYSFS_ROOT, *parts)
+
+
+def run_dir() -> str:
+    return RUN_DIR
+
+
+def read_text(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def parse_bitmap(text: str) -> int:
+    """Decode the space-separated 64-bit words used by sysfs capabilities."""
+    value = 0
+    for index, word in enumerate(reversed(text.split())):
+        try:
+            value |= int(word, 16) << (index * 64)
+        except ValueError:
+            continue
+    return value
+
+
+def bit(mask: int, number: int) -> bool:
+    return bool(mask & (1 << number))
+
+
+def any_bit(mask: int, start: int, end: int) -> bool:
+    return any(bit(mask, number) for number in range(start, end))
+
+
+def env_flag(name: str, env: Mapping[str, str] | None = None) -> bool:
+    values = env if env is not None else os.environ
+    value = values.get(name)
+    if value is None:
+        return False
+    return value.strip().lower() not in FALSE_VALUES
+
+
+def settings_paths() -> list[str]:
+    override = os.environ.get("CPZ_POINTER_SETTINGS")
+    if override:
+        return [path for path in override.split(os.pathsep) if path]
+
+    paths: list[str] = []
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    home = os.environ.get("HOME")
+    # The udev hook normally runs as root, so HOME is not the console user's
+    # home.  The image always has the first login account at uid 1000.
+    if not home or os.geteuid() == 0:
+        try:
+            home = pwd.getpwuid(1000).pw_dir
+        except KeyError:
+            pass
+    if xdg:
+        paths.append(os.path.join(xdg, "cpz", "settings.conf"))
+    if home:
+        paths.append(os.path.join(home, ".config", "cpz", "settings.conf"))
+    try:
+        first_home = pwd.getpwuid(1000).pw_dir
+    except KeyError:
+        first_home = ""
+    if first_home:
+        path = os.path.join(first_home, ".config", "cpz", "settings.conf")
+        if path not in paths:
+            paths.append(path)
+    paths.append("/etc/cpz/settings.conf")
+    return paths
+
+
+def mouse_enabled() -> bool:
+    """Return the last valid mouse= value, user settings before system."""
+    for path in settings_paths():
+        value = ""
+        for line in read_text(path).splitlines():
+            if line.startswith("mouse="):
+                value = line.split("=", 1)[1].strip().lower()
+        if value in TRUE_VALUES:
+            return True
+        if value and value in FALSE_VALUES:
+            return False
+    return False
+
+
+def is_phantom(name: str, path: str) -> bool:
+    lowered_name = name.strip().lower()
+    lowered_path = path.lower()
+    if lowered_name.startswith("vc4-hdmi") or "hdmi-cec" in lowered_name:
+        return True
+    if PHANTOM_NAME_RE.search(lowered_name):
+        return True
+    if any(marker in lowered_name for marker in PHANTOM_NAMES):
+        return True
+    return any(marker in lowered_path for marker in PHANTOM_PATH_MARKERS)
+
+
+def inspect_device(event: str, env: Mapping[str, str] | None = None) -> Device:
+    event_dir = sysfs("class", "input", event)
+    device_dir = os.path.join(event_dir, "device")
+    name = read_text(os.path.join(device_dir, "name")).strip()
+    raw_bus = read_text(os.path.join(device_dir, "id", "bustype")).strip()
+    try:
+        bustype = int(raw_bus, 16)
+    except ValueError:
+        bustype = 0
+
+    rel = parse_bitmap(read_text(os.path.join(device_dir, "capabilities", "rel")))
+    abs_mask = parse_bitmap(
+        read_text(os.path.join(device_dir, "capabilities", "abs"))
+    )
+    key = parse_bitmap(read_text(os.path.join(device_dir, "capabilities", "key")))
+    properties = parse_bitmap(read_text(os.path.join(device_dir, "properties")))
+
+    has_rel = bit(rel, REL_X) and bit(rel, REL_Y)
+    has_abs = bit(abs_mask, ABS_X) and bit(abs_mask, ABS_Y)
+    has_mt = bit(abs_mask, ABS_MT_POSITION_X) and bit(
+        abs_mask, ABS_MT_POSITION_Y
+    )
+    env_pointer = any(
+        env_flag(tag, env)
+        for tag in POINTER_TAGS + ("ID_INPUT_TOUCHSCREEN",)
+    )
+    has_motion = has_rel or has_abs or has_mt
+    path = os.path.realpath(event_dir)
+
+    phantom = is_phantom(name, path)
+    real_bus = bustype in (BUS_USB, BUS_BLUETOOTH, BUS_I8042, BUS_SERIO)
+    real_path = "usb" in path.lower() or "bluetooth" in path.lower()
+    direct = bit(properties, INPUT_PROP_DIRECT)
+
+    keyboard = env_flag("ID_INPUT_KEYBOARD", env) or env_flag("ID_INPUT_KEY", env)
+    if not keyboard:
+        # Match the full-keyboard test in systemd's input_id builtin, then
+        # fall back to any ordinary KEY_* (below BTN_MISC) for media keyboards.
+        keyboard = (
+            key & ((1 << KEY_BTN_MISC) - 1) != 0
+            or (key & 0xFFFFFFFE) == 0xFFFFFFFE
+        )
+
+    pointer = has_motion or env_pointer
+    # A keyboard with stray REL_X/REL_Y bits is still not a mouse. Require a
+    # real primary pointer button, or a touch/pen contact for a non-direct
+    # tablet. udev ID_INPUT_* tags are not enough: input_id derives them from
+    # the same stray axes, so a tagged keyboard would otherwise pass as a mouse
+    # and cage would draw a cursor with no mouse connected.
+    pointer_button = (
+        any_bit(key, BTN_MOUSE, BTN_JOYSTICK)
+        or bit(key, BTN_TOOL_PEN)
+        or bit(key, BTN_STYLUS)
+        or (bit(key, BTN_TOUCH) and not direct)
+    )
+    real = (
+        pointer
+        and not phantom
+        and not direct
+        and (real_bus or real_path)
+        and pointer_button
+    )
+    return Device(
+        event=event,
+        path=path,
+        name=name or event,
+        bustype=bustype,
+        pointer=pointer,
+        direct=direct,
+        phantom=phantom,
+        real=real,
+        keyboard=keyboard,
+    )
+
+
+def scan_devices(env: Mapping[str, str] | None = None) -> list[Device]:
+    devices = []
+    for event_dir in sorted(glob.glob(sysfs("class", "input", "event*"))):
+        event = os.path.basename(event_dir)
+        devices.append(inspect_device(event, env))
+    return devices
+
+
+def cursor_visible(devices: list[Device], enabled: bool) -> bool:
+    return enabled and any(device.real for device in devices)
+
+
+def status(devices: list[Device], enabled: bool) -> dict[str, object]:
+    mouse = any(device.real for device in devices)
+    visible = cursor_visible(devices, enabled)
+    return {
+        "mouse": "connected" if mouse else "disconnected",
+        "support": "enabled" if enabled else "disabled",
+        "cursor": "visible" if visible else "hidden",
+        "devices": [device.as_json() for device in devices],
+    }
+
+
+def print_status(devices: list[Device], enabled: bool) -> None:
+    current = status(devices, enabled)
+    mouse_names = [device.name for device in devices if device.real]
+    mouse_value = str(current["mouse"])
+    if mouse_names:
+        mouse_value = f"{mouse_value} ({', '.join(mouse_names)})"
+    print(f"mouse   : {mouse_value}")
+    print(f"support : {current['support']}")
+    print(f"cursor  : {current['cursor']}")
+    for device in devices:
+        if not device.pointer:
+            continue
+        if device.phantom:
+            kind = "phantom"
+        elif device.real:
+            kind = "mouse"
+        elif device.direct:
+            kind = "direct"
+        else:
+            kind = "ignored"
+        print(
+            f"device  : {device.event} {device.name} "
+            f"[{kind}] bus={device.bustype:04x}"
+        )
+
+
+def strip_properties(device: Device, enabled: bool) -> list[str]:
+    """Return the udev properties for a device that must not drive a cursor.
+
+    The returned properties are the complete policy for the device, not just
+    additions.  A synthetic remove/add pair therefore also clears the seat and
+    LIBINPUT_IGNORE_DEVICE values from a previous policy.
+    """
+    if not device.pointer:
+        # Not a pointer, but it may still carry a stale fake seat from an
+        # earlier event (for example when a keyboard was briefly classified as
+        # a pointer).  Keep every keyboard on cage's seat.
+        return ["ID_SEAT=seat0"]
+
+    if device.real and enabled:
+        return ["ID_SEAT=seat0", "LIBINPUT_IGNORE_DEVICE=0"]
+
+    if device.direct and not device.phantom:
+        # A touchscreen is a direct input device. cage does not need a cursor
+        # for it, and disabling it here would remove touch input entirely.
+        return ["ID_SEAT=seat0"]
+
+    tags = [f"{tag}=0" for tag in (PHANTOM_TAGS if device.phantom else POINTER_TAGS)]
+    if device.keyboard:
+        # A combined device (HDMI CEC, a keyboard with stray axes) keeps its
+        # keyboard half on seat0.  Forcing ID_INPUT_KEYBOARD also overrides a
+        # stale ID_INPUT_MOUSE from an earlier udev event.
+        return ["ID_SEAT=seat0", "ID_INPUT_KEYBOARD=1", *tags]
+
+    # A pure pointer (mouse, touchpad, tablet, trackball) when the policy says
+    # no cursor.  ID_SEAT is the hard guarantee: libinput drops the device
+    # before device-type classification, so a restored ID_INPUT_MOUSE tag or a
+    # libinput quirk cannot bring the cursor back.  LIBINPUT_IGNORE_DEVICE is
+    # kept as a second, independent barrier for path-based contexts.
+    return [
+        f"ID_SEAT={NO_POINTER_SEAT}",
+        "LIBINPUT_IGNORE_DEVICE=1",
+        *tags,
+    ]
+
+
+def udev_hook(event: str) -> int:
+    """Print properties for IMPORT{program}; never fail the udev event."""
+    try:
+        # udev exports the device's current ID_INPUT_* properties to IMPORT
+        # programs.  Pass them on so a device that udev classified by tag (and
+        # not by sysfs capability bits) is still recognised.
+        device = inspect_device(event, os.environ)
+        # Keep a stable marker on real pointers. It survives when the pointer
+        # capabilities themselves are stripped, so the remove rule can start
+        # the ghost-cursor cleanup after a physical unplug or a policy change.
+        if device.real:
+            print("CPZ_REAL_POINTER=1")
+        for line in strip_properties(device, mouse_enabled()):
+            print(line)
+    except Exception:
+        # A helper failure must not make an input device disappear from udev.
+        return 0
+    return 0
+
+
+def state_signature(devices: list[Device], enabled: bool) -> str:
+    payload = {
+        "version": 1,
+        "enabled": enabled,
+        "devices": [
+            {
+                "event": device.event,
+                "path": device.path,
+                "name": device.name,
+                "bustype": device.bustype,
+                "pointer": device.pointer,
+                "direct": device.direct,
+                "phantom": device.phantom,
+                "real": device.real,
+            }
+            for device in devices
+            if device.pointer
+        ],
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def read_state() -> str:
+    return read_text(os.path.join(run_dir(), STATE_FILE)).strip()
+
+
+def write_state(signature: str) -> None:
+    directory = run_dir()
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, STATE_FILE)
+    temporary = f"{path}.tmp.{os.getpid()}"
+    with open(temporary, "w", encoding="utf-8") as fh:
+        fh.write(signature + "\n")
+    os.replace(temporary, path)
+
+
+def trigger_device(device: Device) -> bool:
+    """Make libinput reopen one device after a policy change."""
+    for action in ("remove", "add"):
+        try:
+            result = subprocess.run(
+                ["udevadm", "trigger", f"--action={action}", "--settle", device.path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if result.returncode != 0:
+            return False
+    return True
+
+
+def request_foot_reload() -> None:
+    """Replace the visible terminal, destroying any stale client cursor.
+
+    cage 0.3.1 stores a client's wl_pointer.set_cursor surface without checking
+    the current seat capabilities.  The seat update in nudge_policy clears the
+    image, but a delayed request from foot can attach it again.  A client
+    cursor surface is owned by the client, so replacing foot is the only way to
+    remove a ghost for certain without restarting the compositor.
+    """
+    path = "/usr/local/bin/cpz-foot-reload"
+    if not os.access(path, os.X_OK):
+        return
+    try:
+        subprocess.run(
+            [path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def nudge_policy(force: bool = False) -> int:
+    """Force cage to re-evaluate pointer capability after a removal race.
+
+    cage 0.3.1 accepts a lagging wl_pointer.set_cursor/set_shape request after
+    the pointer has been removed, which reattaches the client's text cursor as
+    a ghost. Upstream fixed it in cage PR #526. Until that fix is in the image
+    package, remove and re-add a keyboard device: cage then calls
+    update_capabilities(), sees no pointer, and unsets the cursor image.
+
+    ``force`` skips the visible-cursor check so a user or service can clear a
+    ghost that the policy already reports as hidden.
+    """
+    time.sleep(0.6)
+    stamp = os.path.join(run_dir(), NUDGE_STAMP)
+    try:
+        if time.time() - os.stat(stamp).st_mtime < 2.0:
+            return 0
+    except OSError:
+        pass
+
+    enabled = mouse_enabled()
+    devices = scan_devices()
+    if not force and cursor_visible(devices, enabled):
+        return 0
+    candidates = [d for d in devices if d.keyboard and not d.real]
+    if not candidates:
+        candidates = [d for d in devices if d.keyboard]
+    if not candidates:
+        return 0
+
+    os.makedirs(run_dir(), exist_ok=True)
+    try:
+        with open(stamp, "w", encoding="utf-8") as handle:
+            handle.write(str(time.time()) + "\n")
+    except OSError:
+        pass
+    if trigger_device(candidates[0]):
+        print(f"cpz-pointer: cursor refreshed via {candidates[0].event}")
+        # Give cage's event loop a moment to consume the udev remove/add pair
+        # before replacing the client, so the new foot starts without pointer
+        # capability and cannot attach a cursor surface in the gap.
+        time.sleep(0.2)
+        # The seat update above cannot revoke a cursor surface that a client
+        # sends afterwards. Replace foot so no client cursor survives.
+        request_foot_reload()
+        return 0
+    return 1
+
+
+def apply_policy(force: bool = False) -> int:
+    enabled = mouse_enabled()
+    devices = scan_devices()
+    signature = state_signature(devices, enabled)
+    if not force and read_state() == signature:
+        return 0
+
+    pointer_devices = [device for device in devices if device.real]
+    for device in pointer_devices:
+        if not trigger_device(device):
+            print("cpz-pointer: cannot ask udev to reopen input devices", file=sys.stderr)
+            return 1
+    # Let libinput consume the queued remove/add pairs before the next status
+    # read or the next settings change.
+    time.sleep(0.05)
+    write_state(signature)
+    current = status(devices, enabled)
+    print(
+        "cpz-pointer: mouse={mouse} support={support} cursor={cursor}".format(
+            **current
+        )
+    )
+    return 0
+
+
+def acquire_lock() -> TextIO | None:
+    directory = run_dir()
+    try:
+        os.makedirs(directory, exist_ok=True)
+        handle = open(os.path.join(directory, LOCK_FILE), "w", encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        description="Keep the cage cursor in step with the mouse setting"
+    )
+    parser.add_argument(
+        "--udev",
+        metavar="EVENT",
+        help="print libinput properties for this event device (udev hook)",
+    )
+    parser.add_argument(
+        "--apply", action="store_true", help="reopen pointer devices after a change"
+    )
+    parser.add_argument(
+        "--nudge",
+        action="store_true",
+        help="clear a lagging client cursor image after a pointer removal",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="apply/nudge even when the policy is unchanged or the cursor is visible",
+    )
+    parser.add_argument("--status", action="store_true", help="show effective state")
+    parser.add_argument("--json", action="store_true", help="print status as JSON")
+    parser.add_argument(
+        "--value",
+        choices=("mouse", "cursor", "support"),
+        help="print one machine-readable status value",
+    )
+    args = parser.parse_args(argv)
+
+    if args.udev:
+        return udev_hook(args.udev)
+
+    if args.nudge:
+        lock = acquire_lock()
+        if lock is None:
+            return 1
+        try:
+            return nudge_policy(force=args.force)
+        except OSError:
+            return 1
+        finally:
+            lock.close()
+
+    if args.apply:
+        lock = acquire_lock()
+        if lock is None:
+            print("cpz-pointer: cannot lock the policy state", file=sys.stderr)
+            return 1
+        try:
+            return apply_policy(force=args.force)
+        finally:
+            lock.close()
+
+    enabled = mouse_enabled()
+    devices = scan_devices()
+    current = status(devices, enabled)
+    if args.value:
+        print(current[args.value])
+        return 0
+    if args.json:
+        print(json.dumps(current, sort_keys=True))
+        return 0
+    print_status(devices, enabled)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

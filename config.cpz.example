@@ -2,20 +2,21 @@
 # Copy to ./config before running ./build.sh.
 
 IMG_NAME="cardputerzero-trixie-arm64"
-IMG_FILENAME="cardputerzero-trixie-arm64"
-ARCHIVE_FILENAME="cardputerzero-trixie-arm64"
+# Output names default to a dated name (YYYY-MM-DD-IMG_NAME). Set IMG_FILENAME
+# or ARCHIVE_FILENAME only when you need a stable name; that file is replaced
+# on every build.
 RELEASE="trixie"
 DEPLOY_COMPRESSION="xz"
 TARGET_HOSTNAME="cpz"
 FIRST_USER_NAME="cpz"
 FIRST_USER_PASS="cpz"
-# SSH is opt-in. The first console login recommends setting a new password;
-# the session still starts if you keep the factory one (Settings keeps warning).
-ENABLE_SSH=0
+# SSH is enabled for recovery. Log in as the first user with this password;
+# sudo uses the same password (PASSWORDLESS_SUDO stays off).
+ENABLE_SSH=1
 LOCALE_DEFAULT="en_US.UTF-8"
 KEYBOARD_KEYMAP="us"
 KEYBOARD_LAYOUT="English (US)"
-TIMEZONE_DEFAULT="Asia/Shanghai"
+TIMEZONE_DEFAULT="UTC"
 
 PASSWORDLESS_SUDO=0
 CPZ_DEBUG_BOOT=0

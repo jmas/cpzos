@@ -1,0 +1,150 @@
+#!/bin/sh
+# Start the CPZ Wayland session: cage + foot + tmux.
+#
+# This is the only session on tty1. cage is a kiosk compositor, not a desktop:
+# foot fills the screen with the CPZ tmux UI. A terminal application runs in a
+# tmux pane; a Wayland or X11 application opens a window and is placed on top
+# of foot, then returns to it when it exits.
+set -eu
+
+run_dir=/run/cpz-cage
+env_file=$run_dir/session.env
+
+load_env() {
+	[ -r "$env_file" ] || return 0
+	# `set -a` is essential: sourcing alone only creates shell variables, and
+	# cage would inherit none of WLR_DRM_DEVICES/WLR_RENDERER. Without it cage
+	# opened every DRM card and picked GLES2, which fails with
+	# GL_OUT_OF_MEMORY on the HDMI card and made the session blink.
+	set -a
+	# shellcheck disable=SC1090  # generated key=value file
+	. "$env_file"
+	set +a
+}
+
+first_device() {
+	printf '%s' "${WLR_DRM_DEVICES:-}" | cut -d: -f1
+}
+
+# The tty1 getty runs cpz-cage-output --prepare before login, but the getty can
+# win the race against the DRM drivers. Starting cage without WLR_DRM_DEVICES
+# makes it take every card; pixman can then composite only on the primary GPU
+# and HDMI degenerates into a cursor plane with failing page flips. Ask the
+# output helper for the environment and wait for a real device node.
+load_env
+tries=0
+while [ "$tries" -lt 20 ]; do
+	dev=$(first_device)
+	[ -n "$dev" ] && [ -e "$dev" ] && break
+	if [ -x /usr/local/bin/cpz-cage-output ]; then
+		/usr/local/bin/cpz-cage-output --prepare >/dev/null 2>&1 || true
+	fi
+	load_env
+	tries=$((tries + 1))
+	[ "$tries" -lt 20 ] && sleep 0.2
+done
+
+dev=$(first_device)
+if [ -z "$dev" ] || [ ! -e "$dev" ]; then
+	logger -t cpz-cage -p user.err \
+		"no usable DRM device (WLR_DRM_DEVICES=${WLR_DRM_DEVICES:-unset}); refusing to start cage"
+	exit 1
+fi
+
+# Enforce the single-card invariant even if a stale or hand-written env holds a
+# list. Two cards make the second one a secondary GPU, and pixman cannot
+# composite there: HDMI would show only the hardware cursor.
+if [ "${WLR_DRM_DEVICES:-}" != "$dev" ]; then
+	logger -t cpz-cage -p user.warning \
+		"trimming WLR_DRM_DEVICES='${WLR_DRM_DEVICES:-}' to '$dev'"
+fi
+# Always export, even when the value already looks right: a sourced env file
+# only creates a shell variable, and cage must actually receive it.
+WLR_DRM_DEVICES=$dev
+export WLR_DRM_DEVICES
+
+# pixman is the only renderer that works on both cards. GLES2 initialises on
+# vc4 and then dies with GL_OUT_OF_MEMORY at 1080p, so never leave the choice
+# to wlroots' renderer auto-detection.
+WLR_RENDERER=${WLR_RENDERER:-pixman}
+WLR_DRM_NO_MODIFIERS=${WLR_DRM_NO_MODIFIERS:-1}
+export WLR_RENDERER WLR_DRM_NO_MODIFIERS
+case "$WLR_RENDERER" in
+	pixman) ;;
+	*)
+		logger -t cpz-cage -p user.warning \
+			"forcing pixman instead of WLR_RENDERER='$WLR_RENDERER'"
+		WLR_RENDERER=pixman
+		export WLR_RENDERER
+		;;
+esac
+
+if [ -z "${XKB_DEFAULT_LAYOUT:-}" ] && command -v localectl >/dev/null 2>&1; then
+	status=$(timeout 5 localectl --no-pager status 2>/dev/null || true)
+	layout=$(printf '%s\n' "$status" |
+		sed -n 's/^[[:space:]]*X11 Layout:[[:space:]]*//p' | head -n 1)
+	case "$layout" in
+		*[!a-zA-Z0-9_,-]*) layout="" ;;
+	esac
+	[ -n "$layout" ] && export XKB_DEFAULT_LAYOUT="$layout"
+	variant=$(printf '%s\n' "$status" |
+		sed -n 's/^[[:space:]]*X11 Variant:[[:space:]]*//p' | head -n 1)
+	[ -n "$variant" ] && export XKB_DEFAULT_VARIANT="$variant"
+fi
+
+case ":${PATH:-}:" in
+	*:/usr/games:*) ;;
+	*) PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}:/usr/games" ;;
+esac
+export PATH
+: "${XDG_RUNTIME_DIR:=/run/user/1000}"
+export XDG_RUNTIME_DIR
+: "${DBUS_SESSION_BUS_ADDRESS:=unix:path=$XDG_RUNTIME_DIR/bus}"
+export DBUS_SESSION_BUS_ADDRESS
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=CPZ
+export XDG_SESSION_DESKTOP=cpz
+export MOZ_ENABLE_WAYLAND=1
+
+# Render the terminal configuration as the session user. cpz-cage-output also
+# does this as root before the unit starts; this keeps a manual start usable.
+if [ -x /usr/local/bin/cpz-foot-config ]; then
+	/usr/local/bin/cpz-foot-config --quiet 2>/dev/null || true
+fi
+
+# Never start a second compositor. A stale/manual cage keeps DRM master and
+# wayland-0, so the new one would either fail or steal clients (the classic
+# black-window/cursor-only result).
+if pgrep -x cage >/dev/null 2>&1; then
+	logger -t cpz-cage -p user.err \
+		"another cage is already running; refusing to start a second one"
+	exit 1
+fi
+
+# Keep the socket name stable: the tmux server exports wayland-0 for shells
+# that were started before foot. A crash can leave the socket/lock behind.
+rm -f "$XDG_RUNTIME_DIR/wayland-0" "$XDG_RUNTIME_DIR/wayland-0.lock" \
+	2>/dev/null || true
+if command -v logger >/dev/null 2>&1; then
+	target=$(sed -n 's/^target=//p' "$run_dir/output.state" 2>/dev/null |
+		tail -n 1)
+	mode=$(sed -n 's/^mode=//p' "$run_dir/output.state" 2>/dev/null |
+		tail -n 1)
+	logger -t cpz-cage -p user.info \
+		"target=${target:-panel} renderer=${WLR_RENDERER:-pixman} devices=${dev:-unset} mode=${mode:-auto}"
+fi
+
+# Keep the compositor's stderr where it can be read after the fact. The getty
+# unit sends stdout to the VT, so cage's "no outputs"/DRM errors were otherwise
+# invisible once the screen blanked.
+: >"$run_dir/cage.err" 2>/dev/null || true
+
+# -m last uses the last connected output. The output helper pins exactly one
+# card through WLR_DRM_DEVICES: the target card is always cage's primary DRM
+# device, because the pixman renderer cannot scan out on a secondary GPU. -s
+# keeps VT switching available for the recovery consoles, and -d keeps
+# client-side decorations out of the kiosk. The supervisor keeps cage alive
+# while it replaces foot for a font or theme change; an idle anchor terminal is
+# behind the visible one.
+exec /usr/bin/cage -m last -s -d -- \
+	/usr/local/bin/cpz-cage-session 2>>"$run_dir/cage.err"

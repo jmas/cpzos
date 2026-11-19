@@ -4,8 +4,8 @@
 # Bound to Alt+D by default in the cpz-keys registry so the panel can be
 # recovered even when an HDMI monitor is powered off but keeps HPD asserted
 # (the Pi cannot detect that).
-# The choice is stored like any other setting and cpz-kmscon-output applies it
-# on its next tick.
+# The choice is stored like any other setting; the output request touched below
+# makes the path unit apply it immediately.
 set -u
 
 home=${HOME:-/root}
@@ -52,6 +52,12 @@ else
 fi
 chmod 0644 "$tmp" 2>/dev/null || true
 mv "$tmp" "$user_settings" 2>/dev/null || { rm -f "$tmp"; exit 1; }
+
+# Apply the new target now instead of waiting for the five-second fallback
+# timer. The path unit starts cpz-cage-output.service as root.
+if [ -d /run/cpz-cage ]; then
+	touch /run/cpz-cage/output.request 2>/dev/null || true
+fi
 
 case "$next" in
 	panel) say "display: CPZ panel" ;;

@@ -66,8 +66,8 @@ FALLBACK_ACTIONS = (
     ("close-tab", "Close Tab", "Alt+W"),
     ("rename-tab", "Rename Tab", "Alt+R"),
     ("list-tabs", "List Tabs", "Alt+L"),
-    ("prev-tab", "Previous Tab", "Alt+A"),
-    ("next-tab", "Next Tab", "Alt+F"),
+    ("prev-tab", "Previous Tab", "Alt+Shift+Tab"),
+    ("next-tab", "Next Tab", "Alt+Tab"),
     ("tab-1", "Tab 1", "Alt+1"),
     ("tab-2", "Tab 2", "Alt+2"),
     ("tab-3", "Tab 3", "Alt+3"),
@@ -90,7 +90,6 @@ FALLBACK_ACTIONS = (
     ("volume-up", "Volume Up", "Alt+U"),
     ("volume-down", "Volume Down", "Alt+I"),
     ("volume-mute", "Mute", "Alt+0"),
-    ("detach", "Detach", "Alt+Q"),
     ("settings", "Settings", "Alt+S"),
     ("help", "Help", "Alt+H"),
     ("font-up", "Font Bigger", "Alt+G"),
@@ -103,6 +102,22 @@ FALLBACK_ACTIONS = (
 POWER_ACTIONS = (
     ("reboot", "Reboot", "Reboot now?"),
     ("poweroff", "Shut Down", "Shut down now?"),
+)
+# The first screen is deliberately tiny so the popup can open before the
+# catalog, PATH scan and Settings subprocess run. Keep these rows in priority
+# order; everything else appears as soon as the user types.
+HOME_ACTION_IDS = ("new-tab", "close-tab", "volume-mute")
+# First-level Settings destinations, mirroring page_items("main") in
+# cpz-settings. Applications is an action there, so its rows arrive with the
+# typed app list instead. The page id and title must match PAGE_TITLES.
+HOME_SETTINGS_PAGES = (
+    ("network", "Connections"),
+    ("display", "Display"),
+    ("sound", "Sound"),
+    ("keyboard", "Input"),
+    ("datetime", "Date & Time"),
+    ("power", "Power"),
+    ("system", "System"),
 )
 
 
@@ -128,10 +143,56 @@ def load_keys_module() -> Any:
     return None
 
 
+_I18N_MODULE: Any = None
+
+
+def i18n_module() -> Any:
+    global _I18N_MODULE
+    if _I18N_MODULE is not None:
+        return _I18N_MODULE
+    candidates = [
+        os.environ.get("CPZ_I18N_SCRIPT", ""),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "cpz-i18n"),
+        "/usr/local/bin/cpz-i18n",
+    ]
+    for path in candidates:
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            loader = SourceFileLoader("cpz_i18n", path)
+            spec = spec_from_loader(loader.name, loader)
+            if spec is None:
+                continue
+            module = module_from_spec(spec)
+            loader.exec_module(module)
+        except (ImportError, OSError):
+            continue
+        _I18N_MODULE = module
+        return module
+    raise FileNotFoundError("cpz-i18n is not installed")
+
+
+_TR_LANGUAGE: str | None = None
+
+
+def tr(text: object, **values: object) -> str:
+    global _TR_LANGUAGE
+    try:
+        module = i18n_module()
+        if _TR_LANGUAGE is None:
+            _TR_LANGUAGE = module.current_language()
+        return str(module.translate(str(text), _TR_LANGUAGE, **values))
+    except (FileNotFoundError, AttributeError):
+        return str(text)
+
+
 def current_actions() -> tuple:
     module = load_keys_module()
     if module is None:
-        return FALLBACK_ACTIONS
+        return tuple(
+            (action_id, tr(label), keys)
+            for action_id, label, keys in FALLBACK_ACTIONS
+        )
     bindings = module.effective_bindings()
     actions = []
     for action in module.ACTIONS:
@@ -142,7 +203,7 @@ def current_actions() -> tuple:
         actions.append(
             (
                 action["id"],
-                action["label"],
+                tr(action["label"]),
                 binding.get("display", "unbound") if binding.get("key") else "",
             )
         )
@@ -409,10 +470,10 @@ def managed_app_items() -> list[str]:
         command = managed_command(record, available)
         name = record["name"]
         if command:
-            display = f"{name}  [run app]"
+            display = f"{name}  {tr('[run app]')}"
             flags = set_flags("managed", "installed", "runnable")
         else:
-            display = f"{name}  [installed]"
+            display = f"{name}  {tr('[installed]')}"
             flags = set_flags("managed", "installed")
         items.append(
             make_item("tool", record["slug"], display, command, flags)
@@ -424,15 +485,34 @@ def action_items() -> list[str]:
     return [
         make_item("action", action_id, f"{label}  [{keys}]", "", "action")
         if keys
-        else make_item("action", action_id, f"{label}  [action]", "", "action")
+        else make_item("action", action_id, f"{label}  {tr('[action]')}", "", "action")
         for action_id, label, keys in ACTIONS
     ]
+
+
+def action_rows(action_id: str) -> list[str]:
+    """Return the Search row for one action id, if the registry has it."""
+    for current_id, label, keys in ACTIONS:
+        if current_id != action_id:
+            continue
+        if keys:
+            return [
+                make_item(
+                    "action", current_id, f"{label}  [{keys}]", "", "action"
+                )
+            ]
+        return [
+            make_item(
+                "action", current_id, f"{label}  {tr('[action]')}", "", "action"
+            )
+        ]
+    return []
 
 
 def power_items() -> list[str]:
     """Reboot and Shut Down, listed last so a stray Enter cannot reach them."""
     return [
-        make_item("power", action, f"{label}  [power]", "", "power")
+        make_item("power", action, f"{tr(label)}  {tr('[power]')}", "", "power")
         for action, label, _question in POWER_ACTIONS
     ]
 
@@ -446,9 +526,27 @@ def settings_items() -> list[str]:
     the field fzf matches against.
     """
     return [
-        make_item("settings", page, f"{title}  [settings]", "", "settings")
+        make_item("settings", page, f"{title}  {tr('[settings]')}", "", "settings")
         for page, title in list_settings_pages()
         if page != "main"
+    ]
+
+
+def home_settings_items() -> list[str]:
+    """First-level Settings destinations for the fast first screen.
+
+    Unlike settings_items(), this does not start cpz-settings: the static list
+    keeps the popup instant. The full page list is loaded once the user types.
+    """
+    return [
+        make_item(
+            "settings",
+            page,
+            f"{tr(title)}  {tr('[settings]')}",
+            "",
+            "settings",
+        )
+        for page, title in HOME_SETTINGS_PAGES
     ]
 
 
@@ -499,21 +597,24 @@ def default_items() -> list[str]:
 
 
 def home_items() -> list[str]:
-    """The first screen: media, installed apps, Settings pages, actions, power.
+    """The fast first screen: media, tab/sound actions, Settings, Help.
 
-    Settings pages are part of the first screen because Search exists to reach
-    Settings and apps, not only tmux commands. `cpz-settings --list-pages`
-    supplies them, so a new page appears here without editing Search. Power is
-    last so a stray Enter cannot reboot the device. The catalog and PATH
-    commands are still only loaded once something is typed, which keeps
-    opening the popup instant.
+    Priority is fixed so the most useful rows survive a narrow panel and a
+    stray Enter cannot reach an app or a power action: mounted media, New Tab,
+    Close Tab, Mute, then the first-level Settings destinations and Help.
+    Everything that needs the catalog, a PATH scan or a cpz-settings subprocess
+    is deferred to default_items() and appears as soon as the user types.
     """
+    quick_actions = [
+        line
+        for action_id in HOME_ACTION_IDS
+        for line in action_rows(action_id)
+    ]
     return dedupe(
         media_items()
-        + managed_app_items()
-        + settings_items()
-        + action_items()
-        + power_items()
+        + quick_actions
+        + home_settings_items()
+        + action_rows("help")
     )
 
 
@@ -627,11 +728,11 @@ def parse_trove_payload(text: str) -> list[str]:
             summary = ", ".join(str(item) for item in categories if item)
 
         if command:
-            state = "[run app]"
+            state = tr("[run app]")
         elif installed:
-            state = "[installed]"
+            state = tr("[installed]")
         elif apt:
-            state = "[install app]"
+            state = tr("[install app]")
         else:
             state = "[info]"
         display = f"apps {name}  {state}"
@@ -728,7 +829,7 @@ def media_items() -> list[str]:
             make_item(
                 "media",
                 device,
-                f"Unmount {label}  [media]  {mountpoint}",
+                f"{tr('Unmount {label}', label=label)}  {tr('[media]')}  {mountpoint}",
                 mountpoint,
                 "media",
             )
@@ -855,7 +956,7 @@ def pane_cwd() -> str:
 
 
 def notify(message: str) -> None:
-    message = message.replace("#", "##")
+    message = tr(message).replace("#", "##")
     if os.environ.get("TMUX") and shutil.which("tmux"):
         try:
             subprocess.run(
@@ -964,7 +1065,7 @@ def run_power(action: str) -> None:
             "-t",
             client,
             "-p",
-            f"{question} (y/n)",
+            f"{tr(question)} (y/n)",
             f"run-shell -b {shlex.quote(command)}",
         ]
     ):
@@ -974,14 +1075,17 @@ def run_power(action: str) -> None:
 def launch(command: list[str], cwd: str | None = None) -> None:
     if not command:
         return
+    runner = helper("cpz-run")
     directory = cwd or pane_cwd()
     if os.environ.get("TMUX") and shutil.which("tmux"):
-        if not run_hidden(["tmux", "new-window", "-c", directory, "--", *command]):
+        if not run_hidden(
+            ["tmux", "new-window", "-c", directory, "--", runner, *command]
+        ):
             notify(f"cpz-search: cannot launch {command[0]}")
         return
     try:
         os.chdir(directory)
-        os.execvp(command[0], command)
+        os.execvp(runner, [runner, *command])
     except OSError as error:
         notify(f"cpz-search: {error}")
 
@@ -1062,7 +1166,11 @@ def run_action(action: str, cwd: str) -> None:
         run_hidden(["tmux", "choose-tree", "-Zw"])
     elif action in ("prev-tab", "next-tab"):
         run_hidden(
-            ["tmux", "previous-window" if action == "prev-tab" else "next-window"]
+            [
+                helper("cpz-tab-cycle"),
+                session,
+                "prev" if action == "prev-tab" else "next",
+            ]
         )
     elif action.startswith("tab-") and action[4:].isdigit():
         run_hidden(["tmux", "select-window", "-t", f":{int(action[4:])}"])
@@ -1092,8 +1200,6 @@ def run_action(action: str, cwd: str) -> None:
         run_hidden(
             [helper("cpz-volume"), action.removeprefix("volume-")]
         )
-    elif action == "detach":
-        run_hidden(["tmux", "detach-client"])
     elif action == "settings":
         run_hidden([helper("cpz-settings-open"), "main"])
     elif action == "help":
@@ -1202,7 +1308,9 @@ def mode_bind(temp_directory: str) -> str:
 
     The state file keeps file search from re-running find(1) on every key.
     Calculator mode reloads on every key because the result changes with the
-    expression. $FZF_QUERY is used instead of {q} so quoting is not a concern.
+    expression. Other providers use reload(), not reload-sync(), so the popup
+    stays interactive while the catalog and PATH scan run. $FZF_QUERY is used
+    instead of {q} so quoting is not a concern.
     """
     executable = shlex.quote(self_path())
     state = shlex.quote(os.path.join(temp_directory, "mode"))
@@ -1228,13 +1336,13 @@ def mode_bind(temp_directory: str) -> str:
         'if [ "$m" = files ]; then '
         f"printf 'reload(%s --files)\\n' {executable}; "
         'elif [ "$m" = apps ]; then '
-        f"printf 'reload-sync(%s --apps)\\n' {executable}; "
+        f"printf 'reload(%s --apps)\\n' {executable}; "
         'elif [ "$m" = buffers ]; then '
-        f"printf 'reload-sync(%s --buffers)\\n' {executable}; "
+        f"printf 'reload(%s --buffers)\\n' {executable}; "
         'elif [ "$m" = home ]; then '
         f"printf 'reload(%s --home)\\n' {executable}; "
         "else "
-        f"printf 'reload-sync(%s --default)\\n' {executable}; "
+        f"printf 'reload(%s --default)\\n' {executable}; "
         "fi"
     )
     return f"change:transform:{code}"
@@ -1243,35 +1351,35 @@ def mode_bind(temp_directory: str) -> str:
 def hint_for(kind: str, extra: str, flags: set[str]) -> str:
     if kind == "tool":
         if extra or "runnable" in flags:
-            return "Enter run  Ctrl+Y copy  Ctrl+O info"
-        return "Enter info  Ctrl+Y copy"
+            return tr("Enter run  Ctrl+Y copy  Ctrl+O info")
+        return tr("Enter info  Ctrl+Y copy")
     if kind == "app":
-        return "Enter run  Ctrl+Y copy  Ctrl+O folder"
+        return tr("Enter run  Ctrl+Y copy  Ctrl+O folder")
     if kind == "action":
-        return "Enter run action"
+        return tr("Enter run action")
     if kind == "settings":
-        return "Enter open Settings  Ctrl+Y copy"
+        return tr("Enter open Settings  Ctrl+Y copy")
     if kind == "file":
-        return "Enter open  Ctrl+Y copy  Ctrl+O folder"
+        return tr("Enter open  Ctrl+Y copy  Ctrl+O folder")
     if kind == "buffer":
-        return "Enter paste  Ctrl+Y copy"
+        return tr("Enter paste  Ctrl+Y copy")
     if kind == "media":
-        return "Enter unmount  Ctrl+Y copy"
+        return tr("Enter unmount  Ctrl+Y copy")
     if kind == "power":
-        return "Enter confirm  Ctrl+Y copy"
+        return tr("Enter confirm  Ctrl+Y copy")
     if kind == "calc":
-        return "Enter copy result"
-    return "Enter open  Ctrl+Y copy"
+        return tr("Enter copy result")
+    return tr("Enter open  Ctrl+Y copy")
 
 
 def hint_line(text: str) -> str:
     """One-line footer for the highlighted item, shown by the fzf preview pane."""
     parsed = parse_item(text) if text else None
     if parsed is None:
-        return "Type to search  / files  = calc  apps  $ buffers"
+        return tr("Type to search  / files  = calc  apps  $ buffers")
     kind, payload, _display, extra, flags = parsed
     if kind == "calc" and not payload:
-        return "Type an expression"
+        return tr("Type an expression")
     return hint_for(kind, extra, {flag for flag in flags.split(",") if flag})
 
 
@@ -1284,16 +1392,17 @@ def fzf_args(temp_directory: str) -> list[str]:
         # column inside, and a muted hint on the last row. The tmux popup
         # runs borderless (-B in cpz-keys) so this is the only frame.
         "--border=sharp",
-        "--border-label= Search ",
+        f"--border-label= {tr('Search')} ",
         "--border-label-pos=3",
         "--padding=1,1,0,0",
         "--no-separator",
         "--no-scrollbar",
         "--no-bold",
         # "bw" keeps the list monochrome; palette slot 8 is the theme's muted
-        # colour, so the footer hint matches the A_DIM hint in cpz-settings.
+        # colour, so the footer hint matches hint_attr() in cpz-settings.
+        # label:bold keeps the modal title bold; --no-bold above applies to
+        # the list text, not to the explicit label style.
         "--color=bw,label:bold,preview-fg:8",
-        "--no-mouse",
         "--cycle",
         "--sync",
         "--info=inline-right",
@@ -1306,6 +1415,8 @@ def fzf_args(temp_directory: str) -> list[str]:
         "--preview",
         f"{executable} --hint {{}}",
         "--preview-window=down,1,border-none,nowrap,noinfo",
+        "--bind",
+        "double-click:accept",
         "--bind",
         mode_bind(temp_directory),
     ]
@@ -1377,27 +1488,28 @@ def check() -> int:
             errors.append(f"missing {kind} items")
 
     home = home_items()
-    if len(home) < len(ACTIONS):
-        errors.append("home list must hold one row per action")
     home_kinds = set()
+    home_payloads = []
     for line in home:
         parsed = parse_item(line)
         if parsed is None:
             errors.append("home item is malformed")
             continue
         home_kinds.add(parsed[0])
-        if parsed[0] not in ("media", "action", "settings", "tool", "power"):
-            errors.append(
-                "home list must contain media, Settings, actions, power or "
-                "managed apps"
-            )
+        home_payloads.append(parsed[1])
+        if parsed[0] not in ("media", "action", "settings"):
+            errors.append("home list must contain only media, actions or Settings")
             break
-    if "action" not in home_kinds:
-        errors.append("home list must contain actions")
+    for action_id in (*HOME_ACTION_IDS, "help"):
+        if action_id not in home_payloads:
+            errors.append(f"home list must contain {action_id}")
+    for page, _title in HOME_SETTINGS_PAGES:
+        if page not in home_payloads:
+            errors.append(f"home list must contain Settings page {page}")
+    if home_payloads and home_payloads[-1] != "help":
+        errors.append("Help must be the last home item")
     if "settings" not in home_kinds:
         errors.append("home list must contain Settings pages")
-    if "power" not in home_kinds:
-        errors.append("home list must contain power actions")
 
     cases = (("=2+2", "4"), ("=10/4", "2.5"), ("=2**10", "1024"))
     for expression, expected in cases:
@@ -1429,15 +1541,17 @@ def check() -> int:
     if parsed != (
         "tool",
         "tmux",
-        "apps tmux  [run app]  terminal multiplexer",
+        f"apps tmux  {tr('[run app]')}  terminal multiplexer",
         "tmux",
         "installed,runnable",
     ):
         errors.append("trove provider is malformed")
 
-    if hint_line("") != "Type to search  / files  = calc  apps  $ buffers":
+    if hint_line("") != tr("Type to search  / files  = calc  apps  $ buffers"):
         errors.append("empty hint is malformed")
-    if "Enter run" not in hint_line(trove[0] if trove else ""):
+    if hint_line(trove[0] if trove else "") != tr(
+        "Enter run  Ctrl+Y copy  Ctrl+O info"
+    ):
         errors.append("installed app hint is malformed")
 
     if errors:

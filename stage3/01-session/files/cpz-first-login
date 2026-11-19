@@ -18,10 +18,18 @@ current=$(stat -c %Y /etc/shadow 2>/dev/null || true)
 [ -n "$current" ] || exit 0
 [ "$current" = "$(cat "$stamp" 2>/dev/null || true)" ] || exit 0
 
+i18n() {
+	if [ -x /usr/local/bin/cpz-i18n ]; then
+		/usr/local/bin/cpz-i18n get "$@" 2>/dev/null || printf '%s' "${2:-$1}"
+	else
+		printf '%s' "${2:-$1}"
+	fi
+}
+
 clear
-printf 'CPZ is using the factory password.\n\n'
-prompt_timeout=${CPZ_PASSWORD_PROMPT_TIMEOUT:-10}
-printf 'Change it now? [y/N] (default N in %ss) ' "$prompt_timeout"
+printf '%s\n\n' "$(i18n 'CPZ is using the factory password.' 'CPZ is using the factory password.')"
+prompt_timeout=${CPZ_PASSWORD_PROMPT_TIMEOUT:-3}
+printf '%s' "$(i18n 'Change it now? [y/N] (default N in {seconds}s) ' 'Change it now? [y/N] ' | sed "s/{seconds}/$prompt_timeout/")"
 answer=
 if command -v timeout >/dev/null 2>&1; then
 	# The single quotes are intentional: sh -c expands $answer in the child.
@@ -35,7 +43,7 @@ case "$answer" in
 y | Y | yes | YES | Yes) ;;
 *)
 	clear
-	printf 'Skipped. Later: Settings > System > Password.\n'
+	printf '%s\n' "$(i18n 'Skipped. Later: Settings > System > Password.' 'Skipped. Later: Settings > System > Password.')"
 	sleep 1
 	exit 0
 	;;
@@ -43,10 +51,10 @@ esac
 
 if passwd; then
 	clear
-	printf 'Password updated.\n'
+	printf '%s\n' "$(i18n 'Password updated.' 'Password updated.')"
 else
 	clear
-	printf 'Password not changed. Settings > System > Password.\n'
+	printf '%s\n' "$(i18n 'Password not changed. Settings > System > Password.' 'Password not changed. Settings > System > Password.')"
 	sleep 1
 fi
 exit 0

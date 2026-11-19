@@ -1,0 +1,59 @@
+#!/bin/sh
+# Attach the CPZ tmux session to the foot terminal started by cage.
+#
+# The tmux server is started by cpz-tmux.service, so it survives a compositor
+# restart. This helper only needs to create the server if it disappeared and
+# then attach the terminal client.
+set -eu
+
+if ! tmux has-session -t '=main' 2>/dev/null; then
+	/usr/local/bin/cpz-tmux-start || true
+fi
+
+# The tmux server was started before cage. Publish the values cage gave this
+# foot process so Search, Settings and direct shell commands can reach the
+# compositor. The global tmux environment covers new panes; cpz-run covers
+# commands started from the older shell panes.
+client_env=/run/cpz-cage/client.env
+if [ -d "${client_env%/*}" ]; then
+	tmp=$client_env.$$
+	if {
+		[ -n "${WAYLAND_DISPLAY:-}" ] &&
+			printf "WAYLAND_DISPLAY='%s'\n" "$WAYLAND_DISPLAY"
+		[ -n "${DISPLAY:-}" ] && printf "DISPLAY='%s'\n" "$DISPLAY"
+		[ -n "${XAUTHORITY:-}" ] &&
+			printf "XAUTHORITY='%s'\n" "$XAUTHORITY"
+		[ -n "${XDG_RUNTIME_DIR:-}" ] &&
+			printf "XDG_RUNTIME_DIR='%s'\n" "$XDG_RUNTIME_DIR"
+	} >"$tmp" 2>/dev/null; then
+		mv "$tmp" "$client_env" 2>/dev/null || rm -f "$tmp"
+	else
+		rm -f "$tmp"
+	fi
+fi
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+	tmux set-environment -g WAYLAND_DISPLAY "$WAYLAND_DISPLAY" 2>/dev/null || true
+fi
+if [ -n "${DISPLAY:-}" ]; then
+	tmux set-environment -g DISPLAY "$DISPLAY" 2>/dev/null || true
+fi
+if [ -n "${XAUTHORITY:-}" ]; then
+	tmux set-environment -g XAUTHORITY "$XAUTHORITY" 2>/dev/null || true
+fi
+# Only the cage fallback needs SDL forced onto the software path (pixman cannot
+# import dmabuf). Keep the SDL software path.
+tmux set-environment -g SDL_VIDEODRIVER wayland 2>/dev/null || true
+tmux set-environment -g SDL_RENDER_DRIVER software 2>/dev/null || true
+
+# Keep the factory-password reminder inside the terminal session, not on the
+# compositor's bare background. A foot replacement (theme or font) must not
+# bring the prompt back; one answer per boot is enough.
+first_login_done="${XDG_RUNTIME_DIR:-/tmp}/cpz-first-login.done"
+if [ ! -e "$first_login_done" ] &&
+	[ -x /usr/local/bin/cpz-first-login ]; then
+	if /usr/local/bin/cpz-first-login; then
+		touch "$first_login_done" 2>/dev/null || true
+	fi
+fi
+
+exec tmux attach-session -t '=main'

@@ -4,8 +4,10 @@
 Runs in the last tmux tab. Keeps settings in
 ~/.config/cpz/settings.conf (created on first change); the read-only system
 defaults are /etc/cpz/settings.conf. Theme changes apply to the live tmux
-server immediately, everything else is picked up by cpz-status / tmux on the
-next refresh.
+server immediately, font changes replace the visible terminal, display
+changes trigger the output reconciler, and language changes switch the CPZ
+catalogs, the session locale and /etc/locale.conf. Other values are picked up
+by cpz-status / tmux on the next refresh.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -32,19 +35,24 @@ from importlib.util import module_from_spec, spec_from_loader
 from typing import Any
 
 SYSTEM_SETTINGS = "/etc/cpz/settings.conf"
+SYSTEM_LOCALE_FILE = "/etc/locale.conf"
+LOCALE_HELPER = "/usr/local/bin/cpz-locale-apply"
 THEME_DIR = "/etc/cpz/themes"
 # Build-time mtime of /etc/shadow. Any passwd/usermod/chage run changes the
 # mtime, so a match means the factory password was never changed.
 SECURITY_STAMP = "/etc/cpz/shadow-mtime"
+# The pointer status is shared by two info rows. Cache it briefly so a redraw
+# does not start a helper process for every key press, but still notice a
+# mouse that was just plugged in.
+_POINTER_STATUS: tuple[float, dict[str, str]] | None = None
 HISTORY_CHOICES = (2000, 5000, 10000)
 DATE_FORMATS = ("short", "iso", "eu", "us")
 DISPLAY_MODES = ("auto", "panel", "hdmi")
 SCREEN_TIMEOUTS = (0, 5, 10, 30)
 MODE_KEYS = ("vi", "emacs")
 STATUS_INTERVALS = (1, 2, 5)
-# kmscon font size in pixels, shared by the internal panel and HDMI. This is
-# the same scale as kmscon's runtime zoom and the +/- key bindings: cpz-font
-# clamps to the same range. The old 6x12/8x16 presets were 12px/16px.
+# foot/Terminus font size in pixels, shared by the internal panel and HDMI.
+# cpz-font clamps to the same range; the old 6x12/8x16 presets were 12px/16px.
 FONT_SIZE_MIN = 10
 FONT_SIZE_MAX = 64
 FONT_SIZES = tuple(range(FONT_SIZE_MIN, FONT_SIZE_MAX + 1))
@@ -57,6 +65,20 @@ NAV_UP = (curses.KEY_UP, ord("k"), ord("f"))
 NAV_DOWN = (curses.KEY_DOWN, ord("j"), ord("x"))
 NAV_LEFT = (curses.KEY_LEFT, ord("h"), ord("z"))
 NAV_RIGHT = (curses.KEY_RIGHT, ord("l"), ord("c"))
+# Python's curses module on older ncurses builds does not expose the wheel-down
+# constants (BUTTON5). Derive them from BUTTON4 using the same per-button shift
+# that ncurses compiled with.
+_MOUSE_BUTTON_STEP = (
+    curses.BUTTON4_PRESSED.bit_length() - curses.BUTTON1_PRESSED.bit_length()
+) // 3
+MOUSE_BUTTON4_PRESSED = curses.BUTTON4_PRESSED
+MOUSE_BUTTON4_CLICKED = curses.BUTTON4_CLICKED
+MOUSE_BUTTON5_PRESSED = getattr(
+    curses, "BUTTON5_PRESSED", curses.BUTTON4_PRESSED << _MOUSE_BUTTON_STEP
+)
+MOUSE_BUTTON5_CLICKED = getattr(
+    curses, "BUTTON5_CLICKED", curses.BUTTON4_CLICKED << _MOUSE_BUTTON_STEP
+)
 # Dialogs are drawn in one compact centred frame. The internal panel is 53x14
 # at the default font, so the body wraps well before the edge. Routine results
 # stay on screen briefly; errors wait for Enter/Esc.
@@ -69,7 +91,10 @@ NAV_RIGHT = (curses.KEY_RIGHT, ord("l"), ord("c"))
 MODAL_MAX_WIDTH = 46
 MODAL_TEXT_COLUMN = 2
 MODAL_TOAST_MS = 1500
-# kmscon paints the console grid edge to edge, so a full-screen page would touch
+# Every modal title is bold. Destructive actions also reverse it, but never
+# drop the bold weight.
+MODAL_TITLE_ATTR = curses.A_BOLD
+# foot paints the terminal grid edge to edge, so a full-screen page would touch
 # the panel bezel. Every page keeps one blank column on each side; dialogs draw
 # their own frame and are already inset.
 SCREEN_PAD = 1
@@ -211,11 +236,75 @@ def read_timezones() -> tuple:
 
 TIMEZONES = read_timezones()
 
+_I18N_MODULE: Any = None
+_LANGUAGE = "en"
+
+
+def i18n_module() -> Any:
+    """Load the shared CPZ language catalog helper."""
+    global _I18N_MODULE
+    if _I18N_MODULE is not None:
+        return _I18N_MODULE
+    candidates = [
+        os.environ.get("CPZ_I18N_SCRIPT", ""),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "cpz-i18n"),
+        "/usr/local/bin/cpz-i18n",
+    ]
+    for path in candidates:
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            loader = SourceFileLoader("cpz_i18n", path)
+            spec = spec_from_loader(loader.name, loader)
+            if spec is None:
+                continue
+            module = module_from_spec(spec)
+            loader.exec_module(module)
+        except (ImportError, OSError):
+            continue
+        _I18N_MODULE = module
+        return module
+    raise FileNotFoundError("cpz-i18n is not installed")
+
+
+def set_language(code: object) -> str:
+    global _LANGUAGE
+    try:
+        normalized = i18n_module().normalize_language(code)
+    except (FileNotFoundError, AttributeError):
+        normalized = ""
+    _LANGUAGE = normalized or "en"
+    os.environ["CPZ_LANG"] = _LANGUAGE
+    return _LANGUAGE
+
+
+def tr(text: object, **values: object) -> str:
+    try:
+        return str(i18n_module().translate(str(text), _LANGUAGE, **values))
+    except (FileNotFoundError, AttributeError):
+        return str(text)
+
+
+def language_codes() -> tuple[str, ...]:
+    try:
+        return tuple(i18n_module().SUPPORTED)
+    except (FileNotFoundError, AttributeError):
+        return ("en", "uk", "de")
+
+
+def language_labels() -> dict[str, str]:
+    try:
+        return dict(i18n_module().LANGUAGE_LABELS)
+    except (FileNotFoundError, AttributeError):
+        return {"en": "English", "uk": "Українська", "de": "Deutsch"}
+
+
 DEFAULTS: dict[str, Any] = {
     "keyboard_layout": "auto",
     "keyboard_layouts": "us",
     "keyboard_layout_active": "us",
     "theme": "cpz-campbell",
+    "language": "en",
     "show_clock": 1,
     "clock_24h": 1,
     "show_date": 0,
@@ -232,11 +321,11 @@ DEFAULTS: dict[str, Any] = {
     "font_size": 12,
     "brightness": 100,
     "screen_timeout": 0,
-    "mouse": 0,
+    "mouse": 1,
     "history_limit": 2000,
     "mode_keys": "vi",
     "status_interval": 5,
-    "set_clipboard": 0,
+    "set_clipboard": 1,
     "automatic_rename": 1,
 }
 
@@ -258,6 +347,12 @@ SCREEN_TIMEOUT_LABELS = {
     5: "5 min",
     10: "10 min",
     30: "30 min",
+}
+
+LANGUAGE_LOCALES = {
+    "en": "en_US.UTF-8",
+    "uk": "uk_UA.UTF-8",
+    "de": "de_DE.UTF-8",
 }
 
 THEME_ORDER = (
@@ -448,13 +543,14 @@ def parse_file(path: str, data: dict) -> None:
                         pass
                     continue
                 if key == "font_hdmi":
-                    # Never used on the kmscon branch; ignore it so an old
+                    # Never used on the graphics branch; ignore it so an old
                     # HDMI-only choice cannot make the shared panel font huge.
                     continue
                 if key not in data:
                     continue
                 if key in (
                     "theme",
+                    "language",
                     "date_format",
                     "display",
                     "mode_keys",
@@ -481,6 +577,9 @@ def load_settings() -> dict:
         data["theme"] = DEFAULTS["theme"] if DEFAULTS["theme"] in themes else themes[0]
     if data["history_limit"] not in HISTORY_CHOICES:
         data["history_limit"] = DEFAULTS["history_limit"]
+    if data["language"] not in language_codes():
+        data["language"] = DEFAULTS["language"]
+    set_language(data["language"])
     if data["date_format"] not in DATE_FORMATS:
         data["date_format"] = DEFAULTS["date_format"]
     if data["display"] not in DISPLAY_MODES:
@@ -536,6 +635,7 @@ def save_settings(data: dict) -> None:
             "keyboard_layouts",
             "keyboard_layout_active",
             "theme",
+            "language",
             "show_clock",
             "clock_24h",
             "show_date",
@@ -617,9 +717,118 @@ def status_right_length(data: dict) -> int:
     return (34 if data.get("date_format") == "short" else 40) + extra
 
 
+def reload_foot() -> None:
+    """Replace only the visible terminal after a font or theme change."""
+    helper = "/usr/local/bin/cpz-foot-reload"
+    if not os.path.exists(helper):
+        return
+    try:
+        subprocess.run(
+            (helper,),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def request_output_apply() -> None:
+    """Ask systemd to run cpz-cage-output after a display-mode change."""
+    path = "/run/cpz-cage/output.request"
+    try:
+        os.utime(path, None)
+        return
+    except OSError:
+        pass
+    try:
+        with open(path, "a", encoding="utf-8"):
+            pass
+    except OSError:
+        pass
+
+
+def request_pointer_apply() -> None:
+    """Ask systemd to reopen pointer devices after a mouse-setting change."""
+    path = "/run/cpz-pointer/request"
+    try:
+        os.utime(path, None)
+        return
+    except OSError:
+        pass
+    try:
+        with open(path, "a", encoding="utf-8"):
+            pass
+    except OSError:
+        pass
+
+
+def locale_conf_value(name: str) -> str:
+    """Read one assignment from /etc/locale.conf, without shelling out."""
+    try:
+        with open(SYSTEM_LOCALE_FILE, encoding="utf-8") as handle:
+            for line in handle:
+                key, separator, value = line.strip().partition("=")
+                if separator and key == name:
+                    return value
+    except OSError:
+        pass
+    return ""
+
+
+def apply_system_locale(code: str) -> bool:
+    """Write the system locale through the sudo allowlist.
+
+    The CPZ catalogs and the current session are updated by apply_language();
+    this only makes the choice survive the next login. A failure here must not
+    block the interface switch, so the caller keeps the new CPZ language.
+    """
+    target = LANGUAGE_LOCALES.get(code, "en_US.UTF-8")
+    if all(
+        locale_conf_value(name) == target
+        for name in ("LANG", "LC_MESSAGES", "LC_TIME")
+    ):
+        return True
+    helper = os.environ.get("CPZ_LOCALE_HELPER", LOCALE_HELPER)
+    if not os.path.isfile(helper):
+        return True
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", helper, code],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def apply_language(code: str) -> bool:
+    """Switch the CPZ UI, the session and the system locale to a language."""
+    set_language(code)
+    locale = LANGUAGE_LOCALES.get(_LANGUAGE, "en_US.UTF-8")
+    os.environ["LANG"] = locale
+    os.environ["LC_MESSAGES"] = locale
+    os.environ["LC_TIME"] = locale
+    tmux("set-environment", "-g", "LANG", locale)
+    tmux("set-environment", "-g", "LC_MESSAGES", locale)
+    tmux("set-environment", "-g", "LC_TIME", locale)
+    return apply_system_locale(_LANGUAGE)
+
+
 def apply_live(data: dict, key: str) -> None:
     if key == "theme":
         apply_theme(data["theme"])
+    elif key == "language":
+        if not apply_language(data["language"]):
+            print(
+                "cpz-settings: system language not applied",
+                file=sys.stderr,
+            )
+        refresh_clients()
     elif key in (
         "show_date",
         "date_format",
@@ -631,14 +840,17 @@ def apply_live(data: dict, key: str) -> None:
     elif key == "brightness":
         set_backlight_percent(data["brightness"])
     elif key == "screen_timeout":
+        # The value is persisted. The cage session has no compositor-side
+        # DPMS timer; an idle helper can consume this setting later without
+        # changing the storage format.
         apply_screen_timeout(data["screen_timeout"])
     elif key == "display":
-        pass
+        # The path unit runs cpz-cage-output immediately; the five-second
+        # timer stays as a fallback for edits made outside Settings.
+        request_output_apply()
     elif key == "font_size":
-        # cpz-kmscon-config renders the font size and cpz-kmscon-output
-        # restarts the session within two seconds; no privileged call is
-        # needed from the Settings pane. cpz-font writes the same key from the
-        # +/- bindings, so both paths share one persisted value.
+        # foot reads foot.ini only at startup. The session supervisor replaces
+        # just the visible terminal, so there is no compositor restart.
         pass
     elif key == "mode_keys":
         tmux("set", "-g", "mode-keys", data["mode_keys"])
@@ -655,11 +867,16 @@ def apply_live(data: dict, key: str) -> None:
         )
     elif key == "mouse":
         tmux("set", "-g", "mouse", "on" if data["mouse"] else "off")
+        global _POINTER_STATUS
+        _POINTER_STATUS = None
+        request_pointer_apply()
     elif key == "history_limit":
         tmux("set", "-g", "history-limit", str(data["history_limit"]))
     # Clock/battery/volume/date are read by cpz-status on the next status
     # refresh.
     refresh_clients(status_only=True)
+    if key in ("theme", "font_size"):
+        reload_foot()
 
 
 def apply_theme(theme: str) -> None:
@@ -689,9 +906,9 @@ def apply_theme(theme: str) -> None:
 
 
 def output_is_hdmi() -> bool:
-    """True when cpz-kmscon-output currently drives HDMI with the panel off."""
+    """True when cpz-cage-output currently drives HDMI with the panel off."""
     try:
-        with open("/run/cpz-kmscon/output.state", encoding="utf-8") as fh:
+        with open("/run/cpz-cage/output.state", encoding="utf-8") as fh:
             for line in fh:
                 if line.startswith("target="):
                     return line.strip() == "target=hdmi"
@@ -703,7 +920,7 @@ def output_is_hdmi() -> bool:
 def set_backlight_percent(percent: int) -> bool:
     percent = max(1, min(100, percent))
     # The panel is dark while HDMI is active; the value is stored in the
-    # settings and restored by cpz-kmscon-output on the next switch.
+    # settings and restored by cpz-cage-output on the next switch.
     if output_is_hdmi():
         return True
     for path in glob.glob("/sys/class/backlight/*"):
@@ -722,12 +939,11 @@ def set_backlight_percent(percent: int) -> bool:
 
 
 def apply_screen_timeout(minutes: int) -> None:
-    """Record the timeout for kmscon.
+    """Persist the requested screen timeout.
 
-    kmscon owns the VT and takes a single dpms-timeout at startup, so there is
-    no live console ioctl to change. cpz-kmscon-config renders the new value
-    into /run/cpz-kmscon/kmscon.conf and cpz-kmscon-output restarts the session
-    on its next tick.
+    The value is stored in settings.conf. The cage session does not expose a
+    compositor DPMS timer, so an idle helper can consume the same key later
+    without changing the settings format or the Settings page.
     """
 
 
@@ -981,8 +1197,7 @@ def draw_datetime_editor(
     screen.erase()
     height, width = screen.getmaxyx()
     left = SCREEN_PAD
-    put(screen, 0, left, "Set Date & Time", curses.A_BOLD)
-    put(screen, 1, left, "-" * content_width(width))
+    put(screen, 0, left, tr("Set Date & Time"), curses.A_BOLD)
 
     columns = (left + 2, left + 14, left + 26)
     for index in range(len(parts)):
@@ -996,7 +1211,7 @@ def draw_datetime_editor(
             screen,
             row,
             column,
-            DATETIME_FIELDS[index],
+            tr(DATETIME_FIELDS[index]),
             curses.A_BOLD if index == selected else 0,
         )
         put(
@@ -1012,16 +1227,17 @@ def draw_datetime_editor(
         screen,
         9,
         left + 2,
-        "NTP: " + ("On (will be disabled)" if ntp else "Off"),
+        "NTP: " + tr("On (will be disabled)" if ntp else "Off"),
     )
     if notice:
-        put(screen, height - 1, left, notice)
+        put(screen, height - 1, left, tr(notice))
     else:
         put(
             screen,
             height - 1,
             left,
-            "Type or F/X edit Z/C field Enter apply q cancel",
+            tr("Type or F/X edit Z/C field Enter apply q cancel"),
+            hint_attr(),
         )
     screen.refresh()
 
@@ -1216,7 +1432,9 @@ def draw_modal_frame(popup, title: str, hint: str = "", error: bool = False) -> 
     popup.erase()
     popup.attrset(0)
     popup.box()
-    title_attr = curses.A_REVERSE | curses.A_BOLD if error else curses.A_BOLD
+    title = tr(title)
+    hint = tr(hint)
+    title_attr = MODAL_TITLE_ATTR | (curses.A_REVERSE if error else 0)
     put(popup, 0, MODAL_TEXT_COLUMN, f" {title} ", title_attr)
     if hint:
         height, width = popup.getmaxyx()
@@ -1225,7 +1443,7 @@ def draw_modal_frame(popup, title: str, hint: str = "", error: bool = False) -> 
             height - 2,
             MODAL_TEXT_COLUMN,
             hint[: max(0, width - 2 * MODAL_TEXT_COLUMN)],
-            curses.A_DIM,
+            hint_attr(),
         )
 
 
@@ -1237,6 +1455,9 @@ def modal_window(
     error: bool = False,
 ):
     """Draw a centred modal frame over the current screen and return it."""
+    title = tr(title)
+    message = tr(message)
+    hint = tr(hint)
     screen_height, screen_width = screen.getmaxyx()
     available = max(10, screen_width - 4)
     body_width = min(MODAL_MAX_WIDTH, max(8, available - 4))
@@ -1288,6 +1509,7 @@ def show_message(
     """Show a result message in a modal. Toasts dismiss on a timer or a key."""
     if not message:
         return
+    message = tr(message)
     popup = modal_window(
         screen,
         title,
@@ -1333,6 +1555,7 @@ def confirm(
     danger: bool = False,
 ) -> bool:
     message = question if not detail else f"{question}\n\n{detail}"
+    message = tr(message)
     popup = modal_window(
         screen,
         title,
@@ -1357,15 +1580,25 @@ def text_page(screen, title: str, lines) -> None:
         screen.erase()
         height, width = screen.getmaxyx()
         left = SCREEN_PAD
-        put(screen, 0, left, title, curses.A_BOLD)
-        put(screen, 1, left, "-" * content_width(width))
+        put(screen, 0, left, tr(title), curses.A_BOLD)
         visible = max(1, height - 3)
         for index in range(visible):
             line = lines[offset + index] if offset + index < len(lines) else ""
-            put(screen, 2 + index, left, line)
-        put(screen, height - 1, left, "F/X scroll PgUp/PgDn q back")
+            put(screen, 2 + index, left, tr(line))
+        put(screen, height - 1, left, tr("F/X scroll PgUp/PgDn q back"), hint_attr())
         screen.refresh()
         key = screen.getch()
+        if key == curses.KEY_MOUSE:
+            event = read_mouse()
+            if event is None:
+                continue
+            delta = mouse_wheel_delta(event[2])
+            if delta:
+                offset = max(
+                    0,
+                    min(max(0, len(lines) - visible), offset + delta),
+                )
+            continue
         if key in (ord("q"), ord("Q"), 27):
             return
         if key in NAV_UP:
@@ -1710,15 +1943,14 @@ def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: 
     height, width = screen.getmaxyx()
     left = SCREEN_PAD
 
-    put(screen, 0, left, "Bluetooth  (* connected  + paired)", curses.A_BOLD)
-    put(screen, 1, left, "-" * content_width(width))
+    put(screen, 0, left, tr("Bluetooth") + "  (* " + tr("Connected") + "  + " + tr("Paired") + ")", curses.A_BOLD)
 
     status = notice or adapter["error"]
     top = 3 if status else 2
     if status:
-        put(screen, 2, left, status)
+        put(screen, 2, left, tr(status))
     elif not devices:
-        put(screen, 4, left + 1, "No devices. Press r to scan.")
+        put(screen, 4, left + 1, tr("No devices. Press r to scan."))
 
     items = ["power", "scan"] + devices
     for index, item in enumerate(items):
@@ -1727,10 +1959,10 @@ def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: 
             break
         if item == "power":
             mark = " "
-            label = f"Power: {'On' if adapter['powered'] else 'Off'}"
+            label = tr("Power: On" if adapter["powered"] else "Power: Off")
         elif item == "scan":
             mark = " "
-            label = "Scan"
+            label = tr("Scan")
         else:
             mark = "*" if item["connected"] else ("+" if item["paired"] else " ")
             label = item["name"]
@@ -1738,7 +1970,13 @@ def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: 
         attr = curses.A_REVERSE if index == selected else 0
         put(screen, y, left, text.ljust(content_width(width)), attr)
 
-    put(screen, height - 1, left, "F/X move  Enter toggle  r scan  q back")
+    put(
+        screen,
+        height - 1,
+        left,
+        tr("F/X move  Enter toggle  r scan  q back"),
+        hint_attr(),
+    )
     screen.refresh()
 
 
@@ -1750,6 +1988,11 @@ def bluetooth_screen(screen) -> None:
     while True:
         draw_bluetooth(screen, adapter, devices, selected)
         key = screen.getch()
+        if key == curses.KEY_MOUSE:
+            wheel = read_wheel_key()
+            if wheel is None:
+                continue
+            key = wheel
         count = 2 + len(devices)
 
         if key in (ord("q"), ord("Q"), 27):
@@ -1805,6 +2048,99 @@ def put(screen, y: int, x: int, text: str, attr: int = 0) -> None:
         screen.addstr(y, x, text[: max(0, width - x - 1)], attr)
     except curses.error:
         pass
+
+
+_HINT_ATTR: int | None = None
+_HINT_PAIR = 1
+
+
+def hint_attr() -> int:
+    """Muted colour for key hints, matching Search's footer.
+
+    Search draws its footer with palette slot 8 (``preview-fg:8``), the theme's
+    muted colour. Full-page footers and dialog hints use the same slot so the
+    help line has one treatment across the UI. Consoles without enough colours
+    keep the older dim attribute as a fallback.
+    """
+    global _HINT_ATTR
+    if _HINT_ATTR is not None:
+        return _HINT_ATTR
+    _HINT_ATTR = curses.A_DIM
+    try:
+        if curses.has_colors():
+            curses.start_color()
+            curses.use_default_colors()
+            if curses.COLORS > 8:
+                curses.init_pair(_HINT_PAIR, 8, -1)
+                _HINT_ATTR = curses.color_pair(_HINT_PAIR)
+    except curses.error:
+        pass
+    return _HINT_ATTR
+
+
+def enable_mouse() -> None:
+    """Ask the terminal for click and wheel events.
+
+    tmux forwards them to the pane only when the pane application enables the
+    xterm mouse protocol. Settings enables it for its whole run, so nested
+    pickers and the Applications/Bluetooth lists share the same stream.
+    """
+    try:
+        curses.mousemask(curses.ALL_MOUSE_EVENTS)
+        curses.mouseinterval(200)
+    except curses.error:
+        pass
+
+
+def read_mouse() -> tuple[int, int, int] | None:
+    try:
+        _id, x, y, _z, bstate = curses.getmouse()
+    except curses.error:
+        return None
+    return x, y, bstate
+
+
+def mouse_wheel_delta(bstate: int) -> int:
+    if bstate & (MOUSE_BUTTON4_PRESSED | MOUSE_BUTTON4_CLICKED):
+        return -3
+    if bstate & (MOUSE_BUTTON5_PRESSED | MOUSE_BUTTON5_CLICKED):
+        return 3
+    return 0
+
+
+def read_wheel_key() -> int | None:
+    """Translate a wheel event into the list navigation key it represents."""
+    event = read_mouse()
+    if event is None:
+        return None
+    delta = mouse_wheel_delta(event[2])
+    if delta < 0:
+        return curses.KEY_UP
+    if delta > 0:
+        return curses.KEY_DOWN
+    return None
+
+
+def page_geometry(selected: int, count: int, height: int) -> tuple[int, int, int]:
+    """Return (top row, visible rows, first item) for a Settings page."""
+    top = 2
+    visible = max(1, height - 1 - top)
+    first = 0
+    if selected >= visible:
+        first = selected - visible + 1
+    first = max(0, min(first, max(0, count - visible)))
+    return top, visible, first
+
+
+def page_row_at(
+    y: int, top: int, first: int, visible: int, count: int
+) -> int | None:
+    if y < top or y >= top + visible:
+        return None
+    row = first + (y - top)
+    if 0 <= row < count:
+        return row
+    return None
 
 
 def item_value(item: dict, data: dict) -> str:
@@ -1941,11 +2277,11 @@ def hdmi_ready() -> bool:
 
 
 def active_output_text(data: dict) -> str:
-    # Mirrors the policy in cpz-kmscon-output.
+    # Mirrors the policy in cpz-cage-output.
     connected = hdmi_status_text() == "connected"
     mode = data.get("display", "auto")
     if mode == "panel":
-        return "CPZ panel (HDMI mirrors)"
+        return "CPZ panel (HDMI off)"
     if mode == "hdmi":
         return "HDMI" if connected else "CPZ panel (no HDMI)"
     if hdmi_ready():
@@ -1956,8 +2292,8 @@ def active_output_text(data: dict) -> str:
 
 
 def autologin_status() -> str:
-    path = "/etc/systemd/system/multi-user.target.wants/kmsconvt@tty1.service"
-    return "enabled (kmscon)" if os.path.exists(path) else "disabled"
+    path = "/etc/systemd/system/getty.target.wants/getty@tty1.service"
+    return "enabled (cage)" if os.path.exists(path) else "disabled"
 
 
 def disk_info(path: str) -> str:
@@ -2129,23 +2465,23 @@ def help_lines() -> list:
 def system_info_lines(data: dict) -> list:
     display = str(data.get("display", ""))
     lines = [
-        "Device",
+        tr("Device"),
         "",
-        f"CPZ version: {cpz_version()}",
-        f"Uptime: {uptime_info()}",
-        f"Memory: {memory_info()}",
-        f"Battery: {battery_info()}",
-        f"Keyboard: {keyboard_status(data)}",
-        f"Bluetooth: {bluetooth_summary()}",
-        f"Display: {DISPLAY_LABELS.get(display, display)}",
-        f"Output: {active_output_text(data)}",
-        f"SSH: {ssh_status()}",
+        f"{tr('CPZ version:')} {cpz_version()}",
+        f"{tr('Uptime:')} {uptime_info()}",
+        f"{tr('Memory:')} {memory_info()}",
+        f"{tr('Battery:')} {tr(battery_info())}",
+        f"{tr('Input:')} {keyboard_status(data)}",
+        f"{tr('Bluetooth:')} {tr(bluetooth_summary())}",
+        f"{tr('Display:')} {tr(DISPLAY_LABELS.get(display, display))}",
+        f"{tr('Output:')} {active_output_text(data)}",
+        f"{tr('SSH:')} {ssh_status()}",
         "",
-        "Network",
+        tr("Network"),
     ]
     devices = nm_devices()
     if not devices:
-        lines.append("  no NetworkManager devices")
+        lines.append("  " + tr("no NetworkManager devices"))
     for device in devices:
         lines.append(
             f"  {device['device']}: {device['type']} {device['state']}"
@@ -2157,7 +2493,7 @@ def system_info_lines(data: dict) -> list:
     lines.extend(
         [
             "",
-            "Storage",
+            tr("Storage"),
             f"  /              {disk_info('/')}",
             f"  /tmp           {disk_info('/tmp')}",
             f"  /boot/firmware {disk_info('/boot/firmware')}",
@@ -2170,14 +2506,14 @@ def diagnostic_lines(data: dict) -> list:
     """Low-level details for support, kept out of the main About page."""
     display = str(data.get("display", ""))
     return [
-        f"Host: {platform.node() or 'unknown'}",
-        f"Kernel: {platform.release()}",
-        f"CPU temp: {cpu_temperature()}",
-        f"Load: {load_info()}",
-        f"HDMI: {hdmi_status_text()}",
-        f"HDMI EDID: {hdmi_edid_size()} bytes",
-        f"Display mode: {DISPLAY_LABELS.get(display, display)}",
-        f"Autologin: {autologin_status()}",
+        f"{tr('Host:')} {platform.node() or tr('unknown')}",
+        f"{tr('Kernel:')} {platform.release()}",
+        f"{tr('CPU temp:')} {cpu_temperature()}",
+        f"{tr('Load:')} {load_info()}",
+        f"{tr('HDMI:')} {tr(hdmi_status_text())}",
+        f"{tr('HDMI EDID:')} {hdmi_edid_size()} {tr('bytes')}",
+        f"{tr('Display mode:')} {tr(DISPLAY_LABELS.get(display, display))}",
+        f"{tr('Autologin:')} {tr(autologin_status())}",
     ]
 
 
@@ -2185,10 +2521,56 @@ def keyboard_status(data: dict) -> str:
     mode = data.get("keyboard_layout", "auto")
     layout = layout_label(active_layout(data))
     if mode == "cpz":
-        return "Built-in keyboard (forced)"
+        return tr("Built-in keyboard (forced)")
     if mode == "standard":
-        return f"Standard: {layout}"
-    return f"Standard: {layout}" if usb_keyboard_present() else "Built-in keyboard"
+        return tr("Standard: {layout}", layout=layout)
+    return (
+        tr("Standard: {layout}", layout=layout)
+        if usb_keyboard_present()
+        else tr("Built-in keyboard")
+    )
+
+
+def pointer_status() -> dict[str, str]:
+    """Read the effective mouse/cursor state from cpz-pointer."""
+    global _POINTER_STATUS
+    now = time.monotonic()
+    if _POINTER_STATUS and now - _POINTER_STATUS[0] < 2.0:
+        return _POINTER_STATUS[1]
+
+    values = {"mouse": "unknown", "cursor": "unknown"}
+    helper = "/usr/local/bin/cpz-pointer"
+    if os.path.exists(helper):
+        try:
+            result = subprocess.run(
+                (helper, "--json"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                check=False,
+                timeout=2,
+            )
+            if result.returncode == 0:
+                parsed = json.loads(result.stdout)
+                if isinstance(parsed, dict):
+                    for key in values:
+                        value = parsed.get(key)
+                        if isinstance(value, str):
+                            values[key] = value
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            pass
+    _POINTER_STATUS = (now, values)
+    return values
+
+
+def mouse_support_text(data: dict) -> str:
+    """Show the toggle state and the detected mouse in one row."""
+    state = tr("On") if data.get("mouse") else tr("Off")
+    detected = {
+        "connected": tr("Connected"),
+        "disconnected": tr("Not connected"),
+    }.get(pointer_status()["mouse"], tr("Unknown"))
+    return f"{state} · {detected}"
 
 
 def reload_keyboard_layout(screen) -> int:
@@ -2255,6 +2637,10 @@ def shortcut_from_char(value: int, alt_prefix: bool = False) -> str:
         value -= 128
     if not (alt_prefix or meta):
         return ""
+    if value == 9:
+        return "M-Tab"
+    if value == curses.KEY_BTAB:
+        return "M-BTab"
     if value == ord(" "):
         return "M-Space"
     if 0 <= value < 128 and re.fullmatch(r"[a-z0-9]", chr(value)):
@@ -2266,9 +2652,9 @@ def capture_shortcut(screen, action: dict) -> str | None:
     """Ask for a new Alt+key. Returns a key, ``reset``, or None on cancel."""
     popup = modal_window(
         screen,
-        "Rebind " + action["label"],
+        tr("Rebind {name}", name=tr(action["label"])),
         "Press the new shortcut.\n\n"
-        "Alt+letter, Alt+digit or Alt+Space.\n"
+        "Alt+letter, Alt+digit, Alt+Space or Alt+Tab.\n"
         "Backspace restores the default.\n"
         "Esc cancels.",
         "Alt+key  Backspace reset  Esc cancel",
@@ -2282,7 +2668,7 @@ def capture_shortcut(screen, action: dict) -> str | None:
             if first in (10, 13):
                 return None
             if first == 27:
-                # tmux/kmscon send Alt as ESC followed by the key. A bare Esc
+                # tmux/foot send Alt as ESC followed by the key. A bare Esc
                 # has no second byte; the short timeout keeps Esc usable as
                 # "cancel" without swallowing an Alt combination.
                 popup.timeout(150)
@@ -2408,6 +2794,19 @@ def filter_rows(rows, query: str) -> list:
     ]
 
 
+def filter_item_indices(items: list, values: list, query: str) -> list[int]:
+    """Indices of the rows whose label or current value matches the query."""
+    needle = query.casefold()
+    if not needle:
+        return list(range(len(items)))
+    return [
+        index
+        for index, (item, value) in enumerate(zip(items, values))
+        if needle in str(item.get("label", "")).casefold()
+        or needle in str(value).casefold()
+    ]
+
+
 def draw_layouts(
     screen, data: dict, shown: list, selected: int, query: str, searching: bool
 ) -> None:
@@ -2415,11 +2814,9 @@ def draw_layouts(
     height, width = screen.getmaxyx()
     left = SCREEN_PAD
     cw = content_width(width)
-    put(screen, 0, left, "Layouts", curses.A_BOLD)
+    put(screen, 0, left, tr("Layouts"), curses.A_BOLD)
     if searching or query:
         put(screen, 1, left, f"/{query}" + ("_" if searching else ""))
-    else:
-        put(screen, 1, left, "-" * cw)
 
     enabled = set(layout_codes(data))
     active = active_layout(data)
@@ -2433,12 +2830,12 @@ def draw_layouts(
     for offset, (code, label) in enumerate(shown[first : first + visible]):
         row = first + offset
         mark = "[x]" if code in enabled else "[ ]"
-        suffix = "  Active" if code == active else ""
+        suffix = "  " + tr("Active") if code == active else ""
         text = f"{'>' if row == selected else ' '} {mark} {label[:26]:<26}{suffix}"
         attr = curses.A_REVERSE if row == selected else 0
         put(screen, top + offset, left, text.ljust(cw), attr)
     if not shown:
-        put(screen, top, left + 1, "No matches")
+        put(screen, top, left + 1, tr("No matches"))
 
     if first > 0:
         put(screen, 1, left + cw - 1, "^")
@@ -2446,10 +2843,10 @@ def draw_layouts(
         put(screen, 1, left + cw - 1, "v" if first == 0 else "*")
 
     if searching:
-        footer = "Type to filter  Enter keep  Esc clear"
+        footer = tr("Type to filter  Enter keep  Esc clear")
     else:
-        footer = "F/X move  Space toggle  / filter  q back"
-    put(screen, height - 1, left, footer)
+        footer = tr("F/X move  Space toggle  / filter  q back")
+    put(screen, height - 1, left, footer, hint_attr())
     screen.refresh()
 
 
@@ -2468,6 +2865,11 @@ def layouts_screen(screen, data: dict) -> None:
         selected = max(0, min(selected, len(shown) - 1))
         draw_layouts(screen, data, shown, selected, query, searching)
         key = screen.getch()
+        if key == curses.KEY_MOUSE:
+            wheel = read_wheel_key()
+            if wheel is None:
+                continue
+            key = wheel
 
         if searching:
             if key == 27:
@@ -2560,11 +2962,9 @@ def draw_timezone(
     height, width = screen.getmaxyx()
     left = SCREEN_PAD
     cw = content_width(width)
-    put(screen, 0, left, "Time Zone", curses.A_BOLD)
+    put(screen, 0, left, tr("Time Zone"), curses.A_BOLD)
     if searching or query:
         put(screen, 1, left, f"/{query}" + ("_" if searching else ""))
-    else:
-        put(screen, 1, left, "-" * cw)
 
     top = 2
     visible = max(1, height - 3)
@@ -2580,7 +2980,7 @@ def draw_timezone(
         attr = curses.A_REVERSE if row == selected else 0
         put(screen, top + offset, left, text.ljust(cw), attr)
     if not shown:
-        put(screen, top, left + 1, "No matches")
+        put(screen, top, left + 1, tr("No matches"))
 
     if first > 0:
         put(screen, 1, left + cw - 1, "^")
@@ -2588,10 +2988,10 @@ def draw_timezone(
         put(screen, 1, left + cw - 1, "v" if first == 0 else "*")
 
     if searching:
-        footer = "Type to filter  Enter keep  Esc clear"
+        footer = tr("Type to filter  Enter keep  Esc clear")
     else:
-        footer = "F/X move  Enter set  / filter  q back"
-    put(screen, height - 1, left, footer)
+        footer = tr("F/X move  Enter set  / filter  q back")
+    put(screen, height - 1, left, footer, hint_attr())
     screen.refresh()
 
 
@@ -2608,6 +3008,11 @@ def timezone_screen(screen) -> None:
         selected = max(0, min(selected, len(shown) - 1))
         draw_timezone(screen, shown, selected, query, searching, current)
         key = screen.getch()
+        if key == curses.KEY_MOUSE:
+            wheel = read_wheel_key()
+            if wheel is None:
+                continue
+            key = wheel
 
         if searching:
             if key == 27:
@@ -2725,11 +3130,12 @@ PKG_CORE = frozenset(
         "apt",
         "bash",
         "bluez",
+        "cage",
         "coreutils",
         "dpkg",
         "fonts-terminus-otb",
+        "foot",
         "iw",
-        "kmscon",
         "ncurses-term",
         "network-manager",
         "pipewire",
@@ -3611,7 +4017,7 @@ def pause_for_close() -> None:
     if not sys.stdin.isatty():
         return
     try:
-        input("\nPress Enter to close.")
+        input("\n" + tr("Press Enter to close."))
     except EOFError:
         pass
 
@@ -3711,7 +4117,7 @@ def simulate_removal(name: str) -> list[str] | None:
 def draw_loading(screen, text: str) -> None:
     screen.erase()
     height, _width = screen.getmaxyx()
-    put(screen, max(0, height // 2), SCREEN_PAD, " " + text)
+    put(screen, max(0, height // 2), SCREEN_PAD, " " + tr(text))
     screen.refresh()
 
 
@@ -3732,30 +4138,34 @@ def draw_trove_list(
     height, width = screen.getmaxyx()
     left = SCREEN_PAD
     cw = content_width(width)
-    title = "Applications"
+    title = tr("Applications")
     if index_count:
-        title += f" · {len(tools)} of {index_count}"
+        title += " · " + tr("{count} of {total}", count=len(tools), total=index_count)
     else:
-        title += " · catalog not downloaded"
+        title += " · " + tr("catalog not downloaded")
     put(screen, 0, left, title, curses.A_BOLD)
 
     tab_x = left
-    for text, tab_mode in ((" Browse ", "browse"), (" Installed ", "installed")):
-        piece = f" {text.strip()} "
+    for text, tab_mode in (
+        (" " + tr("Browse") + " ", "browse"),
+        (" " + tr("Installed") + " ", "installed"),
+    ):
+        piece = text
         attr = curses.A_REVERSE if mode == tab_mode else curses.A_DIM
         put(screen, 1, tab_x, piece, attr)
         tab_x += len(piece)
-    put(screen, 1, tab_x + 1, "Tab", curses.A_DIM)
+    put(screen, 1, tab_x + 1, tr("Tab"), curses.A_DIM)
 
     if search_active:
-        put(screen, 2, left, f"Search: {query}_")
+        put(screen, 2, left, tr("Search: {query}", query=query) + "_")
     elif mode == "browse":
-        filters = [f"Category: {category_label}", f"Language: {language_label}"]
+        filters = [
+            tr("Category: {label}", label=category_label),
+            tr("Language: {label}", label=language_label),
+        ]
         if apt_only:
-            filters.insert(0, "Apt only")
+            filters.insert(0, tr("Apt only"))
         put(screen, 2, left, (" " + " · ".join(filters))[:cw])
-    else:
-        put(screen, 2, left, "-" * cw)
 
     top = 3
     list_bottom = max(top + 1, height - 2)
@@ -3796,7 +4206,7 @@ def draw_trove_list(
             message = "No apt tools match. Press a for all."
         else:
             message = "No matches. Esc clears the filter."
-        put(screen, top, left + 1, message)
+        put(screen, top, left + 1, tr(message))
     if first > 0:
         put(screen, top, left + cw - 1, "^")
     if first + visible < len(tools):
@@ -3808,14 +4218,14 @@ def draw_trove_list(
         put(screen, summary_y, left + 1, str(chosen.get("summary", "")))
 
     if search_active:
-        hint = "Type to filter  Enter keep  Esc clear"
+        hint = tr("Type to filter  Enter keep  Esc clear")
     elif not index_count:
-        hint = "u download catalog  q back"
+        hint = tr("u download catalog  q back")
     elif mode == "browse":
-        hint = "F/X move  / search  Enter info  i install  q back"
+        hint = tr("F/X move  / search  Enter info  i install  q back")
     else:
-        hint = "F/X move  / search  Enter info  e run  q back"
-    put(screen, height - 1, left, hint)
+        hint = tr("F/X move  / search  Enter info  e run  q back")
+    put(screen, height - 1, left, hint, hint_attr())
     screen.refresh()
 
 
@@ -3841,21 +4251,32 @@ def trove_details_screen(
         height, _width = screen.getmaxyx()
         title = str(tool.get("name", tool.get("slug", "?")))
         put(screen, 0, left, title, curses.A_BOLD)
-        put(screen, 1, left, "-" * cw)
         visible = max(1, height - 4)
         offset = max(0, min(offset, max(0, len(lines) - visible)))
         for index in range(visible):
             line = lines[offset + index] if offset + index < len(lines) else ""
-            put(screen, 2 + index, left, line)
+            put(screen, 2 + index, left, tr(line))
         put(
             screen,
             height - 1,
             left,
-            "F/X scroll i install d remove e run q",
+            tr("F/X scroll i install d remove e run q"),
+            hint_attr(),
         )
         screen.refresh()
 
         key = screen.getch()
+        if key == curses.KEY_MOUSE:
+            event = read_mouse()
+            if event is None:
+                continue
+            delta = mouse_wheel_delta(event[2])
+            if delta:
+                offset = max(
+                    0,
+                    min(max(0, len(lines) - visible), offset + delta),
+                )
+            continue
         if key in (ord("q"), ord("Q"), 27):
             return
         if key in NAV_UP:
@@ -4055,11 +4476,19 @@ def run_trove_app(
         command = managed_trove_command(record, available)
     if not command:
         return "No runnable command found"
-    run_interactive(screen, [command])
+    # The tmux server predates cage, so it does not hold WAYLAND_DISPLAY or
+    # XAUTHORITY. cpz-run applies the environment published by foot before
+    # starting the app.
+    runner = "/usr/local/bin/cpz-run"
+    command_line = [runner, command] if os.access(runner, os.X_OK) else [command]
+    run_interactive(screen, command_line)
     return None
 
 
 def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
+    data = load_settings()
+    apply_language(data["language"])
+    enable_mouse()
     draw_loading(screen, "Loading app catalog...")
     index = load_trove_index()
     tools = index.get("tools", [])
@@ -4142,6 +4571,11 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             apt_only=apt_only,
         )
         key = screen.getch()
+        if key == curses.KEY_MOUSE:
+            wheel = read_wheel_key()
+            if wheel is None:
+                continue
+            key = wheel
 
         if key == 9:  # Tab
             mode = "installed" if mode == "browse" else "browse"
@@ -4363,8 +4797,16 @@ def reset_settings_action(screen, data) -> str | None:
     data.clear()
     data.update(DEFAULTS)
     save_settings(data)
+    # Apply the fast path once. Calling apply_live for theme, font_size and
+    # display would queue several terminal replacements and output runs for the
+    # same reset.
     for name in data:
+        if name in ("theme", "font_size", "display"):
+            continue
         apply_live(data, name)
+    apply_theme(data["theme"])
+    reload_foot()
+    request_output_apply()
     try:
         keys = keys_module()
         keys.clear_all_overrides()
@@ -4391,10 +4833,13 @@ PAGE_TITLES = {
     "display": "Display",
     "power": "Power",
     "security": "Security",
-    "keyboard": "Keyboard",
+    "keyboard": "Input",
     "shortcuts": "Shortcuts",
     "system": "System",
 }
+
+# Pages with more unrelated rows than fit on the panel get type-to-filter.
+FILTERABLE_PAGES = ("shortcuts",)
 
 
 def initial_stack(page: str | None, data: dict) -> list[tuple[str, int]]:
@@ -4419,7 +4864,7 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "page": "display",
             },
             {"label": "Sound", "kind": "submenu", "page": "sound"},
-            {"label": "Keyboard", "kind": "submenu", "page": "keyboard"},
+            {"label": "Input", "kind": "submenu", "page": "keyboard"},
             {"label": "Date & Time", "kind": "submenu", "page": "datetime"},
             {"label": "Power", "kind": "submenu", "page": "power"},
             {
@@ -4456,6 +4901,14 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
             )
         items.append(
             {
+                "label": "Mouse Support",
+                "kind": "toggle",
+                "key": "mouse",
+                "get": mouse_support_text,
+            }
+        )
+        items.append(
+            {
                 "label": "Shortcuts",
                 "kind": "submenu",
                 "page": "shortcuts",
@@ -4486,13 +4939,6 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "key": "brightness",
                 "values": tuple(range(10, 101, 5)),
                 "labels": {value: f"{value}%" for value in range(10, 101, 5)},
-            },
-            {
-                "label": "Screen Timeout",
-                "kind": "cycle",
-                "key": "screen_timeout",
-                "values": SCREEN_TIMEOUTS,
-                "labels": SCREEN_TIMEOUT_LABELS,
             },
             {
                 "label": "Display Output",
@@ -4560,14 +5006,14 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
         return status_items
     if name == "terminal":
         return [
-            {"label": "Mouse Support", "kind": "toggle", "key": "mouse"},
             {
                 "label": "Scrollback",
                 "kind": "cycle",
                 "key": "history_limit",
                 "values": HISTORY_CHOICES,
                 "labels": {
-                    value: f"{value:,} lines" for value in HISTORY_CHOICES
+                    value: tr("{value} lines", value=f"{value:,}")
+                    for value in HISTORY_CHOICES
                 },
             },
             {
@@ -4745,6 +5191,13 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
         ]
     if name == "system":
         return [
+            {
+                "label": "Language",
+                "kind": "cycle",
+                "key": "language",
+                "values": language_codes,
+                "labels": language_labels(),
+            },
             {"label": "About", "kind": "action", "action": show_system},
             {
                 "label": "System Monitor",
@@ -4793,6 +5246,8 @@ def select_popup(screen, item: dict, data: dict):
     selected = values.index(current) if current in values else 0
     title = item.get("label", "Select")
     hint = "F/X move  Enter apply  Esc cancel"
+    title = tr(title)
+    hint = tr(hint)
 
     height, width = screen.getmaxyx()
     popup_height = min(max(len(values) + 6, 8), max(6, height - 2), 16)
@@ -4825,7 +5280,7 @@ def select_popup(screen, item: dict, data: dict):
         draw_modal_frame(popup, title, hint)
         for offset, value in enumerate(values[first : first + visible]):
             row = first + offset
-            label = str(labels.get(value, value))
+            label = tr(str(labels.get(value, value)))
             text = f"{'>' if row == selected else ' '} {label}"
             attr = curses.A_REVERSE if row == selected else 0
             put(
@@ -4838,6 +5293,49 @@ def select_popup(screen, item: dict, data: dict):
         popup.refresh()
 
         key = popup.getch()
+        if key == curses.KEY_MOUSE:
+            event = read_mouse()
+            if event is None:
+                continue
+            _mx, my, bstate = event
+            delta = mouse_wheel_delta(bstate)
+            if delta:
+                selected = max(0, min(len(values) - 1, selected + delta))
+                if selected < first:
+                    first = selected
+                elif selected >= first + visible:
+                    first = selected - visible + 1
+                first = max(0, min(first, max(0, len(values) - visible)))
+                continue
+            popup_top = popup.getbegyx()[0]
+            local_y = my - popup_top
+            if 2 <= local_y < 2 + visible:
+                row = first + (local_y - 2)
+                if row < len(values):
+                    if bstate & (
+                        curses.BUTTON1_DOUBLE_CLICKED
+                        | curses.BUTTON1_TRIPLE_CLICKED
+                    ):
+                        selected = row
+                        key = 10
+                    elif bstate & (
+                        curses.BUTTON1_CLICKED | curses.BUTTON1_PRESSED
+                    ):
+                        selected = row
+                        if selected < first:
+                            first = selected
+                        elif selected >= first + visible:
+                            first = selected - visible + 1
+                        first = max(
+                            0, min(first, max(0, len(values) - visible))
+                        )
+                        continue
+                    else:
+                        continue
+                else:
+                    continue
+            else:
+                continue
         if key in (*NAV_LEFT, ord("q"), ord("Q"), 27):
             del popup
             return None
@@ -4862,14 +5360,27 @@ def select_popup(screen, item: dict, data: dict):
         first = max(0, min(first, max(0, len(values) - visible)))
 
 
-def draw_page(screen, title: str, items: list, values: list, selected: int, data: dict, issues: list[str], is_main: bool, hint: str = "") -> None:
+def draw_page(
+    screen,
+    title: str,
+    items: list,
+    values: list,
+    selected: int,
+    data: dict,
+    issues: list[str],
+    is_main: bool,
+    hint: str = "",
+    query: str = "",
+    searching: bool = False,
+    searchable: bool = False,
+) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
     left = SCREEN_PAD
     cw = content_width(width)
-    put(screen, 0, left, title, curses.A_BOLD)
+    put(screen, 0, left, tr(title), curses.A_BOLD)
     if is_main and issues:
-        warning = "! " + " + ".join(issues)
+        warning = "! " + " + ".join(tr(issue) for issue in issues)
         put(
             screen,
             1,
@@ -4877,22 +5388,19 @@ def draw_page(screen, title: str, items: list, values: list, selected: int, data
             warning[:cw].ljust(cw),
             curses.A_REVERSE | curses.A_BOLD,
         )
-    else:
-        put(screen, 1, left, "-" * cw)
+    elif searching or query:
+        put(screen, 1, left, f"/{query}" + ("_" if searching else ""))
 
-    top = 2
-    visible = max(1, height - 1 - top)
-    first = 0
-    if selected >= visible:
-        first = selected - visible + 1
-    first = max(0, min(first, max(0, len(items) - visible)))
+    top, visible, first = page_geometry(selected, len(items), height)
+    if not items:
+        put(screen, top, left + 1, tr("No matches"))
 
     for offset, item in enumerate(items[first : first + visible]):
         row = first + offset
         y = top + offset
         value = values[row] if row < len(values) else item_value(item, data)
         label = item.get("label", "")
-        text = f"{'>' if row == selected else ' '} {label:<16} {value}"
+        text = f"{'>' if row == selected else ' '} {tr(label):<16} {tr(value)}"
         attr = curses.A_REVERSE if row == selected else 0
         put(screen, y, left, text.ljust(cw), attr)
 
@@ -4902,9 +5410,9 @@ def draw_page(screen, title: str, items: list, values: list, selected: int, data
         put(screen, 1, left + cw - 1, "v" if first == 0 else "*")
 
     if hint:
-        footer = hint
+        footer = tr(hint)
     else:
-        kind = items[selected].get("kind") if items else "info"
+        kind = items[selected].get("kind") if items and selected < len(items) else "info"
         if kind in ("submenu", "action"):
             action = "Enter open"
         elif kind == "info":
@@ -4917,9 +5425,12 @@ def draw_page(screen, title: str, items: list, values: list, selected: int, data
             action = "Z/C change  Enter list"
         else:
             action = "Z/C change"
-        parts = ["F/X move"] + ([action] if action else []) + ["q " + ("close" if is_main else "back")]
+        parts = [tr("F/X move")] + ([tr(action)] if action else [])
+        if searchable:
+            parts.append(tr("/ filter"))
+        parts.append(tr("q close") if is_main else tr("q back"))
         footer = "  ".join(parts)
-    put(screen, height - 1, left, footer)
+    put(screen, height - 1, left, footer, hint_attr())
     screen.refresh()
 
 
@@ -4929,12 +5440,16 @@ def run(screen, start_page: str | None = None) -> None:
     except curses.error:
         pass
     screen.keypad(True)
+    enable_mouse()
 
     data = load_settings()
+    apply_language(data["language"])
     stack = initial_stack(start_page, data)
     items = []
     values = []
     issues = []
+    query = ""
+    searching = False
     dirty = True
 
     while True:
@@ -4945,6 +5460,8 @@ def run(screen, start_page: str | None = None) -> None:
                 start_page = value
                 data = load_settings()
                 stack = initial_stack(value, data)
+                query = ""
+                searching = False
                 dirty = True
             elif request_kind == "tool":
                 # Applications is an action, not a page, so the catalog runs in
@@ -4953,6 +5470,10 @@ def run(screen, start_page: str | None = None) -> None:
                 data = load_settings()
                 dirty = True
         page_name, selected = stack[-1]
+        searchable = page_name in FILTERABLE_PAGES
+        if not searchable and (query or searching):
+            query = ""
+            searching = False
         if dirty:
             items = page_items(page_name, data, screen)
             if not items:
@@ -4962,7 +5483,10 @@ def run(screen, start_page: str | None = None) -> None:
             values = [item_value(item, data) for item in items]
             issues = security_issues() if page_name == "main" else []
             dirty = False
-        selected = max(0, min(selected, len(items) - 1))
+        visible_items = filter_item_indices(items, values, query)
+        shown = [items[index] for index in visible_items]
+        shown_values = [values[index] for index in visible_items]
+        selected = max(0, min(selected, len(shown) - 1)) if shown else 0
         stack[-1] = (page_name, selected)
         title = PAGE_TITLES.get(page_name, page_name.title())
         if len(stack) > 2:
@@ -4971,42 +5495,111 @@ def run(screen, start_page: str | None = None) -> None:
         draw_page(
             screen,
             title,
-            items,
-            values,
+            shown,
+            shown_values,
             selected,
             data,
             issues,
             page_name == "main" or (start_page is not None and len(stack) == 1),
+            query=query,
+            searching=searching,
+            searchable=searchable,
         )
         key = screen.getch()
+
+        if key == curses.KEY_MOUSE:
+            event = read_mouse()
+            if event is None:
+                continue
+            _mx, my, bstate = event
+            delta = mouse_wheel_delta(bstate)
+            if delta:
+                selected = max(0, min(len(shown) - 1, selected + delta))
+                stack[-1] = (page_name, selected)
+                continue
+            top, visible, first = page_geometry(
+                selected, len(shown), screen.getmaxyx()[0]
+            )
+            row = page_row_at(my, top, first, visible, len(shown))
+            if row is None:
+                continue
+            if bstate & (curses.BUTTON1_DOUBLE_CLICKED | curses.BUTTON1_TRIPLE_CLICKED):
+                selected = row
+                stack[-1] = (page_name, selected)
+                key = 10
+            elif bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_PRESSED):
+                stack[-1] = (page_name, row)
+                continue
+            else:
+                continue
+
+        if searching:
+            if key == 27:
+                if query:
+                    query = ""
+                    selected = 0
+                else:
+                    searching = False
+                continue
+            if key in (10, 13):
+                # Keep the filter and return to normal navigation.
+                searching = False
+                continue
+            if key in (curses.KEY_BACKSPACE, 8, 127):
+                if query:
+                    query = query[:-1]
+                selected = 0
+                continue
+            if shown and key in (curses.KEY_UP, curses.KEY_PPAGE):
+                selected = (selected - 1) % len(shown)
+                continue
+            if shown and key in (curses.KEY_DOWN, curses.KEY_NPAGE):
+                selected = (selected + 1) % len(shown)
+                continue
+            if 32 <= key < 127:
+                query += chr(key)
+                selected = 0
+                continue
+            continue
+
+        if key == ord("/") and searchable:
+            searching = True
+            continue
+
+        if key == 27 and query:
+            query = ""
+            selected = 0
+            continue
 
         if key in (ord("q"), ord("Q"), 27):
             if len(stack) > 1:
                 stack.pop()
                 data = load_settings()
+                query = ""
+                searching = False
                 dirty = True
                 continue
             return
-        if key in NAV_UP:
-            stack[-1] = (page_name, (selected - 1) % len(items))
+        if shown and key in NAV_UP:
+            stack[-1] = (page_name, (selected - 1) % len(shown))
             continue
-        if key in NAV_DOWN:
-            stack[-1] = (page_name, (selected + 1) % len(items))
+        if shown and key in NAV_DOWN:
+            stack[-1] = (page_name, (selected + 1) % len(shown))
             continue
         if key in (curses.KEY_PPAGE, curses.KEY_NPAGE, curses.KEY_HOME, curses.KEY_END):
             page = max(1, screen.getmaxyx()[0] - 3)
             if key == curses.KEY_PPAGE:
                 selected = max(0, selected - page)
             elif key == curses.KEY_NPAGE:
-                selected = min(len(items) - 1, selected + page)
+                selected = min(len(shown) - 1, selected + page)
             elif key == curses.KEY_HOME:
                 selected = 0
             else:
-                selected = len(items) - 1
+                selected = max(0, len(shown) - 1)
             stack[-1] = (page_name, selected)
             continue
 
-        item = items[selected]
+        item = shown[selected] if shown else {"kind": "info"}
         kind = item.get("kind")
         if kind == "submenu":
             if key in (*NAV_RIGHT, ord(" "), 10, 13):
@@ -5014,6 +5607,8 @@ def run(screen, start_page: str | None = None) -> None:
                 stack.append(
                     (item["page"], page_initial_index(item["page"], data))
                 )
+                query = ""
+                searching = False
                 dirty = True
             continue
         if kind == "action":
@@ -5093,8 +5688,9 @@ def main() -> int:
     if "--check-pages" in arguments:
         return check_pages()
     if "--list-pages" in arguments:
+        set_language(load_settings()["language"])
         for page, title in PAGE_TITLES.items():
-            print(f"{page}\t{title}")
+            print(f"{page}\t{tr(title)}")
         return 0
     if "--list-tools" in arguments:
         print(json.dumps(list_tools_payload(), ensure_ascii=False))

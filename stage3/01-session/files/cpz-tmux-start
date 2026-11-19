@@ -1,0 +1,33 @@
+#!/bin/sh
+# Create or ensure the CPZ tmux session.
+#
+# This helper runs as the console user from cpz-tmux.service, independently of
+# cage and foot. tmux is therefore not killed when the compositor restarts: the
+# next foot attaches to the same tabs and panes.
+set -eu
+
+# tmux starts its server without a controlling terminal. The service sets
+# HOME, XDG_RUNTIME_DIR and PATH; keep the rest of the first-boot path quiet.
+tmux start-server 2>/dev/null || true
+
+# cage is pixman-only: accelerated SDL renderers allocate dmabuf buffers it
+# cannot import, which is the HDMI cursor-only/black-window failure. Keep the
+# SDL software path.
+tmux set-environment -g SDL_VIDEODRIVER wayland 2>/dev/null || true
+tmux set-environment -g SDL_RENDER_DRIVER software 2>/dev/null || true
+
+# Suppress the hooks while restoring a saved layout.
+tmux set -g @cpz_restoring 1 2>/dev/null || true
+
+if ! tmux has-session -t '=main' 2>/dev/null; then
+	tmux new-session -d -s main -n shell
+	tmux set-option -w -t '=main:1' @cpz_main 1
+	/usr/local/bin/cpz-session-restore main || true
+fi
+
+tmux set -g @cpz_restoring 0 2>/dev/null || true
+
+# Build the Settings tab and enforce the shell-window order in the background.
+# tmux can attach immediately; the session-created hook is the normal path, but
+# this covers a server whose config was loaded before the session existed.
+/usr/local/bin/cpz-session-ensure main >/dev/null 2>&1 &

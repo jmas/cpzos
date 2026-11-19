@@ -1,0 +1,28 @@
+#!/bin/sh
+# Autologin wrapper for the CPZ tty1 session.
+#
+# A getty/login session on tty1 is what gives cage a proper logind session and
+# seat. The profile script then replaces the login shell with cpz-cage. Resolve
+# uid 1000 here so an Imager/rpi-preseed rename does not leave a stale
+# --autologin name in the unit.
+set -eu
+
+vt=${1:-tty1}
+case "$vt" in
+	tty[0-9]*) ;;
+	[0-9]*) vt="tty$vt" ;;
+	*) vt=tty1 ;;
+esac
+
+if [ -f /etc/cpz-debug-boot ]; then
+	exec /sbin/agetty --noclear "$vt" linux
+fi
+
+user=$(getent passwd 1000 | cut -d: -f1 || true)
+case "$user" in
+	[a-z]*) ;;
+	*) exit 1 ;;
+esac
+printf '%s\n' "$user" | grep -Eq '^[a-z][-a-z0-9_]*$' || exit 1
+
+exec /sbin/agetty --autologin "$user" --noclear "$vt" linux

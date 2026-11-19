@@ -1,0 +1,15 @@
+[Unit]
+Description=Watch HDMI hotplug and keep the CPZ cage output correct
+
+[Timer]
+# 99-cpz-cage-output.rules starts the service immediately on a DRM hotplug, so
+# this timer only covers changes that do not emit a uevent (a settings file
+# edit, a lost event). Keep it slow: waking the CPU every second is wasted
+# battery on a handheld.
+OnBootSec=5s
+OnUnitActiveSec=5s
+AccuracySec=1s
+Unit=cpz-cage-output.service
+
+[Install]
+WantedBy=timers.target

@@ -11,7 +11,7 @@
 #   cpz-battery status  print the gauge values
 #   cpz-battery check   exit 0 ok/charging/unknown, 1 low, 2 critical
 #   cpz-battery guard   monitor loop used by cpz-battery-guard.service
-#   cpz-battery boot    boot-time check used by cpz-login
+#   cpz-battery boot    boot-time check used by the tty1 getty
 #
 # Thresholds live in /etc/cpz/battery.conf.
 set -u
@@ -328,14 +328,16 @@ guard() {
 }
 
 boot_check() {
-	# udev may still be probing the gauge when kmscon starts. Wait briefly
-	# instead of deciding "no battery" on the first boot.
+	# udev may still be probing the gauge when getty starts. Wait briefly
+	# instead of deciding "no battery" on the first boot. This runs before the
+	# login prompt, so keep the total wait small; the gauge normally appears
+	# within the first few hundred milliseconds.
 	tries=0
-	while [ "$tries" -lt 10 ]; do
+	while [ "$tries" -lt 15 ]; do
 		if read_battery && [ -n "$capacity" ]; then
 			break
 		fi
-		sleep 1
+		sleep 0.2
 		tries=$((tries + 1))
 	done
 	[ -n "$capacity" ] || return 0
@@ -403,8 +405,21 @@ case "${1:-}" in
 	check) check_state ;;
 	guard) guard ;;
 	boot)
+		# The tty1 getty runs this before every login, including the compositor
+		# restarts used to switch between the panel and HDMI. The low-battery
+		# guard matters once per boot (the fuel gauge is often busy while the
+		# old session is still shutting down, which costs the full retry
+		# budget). Remember the result instead of re-reading the gauge on each
+		# switch.
+		if [ -e "$RUN_DIR/cpz-battery.boot-checked" ]; then
+			exit 0
+		fi
 		boot_check
-		exit $?
+		rc=$?
+		if [ "$rc" -eq 0 ]; then
+			: >"$RUN_DIR/cpz-battery.boot-checked" 2>/dev/null || true
+		fi
+		exit "$rc"
 		;;
 	*)
 		printf 'usage: %s status|check|guard|boot\n' "$0" >&2

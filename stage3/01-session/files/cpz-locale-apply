@@ -1,0 +1,45 @@
+#!/bin/sh
+# Apply the system language selected in Settings > System > Language.
+#
+# Runs as root through /etc/sudoers.d/50-cpz-locale. The language code is
+# validated here, so sudo cannot be used to write arbitrary locale names.
+set -u
+
+code=${1:-}
+case "$code" in
+	en)
+		target=en_US.UTF-8
+		pattern='^en_US\.(utf-?8)$'
+		;;
+	uk)
+		target=uk_UA.UTF-8
+		pattern='^uk_UA\.(utf-?8)$'
+		;;
+	de)
+		target=de_DE.UTF-8
+		pattern='^de_DE\.(utf-?8)$'
+		;;
+	*)
+		echo "usage: cpz-locale-apply en|uk|de" >&2
+		exit 2
+		;;
+esac
+
+if ! locale -a | grep -Eiq "$pattern"; then
+	echo "cpz-locale-apply: $target is not generated" >&2
+	exit 1
+fi
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT INT TERM
+printf 'LANG=%s\nLC_MESSAGES=%s\nLC_TIME=%s\n' \
+	"$target" "$target" "$target" >"$tmp"
+
+# localectl updates systemd's view and /etc/locale.conf. Debian login and PAM
+# also read /etc/default/locale, so keep both files in sync.
+if command -v localectl >/dev/null 2>&1; then
+	localectl set-locale "LANG=$target" "LC_MESSAGES=$target" \
+		"LC_TIME=$target" >/dev/null 2>&1 || true
+fi
+install -m 0644 "$tmp" /etc/locale.conf
+install -m 0644 "$tmp" /etc/default/locale

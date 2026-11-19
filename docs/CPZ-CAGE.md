@@ -87,39 +87,62 @@ same settings as before:
 | `display=panel` | panel only; HDMI is not driven |
 | `display=hdmi` | HDMI while connected, panel otherwise |
 
-Auto and `display=hdmi` give cage both DRM cards in the order
-`panel:HDMI` (`WLR_DRM_DEVICES=/dev/dri/card1:/dev/dri/card0`). cage's
-`-m last` keeps the last-added output enabled: at boot HDMI wins when
-connected; a hotplug adds HDMI at the head and disables the panel; unplugging
-removes HDMI and re-enables the panel. **No compositor restart is needed for a
-normal HDMI plug/unplug.**
+Auto and `display=hdmi` hand cage **only the selected DRM card**, as the
+primary device. In auto mode that is `/dev/dri/card0` (vc4 HDMI) while a usable
+monitor is attached, and `/dev/dri/card1` (SPI panel) otherwise. A target
+change rewrites `session.env` and restarts the compositor.
 
-The selected target is kept in `/run/cpz-cage/output.state`; it is deliberately
-**not** written to `session.env`. The cage environment contains only the DRM
-devices, renderer and XKB layout, so a target change does not make
-`cpz-cage-output` restart a perfectly good session. `display=panel` pins the
-panel card instead, which is the one case where changing the setting must
-change the environment and restart the compositor. Auto also keeps the panel
-card while a connected monitor has not exposed a readable EDID yet; the
-hotplug unit waits for it, and `CPZ_HDMI_VIDEO` pins a mode for monitors that
-never expose one.
+The reason is a wlroots limitation, not a CPZ preference: the panel card has no
+render node and the pixman renderer cannot render on a secondary GPU. Handing
+cage `panel:HDMI` made the vc4 output secondary; its cursor plane worked, but
+the composited terminal never appeared and the output flickered as page flips
+failed. Running HDMI as the primary card avoids that path entirely.
+`CPZ_HDMI_VIDEO` still pins a kernel mode for monitors that never expose a
+readable EDID; the hotplug unit waits briefly for EDID before deciding.
+
+The selected target is kept in `/run/cpz-cage/output.state`. The card is part
+of `session.env`, because it is also the render device. `display=panel` pins
+the panel card; auto keeps the panel while a connected monitor has not exposed
+a readable EDID yet.
 
 ```text
 panel only       → WLR_DRM_DEVICES=/dev/dri/card1
-panel + HDMI     → WLR_DRM_DEVICES=/dev/dri/card1:/dev/dri/card0
-HDMI only        → WLR_DRM_DEVICES=/dev/dri/card0
+HDMI             → WLR_DRM_DEVICES=/dev/dri/card0
 ```
 
-Both outputs currently use the pixman renderer and dumb buffers. The vc4
-GLES renderer left HDMI with a cursor but no client surface on the CM0, so it
-is not enabled until it is proven on hardware. foot and software SDL clients
-use `wl_shm`. The panel backlight is switched off while HDMI is active and
-restored when the session returns to the panel.
+Both outputs use the pixman renderer and dumb buffers: the panel card has no
+render node, and the HDMI card is primary while it is active, so pixman can
+scan out on it. foot and software SDL clients use `wl_shm`. The panel backlight
+is switched off while HDMI is active and restored when the session returns to
+the panel.
 
-The hotplug unit gives a monitor a short moment to expose its EDID and cage a
-short moment to enable the new output before the panel backlight decision is
-made. If cage still has not enabled HDMI after two runs, the helper performs
-one recovery restart; this is the fallback, not the normal path.
+The backlight is driven by `cpz-panel-backlight`, which writes the m5ioe1 PWM
+channel 3 registers over I2C. The kernel backlight stack cannot do it on 6.18:
+`backlight_disable()` sets `BL_CORE_FBBLANK` and nothing in the mipi-dbi path
+clears it (the 6.18 `mipi_dbi_pipe_enable()` no longer calls
+`backlight_enable()`), so `backlight_is_blank()` stays true and the vendor
+pwm-bl driver never programs the PWM. The driver must stay bound — the panel
+DRM card depends on its device through a device link — so the channel cannot be
+exported through `/sys/class/pwm` either. `cpz-brightness` and the output
+helper both go through this script; the backlight class is only a fallback.
+
+Because a target change restarts cage, the reconciler treats HPD as a signal to
+re-probe, not as a reason to switch on the first sample: leaving a working HDMI
+link requires a second disconnected probe, and entering HDMI is confirmed with
+another probe (auto mode additionally needs two ticks when the EDID is not yet
+readable). That filters the HPD pulses a TV emits while powering up or changing
+inputs. A selected HDMI output that cage never enables counts as a failed
+attempt; after two of them the session returns to the panel and auto stops
+choosing HDMI until the cable is cycled or the user asks for it again. Automatic
+compositor restarts are also limited to one per 20 s, so a monitor cannot be
+made to blink indefinitely: every restart drops the HDMI link, and the display
+visor shows that as flicker.
+
+The env file is sourced with `set -a`. Sourcing alone creates only shell
+variables; cage must actually receive `WLR_DRM_DEVICES` and `WLR_RENDERER`.
+Without them it opens every DRM card and lets wlroots pick GLES2, which dies
+with `GL_OUT_OF_MEMORY` on the vc4 HDMI card — the session then restarts every
+few seconds and the monitor blinks.
 
 Changing the persisted display mode is applied immediately by touching
 `/run/cpz-cage/output.request`, which starts the service through
@@ -128,6 +151,7 @@ five-second timer.
 
 ```sh
 sudo cpz-cage-output --status
+sudo cpz-cage-output --report    # status + env, cage stderr, journal, dmesg
 sudo cpz-cage-output --panel     # force the panel for this run
 sudo cpz-cage-output --hdmi      # force HDMI (falls back when unplugged)
 sudo cpz-cage-output --auto      # follow the setting again
@@ -197,15 +221,34 @@ CEC node with relative axes, and the internal keyboard has a few pointer bits.
 `99-zz-cpz-input.rules` calls `cpz-pointer`, which keeps the keyboard half of
 those devices and strips only the pointer capabilities.
 
+A device that is **only** a pointer and must not be visible (a mouse while
+Mouse Support is off, or any phantom pointer) is moved to
+`ID_SEAT=seat-cpz-no-pointer`. libinput filters by `ID_SEAT` before it
+classifies the device, so cage never receives it, no matter which
+`ID_INPUT_*` tag a later rule restores. A device with a keyboard half stays on
+`seat0` and loses only its pointer tags. `/etc/libinput/local-overrides.quirks`
+additionally disables `EV_REL`/`EV_ABS` on the internal keyboard and the vc4
+HDMI CEC node, so those nodes cannot become pointers even if their tags are
+wrong.
+
 The cursor is visible only when both conditions are true:
 
 1. a real USB/Bluetooth mouse, touchpad, trackball or pointing stick is
    connected;
 2. **Settings → Input → Mouse Support** is on.
 
+A device counts as a mouse only when it exposes an actual pointer button
+(`BTN_MOUSE`, pen/touch contact, or a touchpad button), not merely relative or
+absolute axes. `input_id` tags a keyboard with stray axes as `ID_INPUT_MOUSE`,
+and that tag alone must not bring the cursor back while no mouse is connected.
+As a last-resort ghost-cursor guard, the generated foot configuration sets
+`[mouse] hide-when-typing=yes`: the first keystroke hides a stale client
+cursor even if the compositor still remembers the old pointer capability.
+
 Turning Mouse Support off also disables tmux wheel scrolling and selection.
-The Input page shows the detected mouse and the effective cursor state below
-the toggle; `cpz-pointer --status` prints the same information for diagnostics.
+The Input page shows the state in one row: **Mouse Support** reads `On · Connected`
+or `Off · Not connected`, so the status and the toggle stay together. The
+cursor is visible only when the row says `On · Connected`.
 
 With Mouse Support on, the pointer also works inside the CPZ interfaces:
 Settings rows select on click and open on double-click,
@@ -238,8 +281,11 @@ Until that package is available, `99-zz-cpz-input.rules` marks real pointers
 with `CPZ_REAL_POINTER=1` and starts `cpz-pointer-cursor.service` when one is
 removed. The service runs `cpz-pointer --nudge`: it waits briefly and
 re-adds a keyboard device, which makes cage re-evaluate the seat and unset the
-stale cursor image. No compositor restart is needed. The same nudge runs after
-a Settings change. See `cpz-pointer --status` for the effective pointer state.
+stale cursor image. It then replaces the visible foot. The cursor surface is
+owned by the client, so destroying that client is the only certain way to drop
+a request that arrives after the seat update. No compositor restart is needed.
+The same nudge runs after a Settings change. See `cpz-pointer --status` for the
+effective pointer state.
 
 ## Screen timeout
 
@@ -251,13 +297,14 @@ reserved and does not blank the screen.
 
 ## Boot and hotplug latency
 
-The session no longer waits for HDMI at boot and no longer restarts the
-compositor for a normal HDMI plug/unplug:
+The session no longer waits for HDMI at boot:
 
-- cage starts with the panel immediately and adds HDMI when it appears;
-- `cage -m last` switches outputs in place, and the target is not part of
-  `session.env` (so a target change alone cannot trigger a restart);
-- the hotplug unit waits briefly for EDID and for cage to enable HDMI;
+- cage starts on whichever card `cpz-cage-output --prepare` selected;
+- a target change rewrites `session.env` and restarts the compositor, because
+  the target is also the primary DRM render device (see “One output”);
+- HPD is confirmed with a second probe, so a TV that pulses the link while
+  powering up does not trigger a restart loop;
+- the hotplug unit waits briefly for EDID before deciding;
 - font and theme changes replace only the visible foot;
 - display-mode changes apply through a path unit immediately;
 - the boot-time battery check waits at most 3 s for the gauge;
@@ -356,17 +403,18 @@ systemd logs are visible.
 - **One visible application.** cage does not cycle windows. Close the current
   app to return to foot. Use `sway` if a real window manager is needed.
 - **Theme and font changes replace only foot.** The visible terminal is
-  swapped in place; cage, the DRM mode and tmux stay up. Display-mode changes
-  are immediate unless they change the DRM device set (forced `panel`), in
-  which case the session restarts.
+  swapped in place; cage, the DRM mode and tmux stay up. A display target
+  change (HDMI ↔ panel) restarts the compositor, because the target is the
+  primary DRM device; the blank lasts about as long as a compositor start.
 - **Keyboard layout changes restart the compositor.** kmscon's in-place keymap
   swap is gone; this is the remaining common action that blanks the screen.
 - **Screen timeout is not implemented yet.**
 - **Panel performance needs a hardware check.** cage uses pixman and dumb
   buffers on the SPI panel; foot uses `wl_shm`. Doom and other software
   renderers should fit, but measure CPU and memory on the CM0.
-- **HDMI hotplug is in-place** in `auto`/`hdmi` mode; forced `panel` still pins
-  the panel and ignores HDMI.
+- **HDMI hotplug restarts the session.** cage runs on one DRM card at a time
+  to avoid the pixman secondary-GPU bug; forced `panel` still pins the panel
+  and ignores HDMI.
 - **No direct KMS applications** (for example `kmscube`): cage owns DRM master.
   Wayland, Xwayland and SDL2 Wayland applications are supported.
 

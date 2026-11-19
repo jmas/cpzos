@@ -1,0 +1,10 @@
+[Unit]
+Description=React to a CPZ display hotplug
+# A monitor can emit a burst of DRM hotplug events. Each run is idempotent and
+# serialized by cpz-cage-output's lock, so do not let systemd's start rate
+# limit turn a legitimate hotplug into a failed unit.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cpz-cage-output --hotplug

@@ -12,7 +12,7 @@
 # Boot splash: firmware start.elf/fixup.dat + BMP splash.
 #
 # gpu_mem=64 is the minimum Raspberry Pi recommends for vc4-kms-v3d. The CPZ
-# image is console-only (kmscon, no desktop/compositor/video decode), and the
+# image is terminal-first inside a kiosk compositor, with no desktop/video decode, and the
 # KMS scanout buffers live in the cma-64 reservation, so the firmware only
 # needs room for its own heap plus the 170x320 splash frame (~106 KiB).
 # Keeping the vendor's gpu_mem=128 wasted 64 MiB of the CM0's 512 MiB.
@@ -41,7 +41,7 @@ rm -f /etc/systemd/system/sysinit.target.wants/fb_load.service \
 CHROOT
 
 # The vendor display rule puts the panel DRM card on seat-cardputer-zero,
-# which hides it from kmscon/libseat on seat0. Replace it with a CPZ rule that
+# which hides it from the console stack on seat0. Replace it with a CPZ rule that
 # keeps the card on seat0; the fbdev symlink is no longer needed because the
 # normal image has no panel fbdev node.
 rm -f "${ROOTFS_DIR}/etc/udev/rules.d/99-cardputer-zero-lcd.rules"

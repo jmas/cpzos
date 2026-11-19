@@ -24,11 +24,24 @@ esac
 [ "$percent" -le 100 ] || percent=100
 
 # While HDMI is the active output the panel is dark and its brightness is
-# stored in the settings only; cpz-kmscon-output restores it when the session
+# stored in the settings only; cpz-cage-output restores it when the session
 # returns to the panel. Writing brightness here would wake the panel.
-if [ -r /run/cpz-kmscon/output.state ] &&
-	[ "$(sed -n 's/^target=//p' /run/cpz-kmscon/output.state | tail -n 1)" = hdmi ]; then
+if [ -r /run/cpz-cage/output.state ] &&
+	[ "$(sed -n 's/^target=//p' /run/cpz-cage/output.state | tail -n 1)" = hdmi ]; then
 	exit 0
+fi
+
+# The PWM helper is the working control on this board (the backlight class is
+# stuck in the kernel's blanked state); the class loop below stays as a
+# fallback for other images.
+if [ -x /usr/local/bin/cpz-panel-backlight ]; then
+	if [ "$(id -u)" = 0 ]; then
+		/usr/local/bin/cpz-panel-backlight on "$percent" >/dev/null 2>&1 &&
+			exit 0
+	else
+		sudo -n /usr/local/bin/cpz-panel-backlight on "$percent" \
+			>/dev/null 2>&1 && exit 0
+	fi
 fi
 
 for backlight in /sys/class/backlight/*; do

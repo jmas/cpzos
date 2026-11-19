@@ -28,9 +28,23 @@ pull request (`.github/workflows/ci.yml`).
   round-trip, layout normalization, the date/time editor helpers, the
   internal submenu graph (`--check-pages`), menu label widths, long-list
   filtering and the Terminal Trove catalog filters/apt parsing/manager state.
-- `test_cpz_output.py` runs a copy of `cpz-kmscon-output` against a fake
+- `test_cpz_output.py` runs a copy of `cpz-cage-output` against a fake
   sysfs/settings tree and checks that `display=panel` is honoured both by the
-  systemd unit and by `--auto`, and that kmscon disables `use-original-mode`.
+  systemd unit, the generated cage environment and the panel backlight.
+- `test_cpz_i18n.py` checks the English/Ukrainian/German catalogs, fallback,
+  placeholders, language normalization and the Settings Language selector.
+- `test_cpz_pointer.py` runs `cpz-pointer` against a fake sysfs input tree and
+  checks that phantom HDMI/keyboard pointer bits are stripped, that a real USB
+  mouse keeps its cursor only when Mouse Support is on, that touchscreens stay
+  usable, and that a settings change reopens pointer devices once without
+  restarting cage.
+- `test_cpz_cage_session.py` runs the session supervisor against a fake foot
+  and checks that a reload replaces only the visible terminal while the anchor
+  keeps the session alive, and that shutdown removes the pid files.
+- `test_cpz_run.py` checks that `cpz-run` applies the Wayland/X11 environment
+  published by the foot client and still works without it.
+- `test_cpz_foot.py` renders the foot configuration against a fake theme and
+  checks the Terminus pixel size, background/foreground and 16-colour palette.
 - `test_cpz_search.py` checks the `cpz-search` providers (the short action
   home list, commands, actions, Settings, power actions, files, calculator,
   Terminal Trove and tmux buffers), item format, file roots/pruning, safe
@@ -64,8 +78,8 @@ pull request (`.github/workflows/ci.yml`).
   config for stage2/stage3.
 
 The tests are intentionally host-only. Hardware behaviour (DRM modesets,
-kmscon hotplug, backlight) still needs the debug image on a device; see
-`docs/CPZ-KMSCON.md`.
+cage hotplug, panel rendering, backlight) still needs the debug image on a
+device; see `docs/CPZ-CAGE.md`.
 
 UI changes also follow [`docs/CPZ-UI.md`](../docs/CPZ-UI.md): the purpose test,
 label width, footer keys, long-list filtering and the exception process.

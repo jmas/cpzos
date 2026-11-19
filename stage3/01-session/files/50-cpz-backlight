@@ -1,0 +1,4 @@
+# Allow the panel brightness shortcut to update the m5ioe1 PWM backlight
+# without a password prompt. The helper accepts only a percentage, never a
+# path, and it is the only control that works on this board.
+%sudo ALL=(root) NOPASSWD: /usr/local/bin/cpz-panel-backlight

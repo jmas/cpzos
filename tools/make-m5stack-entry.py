@@ -66,7 +66,7 @@ def main() -> int:
     parser.add_argument("--name", default="CardputerZero CPZ (Trixie arm64)")
     parser.add_argument(
         "--description",
-        default="Terminal-first kmscon + tmux image for CardputerZero.",
+        default="Graphics-first cage + foot + tmux image for CardputerZero.",
     )
     parser.add_argument(
         "--icon",

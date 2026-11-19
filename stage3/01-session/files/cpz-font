@@ -1,13 +1,12 @@
 #!/bin/sh
-# Change the persisted kmscon font size by one pixel.
+# Change the persisted terminal font size by one pixel.
 #
 # Bound in tmux to Alt+G / Alt+M by the cpz-keys registry (rebindable in
-# Settings > Keyboard > Shortcuts). The old kmscon grab-zoom keys changed the
-# runtime size only, so a layout change or any session restart reset it. This
-# helper writes the new size to the CPZ settings instead: cpz-kmscon-config
-# renders it as font-size and cpz-kmscon-output restarts the session within two
-# seconds (tmux and the panes survive). The value is then the single source of
-# truth for Settings and for the next boot.
+# Settings > Input > Shortcuts). This helper writes the new size to the CPZ
+# settings and asks cpz-foot-reload to replace only the visible terminal. cage,
+# the DRM mode and the tmux server stay up, so the new size appears immediately
+# and the display does not blank. The value is the single source of truth for
+# Settings and for the next boot.
 set -u
 
 step=
@@ -49,9 +48,19 @@ esac
 [ "$font_size" -ge "$font_min" ] || font_size=$font_min
 [ "$font_size" -le "$font_max" ] || font_size=$font_max
 
+old_size=$font_size
 font_size=$((font_size + step))
 [ "$font_size" -ge "$font_min" ] || font_size=$font_min
 [ "$font_size" -le "$font_max" ] || font_size=$font_max
+
+# At the limit the key must not replace the terminal for no visible change.
+if [ "$font_size" = "$old_size" ]; then
+	if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+		tmux display-message -d 2000 "font: ${font_size}px" \
+			>/dev/null 2>&1 || true
+	fi
+	exit 0
+fi
 
 # Update only font_size, preserving every other setting. Drop the obsolete
 # font_panel/font_hdmi keys so an old value can never be parsed after the new
@@ -76,6 +85,10 @@ else
 fi
 chmod 0644 "$tmp" 2>/dev/null || true
 mv "$tmp" "$user_settings" 2>/dev/null || { rm -f "$tmp"; exit 1; }
+
+if [ -x /usr/local/bin/cpz-foot-reload ]; then
+	/usr/local/bin/cpz-foot-reload >/dev/null 2>&1 || true
+fi
 
 if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
 	tmux display-message -d 2000 "font: ${font_size}px" >/dev/null 2>&1 || true

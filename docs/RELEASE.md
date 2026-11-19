@@ -127,7 +127,10 @@ checkbox set. This flag, not the title, selects the channel.
 
 ## 5. Procedure
 
-1. Start from a clean `master` that is not behind `origin`.
+1. Start from a clean `master` that is not behind `origin`. Every file the
+   image installs must be committed: the build checks out the **tag**, not
+   your working tree, so `tools/release.sh` refuses a tree with untracked
+   files (these are easy to miss for a new session helper or a new test).
 2. Write the notes file using the template above.
 3. Check the version and tag without changing anything:
 

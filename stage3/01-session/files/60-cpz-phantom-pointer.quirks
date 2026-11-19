@@ -1,0 +1,46 @@
+# CPZ: devices that must never make cage draw a cursor.
+#
+# cage shows its cursor whenever libinput reports a pointer-capable device.
+# The TCA8418 internal keyboard and the vc4 HDMI CEC node both expose REL_X /
+# REL_Y axes even though there is no mouse behind them.  The udev policy in
+# 99-zz-cpz-input.rules strips their ID_INPUT_* pointer tags, but a later rule
+# (or a libinput version that derives the capability from evdev bits) could
+# restore it.  Disabling the relative and absolute event codes here keeps every
+# key event and removes the pointer capability at the libevdev level.
+#
+# This file is installed as /etc/libinput/local-overrides.quirks.  A parse
+# error in that file disables every libinput quirk, so keep the syntax simple.
+# One MatchName per section: libinput does not accept repeated match keys, and
+# MatchName is a case-sensitive fnmatch pattern, hence the name variants.
+
+[CPZ CardputerZero internal keyboard is not a pointer]
+MatchName=cardputer-zero-internal
+AttrEventCode=-EV_REL;-EV_ABS;
+
+[CPZ TCA8418 keyboard is not a pointer]
+MatchName=*TCA8418*
+AttrEventCode=-EV_REL;-EV_ABS;
+
+[CPZ tca8418 keyboard is not a pointer]
+MatchName=*tca8418*
+AttrEventCode=-EV_REL;-EV_ABS;
+
+[CPZ M5Stack keyboard is not a pointer]
+MatchName=*M5Stack*
+AttrEventCode=-EV_REL;-EV_ABS;
+
+[CPZ m5stack keyboard is not a pointer]
+MatchName=*m5stack*
+AttrEventCode=-EV_REL;-EV_ABS;
+
+[CPZ Cardputer keyboard is not a pointer]
+MatchName=*Cardputer*
+AttrEventCode=-EV_REL;-EV_ABS;
+
+[CPZ cardputer keyboard is not a pointer]
+MatchName=*cardputer*
+AttrEventCode=-EV_REL;-EV_ABS;
+
+[CPZ vc4 HDMI CEC is not a pointer]
+MatchName=vc4-hdmi*
+AttrEventCode=-EV_REL;-EV_ABS;

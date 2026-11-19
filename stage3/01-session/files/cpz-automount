@@ -99,20 +99,24 @@ filesystem_types() {
 }
 
 mount_options() {
+	# nosuid,nodev: the disk is untrusted data. Without them a crafted ext4
+	# image can ship a root-owned setuid binary or device node and have it
+	# honoured by the kernel after the automatic mount. They do not stop the
+	# user from running normal programs from the disk.
 	case $1 in
 		vfat | msdos | fat)
-			printf '%s\n' "uid=$2,gid=$3,umask=0022,iocharset=utf8,noatime"
+			printf '%s\n' "uid=$2,gid=$3,umask=0022,iocharset=utf8,noatime,nosuid,nodev"
 			;;
 		exfat)
-			printf '%s\n' "uid=$2,gid=$3,umask=0022,iocharset=utf8,noatime"
+			printf '%s\n' "uid=$2,gid=$3,umask=0022,iocharset=utf8,noatime,nosuid,nodev"
 			;;
 		ntfs | ntfs3)
-			printf '%s\n' "uid=$2,gid=$3,umask=0022,noatime"
+			printf '%s\n' "uid=$2,gid=$3,umask=0022,noatime,nosuid,nodev"
 			;;
 		*)
 			# ext4/btrfs/xfs/iso9660 keep the on-disk ownership and
 			# their own mount options.
-			printf '%s\n' "noatime"
+			printf '%s\n' "noatime,nosuid,nodev"
 			;;
 	esac
 }

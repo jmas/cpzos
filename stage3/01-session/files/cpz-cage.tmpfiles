@@ -1,0 +1,4 @@
+d /run/cpz-cage 0755 1000 1000 -
+f /run/cpz-cage/output.request 0644 1000 1000 -
+d /run/cpz-pointer 0755 root root -
+f /run/cpz-pointer/request 0644 1000 1000 -

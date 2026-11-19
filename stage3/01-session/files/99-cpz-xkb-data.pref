@@ -1,0 +1,10 @@
+# CPZ patches /usr/share/X11/xkb/keycodes/evdev to name the keycode used by
+# the Sym layer (KEY_ZENKAKUHANKAKU, keycode 93) as <ZENK>. An xkb-data
+# upgrade would replace that file and silently break Sym+Shift (the "<" and
+# ">" characters) until the next image is built.
+#
+# Freeze the package so an in-place apt upgrade cannot undo the patch. The
+# keymap still changes when a new CPZ image ships a different xkb-data.
+Package: xkb-data
+Pin: release *
+Pin-Priority: -1

@@ -1,10 +1,10 @@
 #!/bin/sh
-# Apply the saved active layout to the console and to kmscon.
+# Apply the saved active layout to the console and to cage.
 #
 # Installed with a narrow sudoers rule so the Alt+Space binding can switch
 # layouts without a password prompt. The helper takes no arguments and only
 # starts the cpz-keyboard-layout unit; that unit loads the console keymap and
-# publishes the XKB layout to systemd-localed, where kmscon picks it up at
+# publishes the XKB layout to systemd-localed, where cage picks it up at
 # runtime (no session restart).
 set -eu
 

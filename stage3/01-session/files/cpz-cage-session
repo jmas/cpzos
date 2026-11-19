@@ -1,0 +1,117 @@
+#!/bin/sh
+# Supervise the CPZ terminal inside cage.
+#
+# cage exits when its last window closes. A second, idle "anchor" terminal keeps
+# the compositor and the current DRM mode alive while the visible foot is
+# replaced after a font or theme change. Replacing one terminal is fast; a
+# cage restart would blank the display for seconds and renegotiate HDMI.
+#
+# cpz-foot-reload asks this supervisor, with SIGUSR1, to replace only the
+# visible foot. tmux is an independent service, so tabs and panes survive.
+set -eu
+
+run_dir=/run/cpz-cage
+pid_file=$run_dir/cage-session.pid
+foot_pid_file=$run_dir/foot.pid
+anchor_pid=
+foot_pid=
+reload_generation=0
+immediate_failures=0
+
+log() {
+	command -v logger >/dev/null 2>&1 || return 0
+	logger -t cpz-cage-session "$*" 2>/dev/null || true
+}
+
+write_pid() {
+	file=$1
+	pid=$2
+	tmp=$file.$$
+	if printf '%s\n' "$pid" >"$tmp" 2>/dev/null; then
+		mv "$tmp" "$file" 2>/dev/null || rm -f "$tmp"
+	else
+		rm -f "$tmp"
+	fi
+}
+
+cleanup() {
+	if [ -n "$foot_pid" ]; then
+		kill -TERM "$foot_pid" 2>/dev/null || true
+	fi
+	if [ -n "$anchor_pid" ]; then
+		kill -TERM "$anchor_pid" 2>/dev/null || true
+		wait "$anchor_pid" 2>/dev/null || true
+	fi
+	rm -f "$pid_file" "$foot_pid_file"
+}
+
+trap 'exit 0' HUP INT TERM
+trap cleanup EXIT
+trap 'reload_generation=$((reload_generation + 1)); if [ -n "$foot_pid" ]; then kill -TERM "$foot_pid" 2>/dev/null || true; fi' USR1
+
+write_pid "$pid_file" "$$"
+
+# The anchor is mapped first and stays behind the visible terminal. Its shell
+# exits when this supervisor disappears, so a hard supervisor failure cannot
+# leave cage running forever on a blank anchor.
+# shellcheck disable=SC2016  # $1 is expanded by the inner shell, not this one
+if [ -r "$run_dir/foot.ini" ]; then
+	/usr/bin/foot --config="$run_dir/foot.ini" --app-id=cpz-anchor -- \
+		/bin/sh -c \
+		'printf "\033[?25l"; while kill -0 "$1" 2>/dev/null; do sleep 10; done' \
+		sh "$$" &
+else
+	/usr/bin/foot --app-id=cpz-anchor -- /bin/sh -c \
+		'printf "\033[?25l"; while kill -0 "$1" 2>/dev/null; do sleep 10; done' \
+		sh "$$" &
+fi
+anchor_pid=$!
+
+# Give the anchor's surface a head start so cage stacks the visible terminal on
+# top. cage orders views by creation; starting both at once would make that
+# order a scheduling race.
+sleep 0.5
+
+while :; do
+	# A signal that arrives before this foot has read foot.ini is already
+	# covered by the new configuration: cpz-foot-reload renders the file before
+	# it signals. The generation counter catches a signal that arrives while
+	# this foot is being set up or is running, without a reset race.
+	started_generation=$reload_generation
+	foot_started=$(date +%s)
+	if [ -r "$run_dir/foot.ini" ]; then
+		/usr/bin/foot --config="$run_dir/foot.ini" --app-id=cpz -- \
+			/usr/local/bin/cpz-tmux &
+	else
+		/usr/bin/foot --app-id=cpz -- /usr/local/bin/cpz-tmux &
+	fi
+	foot_pid=$!
+	write_pid "$foot_pid_file" "$foot_pid"
+
+	status=0
+	while :; do
+		if wait "$foot_pid"; then
+			status=0
+		else
+			status=$?
+		fi
+		kill -0 "$foot_pid" 2>/dev/null || break
+	done
+	rm -f "$foot_pid_file"
+	foot_pid=
+
+	if [ "$reload_generation" = "$started_generation" ]; then
+		elapsed=$(($(date +%s) - foot_started))
+		if [ "$status" -ne 0 ] && [ "$elapsed" -lt 2 ]; then
+			immediate_failures=$((immediate_failures + 1))
+			log "foot failed immediately (status $status); retry $immediate_failures/3"
+			if [ "$immediate_failures" -lt 3 ]; then
+				sleep 1
+				continue
+			fi
+		fi
+		exit "$status"
+	fi
+	immediate_failures=0
+	log "replacing foot after a configuration change"
+done

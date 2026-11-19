@@ -1,0 +1,903 @@
+#!/bin/sh
+# Keep the CPZ cage session on exactly one usable display.
+#
+# The session is cage + foot, not kmscon. cage owns DRM/KMS and drives the
+# selected output; this helper writes the environment that cpz-cage reads and
+# restarts the tty1 getty only when the DRM/keyboard environment changes. A
+# display target change (HDMI plug/unplug) is an environment change: cage runs
+# on a single DRM card at a time. A foot-config change replaces just the visible
+# terminal. It also keeps the panel backlight in step with the output policy.
+#
+# Why one card at a time:
+#   The panel is an SPI DRM card without a render node and the vc4 HDMI card is
+#   the only render-capable device. With a panel-first WLR_DRM_DEVICES list the
+#   vc4 output is a secondary GPU, and the pixman renderer cannot render on
+#   secondary GPUs (wlroots limitation). The result is exactly the reported
+#   HDMI failure: the hardware cursor plane works, but the composited surface
+#   is never shown and the output flickers as page flips fail. Running cage on
+#   the HDMI card as the primary device avoids the multi-GPU path entirely.
+#
+# Policy:
+#   display=auto (default): HDMI when a monitor with a readable EDID is
+#     attached (or a video= mode is pinned); once the session is on HDMI it
+#     stays there while the connector is connected.
+#   display=hdmi: HDMI while a monitor is connected, panel otherwise.
+#   display=panel: the panel only; HDMI is not driven.
+#   --panel / --hdmi: override the setting for one run.
+#   --auto: clear a one-run override and follow the persisted setting again.
+#   --force: re-render and restart the cage session now.
+#   --recover: restart the cage session (HDMI link recovery).
+#   --prepare: write the boot environment without restarting (getty start).
+#   --hotplug: wait briefly for the monitor's EDID before deciding (the DRM
+#     hotplug unit uses this).
+#   --status: print the decision and the DRM connector state.
+#   --report: --status plus state, env, cage stderr, journal and dmesg.
+#   --target: print only hdmi or panel.
+#
+# Failure handling:
+#   A selected HDMI output that cage never enables is a failed attempt, not a
+#   reason to restart into the same link again. Two failed attempts send the
+#   session back to the panel (which always works) and stop auto from choosing
+#   HDMI until the cable is cycled or the user asks for it. Automatic restarts
+#   are also rate-limited, so a monitor cannot be made to blink indefinitely.
+set -eu
+
+force=0
+status_mode=0
+target_mode=0
+report=0
+prepare=0
+recover=0
+hotplug=0
+override=""
+for arg in "$@"; do
+	case "$arg" in
+		--auto) override="" ;;
+		--panel) override=panel; force=1 ;;
+		--hdmi) override=hdmi; force=1 ;;
+		--force) force=1 ;;
+		--recover) recover=1; force=1 ;;
+		--prepare) prepare=1 ;;
+		--hotplug) hotplug=1 ;;
+		--status) status_mode=1 ;;
+		--report) status_mode=1; report=1 ;;
+		--target) target_mode=1 ;;
+	esac
+done
+
+run_dir=/run/cpz-cage
+mkdir -p "$run_dir" 2>/dev/null || true
+if [ "$(id -u)" = 0 ]; then
+	chown 1000:1000 "$run_dir" 2>/dev/null || true
+fi
+state_file=$run_dir/output.state
+env_file=$run_dir/session.env
+pending_file=$run_dir/output.pending
+retry_file=$run_dir/output.hdmi-retry
+hold_file=$run_dir/output.hdmi-hold
+fail_file=$run_dir/output.hdmi-fail
+request_file=$run_dir/output.request
+restart_stamp=$run_dir/restart.stamp
+unit=getty@tty1.service
+hdmi_debounce=2
+# One automatic compositor restart per gap. A switch drop the HDMI link for a
+# few seconds and makes the monitor re-sync; two in a row look like a flickering
+# screen. Env changes are already debounced, so their gap only absorbs duplicate
+# triggers; an "inactive" restart can be a crash loop and needs the long gap.
+# A user action (--hdmi/--panel/--force/--recover) bypasses the gate.
+restart_gap=5
+restart_gap_inactive=20
+
+# An explicit request is the user retrying on purpose: forget earlier failures.
+if [ -n "$override" ] || [ "$recover" = 1 ]; then
+	rm -f "$fail_file" "$retry_file" 2>/dev/null || true
+fi
+
+first_home=$(getent passwd 1000 2>/dev/null | cut -d: -f6 || true)
+[ -n "$first_home" ] || first_home=/root
+
+log() {
+	# `--` keeps a message that starts with a dash (for example "--prepare: ...")
+	# from being parsed as a logger option. Never let logging fail the caller:
+	# this script runs under `set -e` as the getty's ExecStartPre.
+	command -v logger >/dev/null 2>&1 || return 0
+	logger -t cpz-cage-output -- "$*" 2>/dev/null || true
+}
+
+# The timer, the display-setting path unit and the udev hotplug unit can all
+# start this helper. Serialize them instead of letting two runs race through a
+# cage restart. --status/--target stay lock-free so diagnostics always answer.
+if [ "$status_mode" = 0 ] && [ "$target_mode" = 0 ] &&
+	command -v flock >/dev/null 2>&1; then
+	# cpz-cage may run this as the console user when the getty beat the DRM
+	# drivers. Keep the lock writable so that fallback can actually take it.
+	if [ "$(id -u)" = 0 ]; then
+		: >>"$run_dir/output.lock" 2>/dev/null || true
+		chmod 0666 "$run_dir/output.lock" 2>/dev/null || true
+	fi
+	exec 9>"$run_dir/output.lock" 2>/dev/null || true
+	if [ "$prepare" = 1 ]; then
+		# --prepare is the tty1 getty's ExecStartPre. When a display switch is
+		# running, it is that very helper which started this getty and which
+		# still holds the lock while it waits for the start to finish. Waiting
+		# here deadlocks the switch for the whole timeout (8 s of every card
+		# change). The environment was written by the switching helper, so the
+		# correct action is to skip.
+		if ! flock -n 9; then
+			log "--prepare: output environment already owned by the switching job"
+			exit 0
+		fi
+	elif ! flock -w 8 9; then
+		log "another output job is still running"
+		exit 0
+	fi
+fi
+
+get_setting() {
+	for file in "$first_home/.config/cpz/settings.conf" /etc/cpz/settings.conf; do
+		[ -r "$file" ] || continue
+		value=$(sed -n "s/^$1=//p" "$file" | tail -n 1)
+		[ -n "$value" ] && { printf '%s' "$value"; return 0; }
+	done
+	return 0
+}
+
+hdmi_probe() {
+	# Sets: hdmi_connected, hdmi_edid, hdmi_pinned, hdmi_enabled,
+	# panel_card, hdmi_card and drm_state.
+	hdmi_connected=0
+	hdmi_edid=0
+	hdmi_enabled=0
+	panel_card=""
+	hdmi_card=""
+	drm_state=""
+	for dir in /sys/class/drm/card*-*; do
+		[ -e "$dir/status" ] || continue
+		name=${dir##*/}
+		card=${name%%-*}
+		status=$(cat "$dir/status" 2>/dev/null || true)
+		enabled=$(cat "$dir/enabled" 2>/dev/null || true)
+		drm_state="${drm_state}${drm_state:+, }$name ${status:-unknown}/${enabled:-unknown}"
+		case "$name" in
+			*HDMI-A-*)
+				[ -n "$hdmi_card" ] || hdmi_card=$card
+				if [ "$status" = connected ]; then
+					hdmi_connected=1
+					[ "$enabled" = enabled ] && hdmi_enabled=1
+					size=$(wc -c <"$dir/edid" 2>/dev/null || printf 0)
+					size=$(printf '%s' "$size" | tr -dc '0-9')
+					[ -n "$size" ] || size=0
+					[ "$size" -gt "$hdmi_edid" ] && hdmi_edid=$size
+				fi
+				;;
+			*SPI-*)
+				[ -n "$panel_card" ] || panel_card=$card
+				;;
+		esac
+	done
+	hdmi_pinned=0
+	# shellcheck disable=SC2013  # kernel cmdline tokens are whitespace-separated
+	for token in $(cat /proc/cmdline 2>/dev/null || true); do
+		case "$token" in
+			video=HDMI-A-[0-9]*:[0-9]*x[0-9]*) hdmi_pinned=1 ;;
+		esac
+	done
+	if [ "$hdmi_connected" = 1 ] &&
+		{ [ "$hdmi_edid" -ge 128 ] || [ "$hdmi_pinned" = 1 ]; }; then
+		hdmi_usable=1
+	else
+		hdmi_usable=0
+	fi
+}
+
+xkb_settings() {
+	layout=""
+	variant=""
+	model=""
+	options=""
+	# cpz-keyboard-layout caches the code it successfully published. This is
+	# the fast path for the one-second output timer.
+	if [ -r /run/cpz-layout.xkb ]; then
+		layout=$(sed -n 's/^layout=//p' /run/cpz-layout.xkb | tail -n 1)
+		variant=$(sed -n 's/^variant=//p' /run/cpz-layout.xkb | tail -n 1)
+	fi
+	if [ -z "$layout" ] && command -v localectl >/dev/null 2>&1; then
+		status=$(timeout 5 localectl --no-pager status 2>/dev/null || true)
+		layout=$(printf '%s\n' "$status" |
+			sed -n 's/^[[:space:]]*X11 Layout:[[:space:]]*//p' | head -n 1)
+		variant=$(printf '%s\n' "$status" |
+			sed -n 's/^[[:space:]]*X11 Variant:[[:space:]]*//p' | head -n 1)
+		model=$(printf '%s\n' "$status" |
+			sed -n 's/^[[:space:]]*X11 Model:[[:space:]]*//p' | head -n 1)
+		options=$(printf '%s\n' "$status" |
+			sed -n 's/^[[:space:]]*X11 Options:[[:space:]]*//p' | head -n 1)
+	fi
+	case "$layout" in
+		*[!a-zA-Z0-9_,-]*) layout="" ;;
+	esac
+	if [ -z "$layout" ] && [ -r /etc/default/keyboard ]; then
+		layout=$(sed -n 's/^XKBLAYOUT="\([^"]*\)".*/\1/p' /etc/default/keyboard |
+			head -n 1)
+		variant=$(sed -n 's/^XKBVARIANT="\([^"]*\)".*/\1/p' /etc/default/keyboard |
+			head -n 1)
+		model=$(sed -n 's/^XKBMODEL="\([^"]*\)".*/\1/p' /etc/default/keyboard |
+			head -n 1)
+		options=$(sed -n 's/^XKBOPTIONS="\([^"]*\)".*/\1/p' /etc/default/keyboard |
+			head -n 1)
+	fi
+}
+
+choose_devices() {
+	# Sets target and devices. The panel is card1/SPI-1 on the CPZ image; HDMI
+	# is on the vc4 card. Do not assume the numbers: find the connectors.
+	case "$target" in
+		panel)
+			if [ -z "$panel_card" ] && [ -n "$hdmi_card" ]; then
+				target=hdmi
+			fi
+			;;
+		hdmi)
+			if [ -z "$hdmi_card" ] && [ -n "$panel_card" ]; then
+				target=panel
+			fi
+			;;
+	esac
+
+	panel_dev=
+	hdmi_dev=
+	[ -n "$panel_card" ] && panel_dev=/dev/dri/$panel_card
+	[ -n "$hdmi_card" ] && hdmi_dev=/dev/dri/$hdmi_card
+
+	# cage gets exactly one DRM card: the target. Passing both cards makes the
+	# non-target card a secondary GPU, and wlroots' pixman renderer cannot scan
+	# out on a secondary GPU. On this hardware that produced an HDMI output
+	# with a working cursor plane but no composited terminal (and repeated
+	# page-flip failures that look like flicker). A target change therefore
+	# changes session.env and restarts cage; see the header.
+	if [ "$target" = hdmi ] && [ -n "$hdmi_dev" ]; then
+		devices=$hdmi_dev
+	elif [ -n "$panel_dev" ]; then
+		devices=$panel_dev
+	else
+		devices=$hdmi_dev
+	fi
+
+	# Use the software renderer. Both cards are driven as the primary card, so
+	# there is no multi-GPU renderer to initialise; pixman also works on the
+	# panel card, which has no render node. foot and software SDL clients use
+	# wl_shm, so this is the compatible choice for both outputs.
+	renderer=pixman
+	no_modifiers=1
+}
+
+render_env() {
+	tmp=$env_file.tmp.$$
+	trap 'rm -f "$tmp"' EXIT HUP INT TERM
+	{
+		[ -n "${devices:-}" ] && printf "WLR_DRM_DEVICES='%s'\n" "$devices"
+		printf "WLR_RENDERER='%s'\n" "${renderer:-pixman}"
+		[ "${no_modifiers:-0}" = 1 ] &&
+			printf "WLR_DRM_NO_MODIFIERS='1'\n"
+		[ -n "${layout:-}" ] &&
+			printf "XKB_DEFAULT_LAYOUT='%s'\n" "$layout"
+		[ -n "${variant:-}" ] &&
+			printf "XKB_DEFAULT_VARIANT='%s'\n" "$variant"
+		[ -n "${model:-}" ] && printf "XKB_DEFAULT_MODEL='%s'\n" "$model"
+		[ -n "${options:-}" ] &&
+			printf "XKB_DEFAULT_OPTIONS='%s'\n" "$options"
+	} >"$tmp"
+	if [ "$(id -u)" = 0 ]; then
+		chown 1000:1000 "$tmp" 2>/dev/null || true
+	fi
+	if [ -f "$env_file" ] && cmp -s "$tmp" "$env_file"; then
+		rm -f "$tmp"
+		trap - EXIT HUP INT TERM
+		return 1
+	fi
+	mv "$tmp" "$env_file"
+	trap - EXIT HUP INT TERM
+	return 0
+}
+
+reload_foot() {
+	# Replace only the visible terminal. cage, the DRM mode and tmux stay up.
+	[ -x /usr/local/bin/cpz-foot-reload ] || return 1
+	/usr/local/bin/cpz-foot-reload >/dev/null 2>&1
+}
+
+write_state() {
+	tmp=$state_file.tmp.$$
+	{
+		printf 'target=%s\nmode=%s\n' "$target" "$mode"
+		printf 'devices=%s\nrenderer=%s\n' "${devices:-none}" "${renderer:-none}"
+		printf 'conn=%s/%s/%s\n' "$hdmi_connected" "$hdmi_edid" "$hdmi_pinned"
+	} >"$tmp"
+	mv "$tmp" "$state_file"
+}
+
+panel_off() {
+	# Zero the brightness and power the backlight down. The m5stack driver
+	# honours bl_power; zeroing brightness as well keeps the panel dark on
+	# drivers that ignore it. Power down first: that is the state the user sees,
+	# and a brightness write can be rejected while the panel is being torn down.
+	#
+	# On this kernel the backlight class is a dead end (BL_CORE_FBBLANK is
+	# never cleared), so the PWM helper is the real control; the class loop
+	# stays for images where the driver works.
+	if [ -x /usr/local/bin/cpz-panel-backlight ] &&
+		/usr/local/bin/cpz-panel-backlight off >/dev/null 2>&1; then
+		return 0
+	fi
+	for light in /sys/class/backlight/*; do
+		[ -e "$light" ] || continue
+		if [ -w "$light/bl_power" ] &&
+			[ "$(cat "$light/bl_power" 2>/dev/null || true)" != 4 ]; then
+			printf '4' >"$light/bl_power" 2>/dev/null || true
+		fi
+		if [ -w "$light/brightness" ] &&
+			[ "$(cat "$light/brightness" 2>/dev/null || true)" != 0 ]; then
+			printf '0' >"$light/brightness" 2>/dev/null || true
+		fi
+	done
+}
+
+panel_on() {
+	percent=$(get_setting brightness)
+	case "$percent" in
+		'' | *[!0-9]*) percent=100 ;;
+	esac
+	[ "$percent" -ge 1 ] || percent=1
+	[ "$percent" -le 100 ] || percent=100
+	if [ -x /usr/local/bin/cpz-panel-backlight ] &&
+		/usr/local/bin/cpz-panel-backlight on "$percent" >/dev/null 2>&1; then
+		return 0
+	fi
+	for light in /sys/class/backlight/*; do
+		[ -e "$light" ] || continue
+		if [ -w "$light/bl_power" ] &&
+			[ "$(cat "$light/bl_power" 2>/dev/null || true)" != 0 ]; then
+			printf '0' >"$light/bl_power" 2>/dev/null || true
+		fi
+		[ -w "$light/brightness" ] || continue
+		max=$(cat "$light/max_brightness" 2>/dev/null || true)
+		case "$max" in
+			'' | *[!0-9]* | 0) continue ;;
+		esac
+		value=$((percent * max / 100))
+		[ "$value" -ge 1 ] || value=1
+		[ "$(cat "$light/brightness" 2>/dev/null || true)" = "$value" ] ||
+			printf '%s' "$value" >"$light/brightness" 2>/dev/null || true
+	done
+}
+
+session_up() {
+	# cage is the real session. The getty unit can be inactive or transient
+	# while the logind session (and cage) still runs; restarting on the unit
+	# state alone produced the endless "session inactive" loop.
+	pgrep -x cage >/dev/null 2>&1 && return 0
+	systemctl is-active --quiet "$unit" ||
+		systemctl is-activating --quiet "$unit"
+}
+
+restart_session() {
+	# `systemctl restart getty` does not reliably stop the logind session:
+	# cage lives in session-*.scope, keeps DRM master and makes the next
+	# compositor fail (or leaves two cages fighting over wayland-0/Xwayland).
+	# Stop the unit, terminate the compositor, wait for the device, start clean.
+	t0=$(date +%s 2>/dev/null || printf 0)
+	systemctl stop "$unit" >/dev/null 2>&1 || true
+	pkill -TERM -x cage 2>/dev/null || true
+	tries=0
+	while pgrep -x cage >/dev/null 2>&1 && [ "$tries" -lt 30 ]; do
+		sleep 0.1
+		tries=$((tries + 1))
+	done
+	if pgrep -x cage >/dev/null 2>&1; then
+		pkill -KILL -x cage 2>/dev/null || true
+	fi
+	t1=$(date +%s 2>/dev/null || printf 0)
+	# Starting a unit that systemd is still deactivating can be canceled
+	# ("restart getty@tty1.service failed" in the log leaves the device with no
+	# session). Wait for it to leave the active state, then retry once.
+	tries=0
+	while systemctl is-active --quiet "$unit" && [ "$tries" -lt 20 ]; do
+		sleep 0.1
+		tries=$((tries + 1))
+	done
+	if ! systemctl start "$unit" >/dev/null 2>&1; then
+		sleep 0.5
+		if ! systemctl start "$unit" >/dev/null 2>&1; then
+			log "restart $unit failed"
+			return 1
+		fi
+	fi
+	t2=$(date +%s 2>/dev/null || printf 0)
+	tries=0
+	while [ "$tries" -lt 50 ]; do
+		systemctl is-active --quiet "$unit" && break
+		sleep 0.2
+		tries=$((tries + 1))
+	done
+	# The getty goes active before login has exec'd cage. Give the compositor
+	# its own grace period; otherwise the next 5 s tick can see "no cage" and
+	# kill the session it just started.
+	tries=0
+	while ! pgrep -x cage >/dev/null 2>&1 && [ "$tries" -lt 50 ]; do
+		sleep 0.2
+		tries=$((tries + 1))
+	done
+	t3=$(date +%s 2>/dev/null || printf 0)
+	log "restart stages: stop+kill=$((t1 - t0))s start=$((t2 - t1))s cage=$((t3 - t2))s"
+	sleep 0.2
+	systemctl is-active --quiet "$unit"
+}
+
+hdmi_probe
+
+# A real unplug is the user's chance to reseat the cable or wake the monitor.
+# Forget failed HDMI attempts so the next plug gets a clean try from auto mode.
+if [ "$hdmi_connected" = 0 ]; then
+	rm -f "$fail_file" "$retry_file" 2>/dev/null || true
+fi
+
+# A DRM hotplug uevent can arrive before the monitor has finished exposing its
+# EDID. Waiting here avoids a second, delayed hotplug pass (and, with an
+# unreadable EDID at boot, a compositor restart).
+if [ "$hotplug" = 1 ] && [ "$hdmi_connected" = 1 ] && [ "$hdmi_usable" = 0 ]; then
+	tries=0
+	while [ "$tries" -lt 10 ]; do
+		sleep 0.1
+		hdmi_probe
+		if [ "$hdmi_usable" = 1 ]; then
+			break
+		fi
+		if [ "$hdmi_connected" = 0 ]; then
+			break
+		fi
+		tries=$((tries + 1))
+	done
+fi
+
+# --prepare runs from getty ExecStartPre and can beat the DRM drivers. If no
+# card is registered yet, wait briefly instead of writing an environment
+# without WLR_DRM_DEVICES (cage would then take every card and pixman would
+# leave HDMI with only its cursor plane). A connected monitor that has not
+# exposed its EDID yet gets one short extra wait as well.
+if [ "$prepare" = 1 ]; then
+	tries=0
+	while [ "$tries" -lt 10 ] && [ -z "$panel_card" ] && [ -z "$hdmi_card" ]; do
+		sleep 0.2
+		hdmi_probe
+		tries=$((tries + 1))
+	done
+	if [ "$hdmi_connected" = 1 ] && [ "$hdmi_usable" = 0 ]; then
+		tries=0
+		while [ "$tries" -lt 5 ]; do
+			sleep 0.2
+			hdmi_probe
+			[ "$hdmi_usable" = 1 ] && break
+			[ "$hdmi_connected" = 0 ] && break
+			tries=$((tries + 1))
+		done
+	fi
+fi
+
+mode=${override:-$(get_setting display)}
+case "$mode" in
+	panel | hdmi | auto) ;;
+	*) mode=auto ;;
+esac
+
+# A new display setting is a fresh intent (the user changed Settings or used
+# Alt+D). Drop the failed-HDMI history so the new choice is actually tried.
+stored_mode=$(sed -n 's/^mode=//p' "$state_file" 2>/dev/null | tail -n 1)
+if [ -n "$stored_mode" ] && [ "$stored_mode" != "$mode" ]; then
+	rm -f "$fail_file" "$retry_file" 2>/dev/null || true
+fi
+
+# A recent output.request is the user acting right now. It must not pay for
+# the HPD debounce or the restart cooldown; those exist to absorb duplicate
+# automatic triggers, not an explicit Settings/Alt+D change.
+user_request=0
+if [ -e "$request_file" ]; then
+	req_now=$(date +%s 2>/dev/null || printf 0)
+	req_mtime=$(stat -c %Y "$request_file" 2>/dev/null || printf 0)
+	case "$req_mtime" in
+		'' | *[!0-9]*) req_mtime=0 ;;
+	esac
+	if [ "$req_mtime" -gt 0 ] && [ "$req_now" -ge "$req_mtime" ] &&
+		[ $((req_now - req_mtime)) -le 3 ]; then
+		user_request=1
+	fi
+fi
+
+# A monitor pulses HPD while it powers up, wakes from standby or switches
+# inputs. Do not move the session off a working HDMI link for a single
+# disconnect sample: re-probe once before deciding to fall back to the panel.
+if [ "$status_mode" = 0 ] && [ "$target_mode" = 0 ] &&
+	[ "$force" = 0 ] && [ "$mode" != panel ] && [ "$hdmi_connected" = 0 ]; then
+	configured_target=$(sed -n 's/^target=//p' "$state_file" 2>/dev/null |
+		tail -n 1)
+	# A monitor can drop HPD for a moment when the compositor releases its
+	# connector (switching away from HDMI). A fresh user request must not lose
+	# a whole five-second timer tick to that, so re-probe immediately.
+	if [ "$configured_target" = hdmi ] || [ "$user_request" = 1 ]; then
+		if [ "$hotplug" = 1 ] || [ "$user_request" = 1 ]; then
+			sleep 0.4
+		else
+			sleep 1.0
+		fi
+		hdmi_probe
+	fi
+fi
+
+# The re-probe above still catches a monitor that stays low for a little longer
+# (power-up, input switch). In auto mode require a second disconnected sample,
+# one timer tick apart, before giving up a working HDMI session. A hotplug run
+# has already re-probed after the uevent, so it counts as that second sample:
+# waiting for the next 5 s timer tick made every unplug feel slow.
+if [ "$status_mode" = 0 ] && [ "$target_mode" = 0 ] && [ "$force" = 0 ] &&
+	[ "$hotplug" = 0 ] && [ "$mode" = auto ] && [ "$hdmi_connected" = 0 ]; then
+	configured_target=$(sed -n 's/^target=//p' "$state_file" 2>/dev/null |
+		tail -n 1)
+	if [ "$configured_target" = hdmi ]; then
+		if [ -e "$hold_file" ]; then
+			rm -f "$hold_file"
+		else
+			: >"$hold_file" 2>/dev/null || true
+			log "HDMI disconnected once; holding the target for one more sample"
+			exit 0
+		fi
+	fi
+else
+	rm -f "$hold_file"
+fi
+
+# Cage can own only one card, so the target is one output. auto follows the
+# monitor: a usable HDMI takes over (the session restarts once), and a lost
+# HDMI falls back to the panel. The restart is serialized by the cooldown and
+# the atomic stop/kill/start in restart_session; it is not the old five-second
+# loop.
+case "$mode" in
+	panel) target=panel ;;
+	hdmi)
+		now_s=$(date +%s 2>/dev/null || printf 0)
+		retry_after=$(cat "$retry_file" 2>/dev/null || printf 0)
+		case "$retry_after" in
+			'' | *[!0-9]*) retry_after=0 ;;
+		esac
+		if [ "$hdmi_connected" = 1 ] &&
+			{ [ "$retry_after" -eq 0 ] || [ "$now_s" -ge "$retry_after" ]; }; then
+			target=hdmi
+		else
+			target=panel
+		fi
+		;;
+	*)
+		configured_target=$(sed -n 's/^target=//p' "$state_file" 2>/dev/null |
+			tail -n 1)
+		hdmi_fails=$(cat "$fail_file" 2>/dev/null || printf 0)
+		case "$hdmi_fails" in
+			'' | *[!0-9]*) hdmi_fails=0 ;;
+		esac
+		if [ "$hdmi_fails" -ge 2 ]; then
+			# Two attempts ended with cage not enabling the connector:
+			# stay on the working panel until the cable is cycled or the
+			# user asks for HDMI again. Retrying every sample is the blink
+			# loop.
+			target=panel
+		elif [ "$configured_target" = hdmi ] && [ "$hdmi_connected" = 1 ]; then
+			target=hdmi
+		elif [ "$hdmi_usable" = 1 ]; then
+			target=hdmi
+		else
+			target=panel
+		fi
+		;;
+esac
+choose_devices
+
+if [ "$target_mode" = 1 ]; then
+	printf '%s\n' "$target"
+	exit 0
+fi
+
+# The debug image keeps the fbcon getty and never starts the graphical
+# session. The getty drop-in still calls --prepare; make it a no-op there.
+if [ -f /etc/cpz-debug-boot ]; then
+	[ "$status_mode" = 1 ] && printf 'session : fbcon debug image\n'
+	exit 0
+fi
+
+if [ "$status_mode" = 1 ]; then
+	printf 'mode    : %s%s\n' "$mode" \
+		"$([ -n "$override" ] && printf ' (command line)')"
+	printf 'HDMI    : %s, EDID %s bytes, pinned %s, enabled %s\n' \
+		"$([ "$hdmi_connected" = 1 ] && printf connected || printf disconnected)" \
+		"$hdmi_edid" \
+		"$([ "$hdmi_pinned" = 1 ] && printf yes || printf no)" \
+		"$([ "$hdmi_enabled" = 1 ] && printf yes || printf no)"
+	printf 'target  : %s\n' "$target"
+	printf 'devices : %s (%s)\n' "${devices:-none}" "${renderer:-none}"
+	printf 'drm     : %s\n' "${drm_state:-none}"
+	for light in /sys/class/backlight/*; do
+		[ -e "$light" ] || continue
+		printf 'panel   : %s brightness=%s/%s bl_power=%s\n' \
+			"${light##*/}" \
+			"$(cat "$light/brightness" 2>/dev/null || true)" \
+			"$(cat "$light/max_brightness" 2>/dev/null || true)" \
+			"$(cat "$light/bl_power" 2>/dev/null || true)"
+	done
+	printf 'session : %s\n' \
+		"$(systemctl is-active "$unit" 2>/dev/null || true)"
+	printf 'attempts: %s failed HDMI start(s), retry after %s\n' \
+		"$(cat "$fail_file" 2>/dev/null || printf 0)" \
+		"$(cat "$retry_file" 2>/dev/null || printf none)"
+	if [ "$report" = 1 ]; then
+		printf '\n-- output.state --\n'
+		sed 's/^/  /' "$state_file" 2>/dev/null || true
+		printf '\n-- session.env --\n'
+		sed 's/^/  /' "$env_file" 2>/dev/null || true
+		printf '\n-- processes --\n'
+		pgrep -a cage 2>/dev/null || printf '  no cage\n'
+		printf '\n-- cage.err (last 20) --\n'
+		tail -n 20 "$run_dir/cage.err" 2>/dev/null || true
+		printf '\n-- journal (last 40) --\n'
+		journalctl -b -t cpz-cage -t cpz-cage-output -t cpz-cage-session \
+			--no-pager -n 40 2>/dev/null || printf '  journal unavailable\n'
+		printf '\n-- kernel drm --\n'
+		dmesg 2>/dev/null | grep -i -E 'vc4|hdmi|drm' | tail -n 20 ||
+			printf '  dmesg unavailable\n'
+	fi
+	exit 0
+fi
+
+xkb_settings
+
+if [ "$prepare" = 1 ]; then
+	# Input devices are enumerated before the console user's settings are
+	# available. Re-evaluate the pointer policy once per boot, before cage
+	# starts, so a mouse that appeared during boot follows the saved mouse
+	# setting. Runtime changes are handled by cpz-pointer.service and its path
+	# unit, and the ~0.5 s python start is pure latency on a compositor
+	# restart, so do not repeat it on every switch.
+	if [ ! -e "$run_dir/pointer-applied" ]; then
+		if [ -x /usr/local/bin/cpz-pointer ]; then
+			/usr/local/bin/cpz-pointer --apply >/dev/null 2>&1 || true
+		fi
+		: >"$run_dir/pointer-applied" 2>/dev/null || true
+	fi
+	render_env || true
+	# foot.ini is rendered by cpz-cage immediately before foot starts. Doing it
+	# here as well only adds a python start to every compositor restart.
+	write_state
+	log "prepare: mode=$mode target=$target devices=${devices:-none} hdmi=$hdmi_connected edid=$hdmi_edid pinned=$hdmi_pinned"
+	# Whenever HDMI is the chosen output the panel is dark, even before the
+	# link is enabled: the session is starting on the HDMI card, so a lit panel
+	# would only show a frozen frame. A dead HDMI is handled by the panel
+	# fallback, which changes the target and lights the panel again.
+	if [ "$target" = hdmi ]; then
+		panel_off
+	else
+		panel_on
+	fi
+	exit 0
+fi
+
+# Debounce a move to HDMI in auto mode. A monitor can pulse HPD while it
+# powers up; returning to the panel is immediate.
+if [ "$target" = hdmi ] && [ "$force" = 0 ] && [ "$mode" = auto ]; then
+	configured_target=$(sed -n 's/^target=//p' "$state_file" 2>/dev/null |
+		tail -n 1)
+	if [ "$configured_target" != hdmi ]; then
+		if [ "$hdmi_usable" = 1 ]; then
+			# One extra sample filters a monitor that is still powering up.
+			# A TV can pulse HPD for a second or more; switching on the first
+			# sample would restart the session into a link that is not ready.
+			if [ "$hotplug" = 1 ] || [ "$user_request" = 1 ]; then
+				# The hotplug run was already triggered by the uevent and an
+				# explicit request is the user's decision; a short confirmation
+				# is enough and keeps the switch snappy.
+				sleep 0.4
+			else
+				sleep 1.0
+			fi
+			hdmi_probe
+			if [ "$hdmi_usable" != 1 ]; then
+				log "HDMI disappeared during confirmation"
+				rm -f "$pending_file"
+				exit 0
+			fi
+		else
+			count=$(cat "$pending_file" 2>/dev/null || printf 0)
+			case "$count" in
+				'' | *[!0-9]*) count=0 ;;
+			esac
+			count=$((count + 1))
+			printf '%s\n' "$count" >"$pending_file" 2>/dev/null || true
+			if [ "$count" -lt "$hdmi_debounce" ]; then
+				log "pending HDMI switch ($count/$hdmi_debounce)"
+				exit 0
+			fi
+		fi
+	fi
+fi
+rm -f "$pending_file"
+
+# Keep the previous environment so a suppressed restart can put it back.
+if [ -f "$env_file" ]; then
+	cp -f "$env_file" "$env_file.prev" 2>/dev/null || true
+fi
+env_changed=0
+render_env && env_changed=1
+
+config_state=same
+if [ -x /usr/local/bin/cpz-foot-config ]; then
+	config_state=$(/usr/local/bin/cpz-foot-config 2>/dev/null || printf 'error')
+	[ "$config_state" = error ] && log "foot config render failed"
+fi
+
+# cage enables an output on the selected card asynchronously. Give an already
+# running session a moment to finish before judging the connector state. A
+# forced or environment-changing run is about to restart cage anyway.
+if [ "$target" = hdmi ] && [ "$env_changed" = 0 ] && [ "$force" = 0 ] &&
+	[ "$recover" = 0 ] && session_up; then
+	limit=50
+	if [ "$hotplug" = 1 ]; then
+		limit=60
+	fi
+	tries=0
+	while [ "$hdmi_enabled" = 0 ] && [ "$hdmi_connected" = 1 ] &&
+		[ "$tries" -lt "$limit" ]; do
+		sleep 0.1
+		hdmi_probe
+		tries=$((tries + 1))
+	done
+fi
+
+now=$(date +%s 2>/dev/null || printf 0)
+
+need_restart=0
+restart_reason=
+if [ "$force" = 1 ]; then
+	need_restart=1
+	restart_reason=forced
+elif [ "$recover" = 1 ]; then
+	need_restart=1
+	restart_reason=recover
+elif [ "$env_changed" = 1 ]; then
+	need_restart=1
+	restart_reason="environment changed"
+elif [ "$config_state" = changed ] && session_up; then
+	# foot only reads foot.ini at startup. Replace the visible terminal in
+	# place; cage and the DRM mode stay up. If this is an older session with no
+	# supervisor, fall back to the session restart.
+	if reload_foot; then
+		log "foot replaced for the changed configuration"
+	else
+		need_restart=1
+		restart_reason="foot config changed"
+	fi
+elif ! session_up; then
+	need_restart=1
+	restart_reason="session inactive"
+fi
+
+# cage is running on the HDMI card but did not enable the connector: the
+# output is not working. Restarting into the same dead link is exactly the
+# monitor-blinking-every-few-seconds loop, so count the attempt and, on the
+# second one, take the session back to the panel, which always works.
+if [ "$need_restart" = 0 ] && [ "$target" = hdmi ] && session_up &&
+	[ "$hdmi_enabled" = 0 ]; then
+	hdmi_fails=$(cat "$fail_file" 2>/dev/null || printf 0)
+	case "$hdmi_fails" in
+		'' | *[!0-9]*) hdmi_fails=0 ;;
+	esac
+	hdmi_fails=$((hdmi_fails + 1))
+	printf '%s\n' "$hdmi_fails" >"$fail_file" 2>/dev/null || true
+	printf '%s\n' "$((now + 120))" >"$retry_file" 2>/dev/null || true
+	log "HDMI selected but cage did not enable the connector (attempt $hdmi_fails)"
+	if [ "$hdmi_fails" -ge 2 ]; then
+		log "HDMI unusable; returning the session to the panel"
+		target=panel
+		choose_devices
+		render_env || true
+		need_restart=1
+		restart_reason="HDMI unusable, panel fallback"
+	fi
+fi
+
+# Every automatic restart drops the HDMI link while the monitor re-syncs. A
+# short gap absorbs duplicate triggers without making a real switch feel slow;
+# the crash-loop case (session inactive) keeps the longer gap. The panel
+# fallback below is a recovery and must not wait, or the user stares at two
+# dark screens. A fresh output.request (Settings or Alt+D) is explicit user
+# intent and bypasses the gap: making the user wait for a cooldown is what made
+# the switch feel slow.
+if [ "$need_restart" = 1 ] && [ "$force" = 0 ] && [ "$recover" = 0 ] &&
+	[ "$user_request" = 0 ] &&
+	[ "$restart_reason" != "HDMI unusable, panel fallback" ]; then
+	gap=$restart_gap
+	if [ "$restart_reason" = "session inactive" ]; then
+		gap=$restart_gap_inactive
+	fi
+	last=$(cat "$restart_stamp" 2>/dev/null || printf 0)
+	case "$last" in
+		'' | *[!0-9]*) last=0 ;;
+	esac
+	if [ "$last" -gt 0 ] && [ $((now - last)) -lt "$gap" ]; then
+		log "restart suppressed: $restart_reason, $((now - last))s since the last restart"
+		need_restart=0
+		# The new environment was written before the decision. Put the old one
+		# back so the next run still sees a change and retries; otherwise
+		# session.env and the running cage disagree until something else
+		# happens to touch the file.
+		if [ "$env_changed" = 1 ]; then
+			if [ -f "$env_file.prev" ]; then
+				mv -f "$env_file.prev" "$env_file" 2>/dev/null || true
+			else
+				rm -f "$env_file" 2>/dev/null || true
+			fi
+		fi
+	fi
+fi
+
+if [ "$env_changed" = 1 ]; then
+	log "env: $(tr '\n' ' ' <"$env_file.prev" 2>/dev/null) -> $(tr '\n' ' ' <"$env_file" 2>/dev/null)"
+fi
+
+if [ "$need_restart" = 1 ] && [ -s "$run_dir/cage.err" ]; then
+	# The compositor's own stderr is the only record of why it exited (the
+	# getty sends stdout to the VT, not to the journal). Keep one short line
+	# so the next boot explains itself.
+	log "cage stderr: $(tail -n 2 "$run_dir/cage.err" | tr '\n' ' ' | cut -c1-400)"
+fi
+
+restart_began=$(date +%s 2>/dev/null || printf 0)
+if [ "$need_restart" = 1 ]; then
+	if restart_session; then
+		hdmi_probe
+		if [ "$target" = hdmi ]; then
+			# Give the freshly started cage a moment to enable the connector
+			# so the backlight decision usually sees the real output state.
+			# Do not block longer: this helper holds the output lock, and a
+			# second user request must not wait for it. A connector that is
+			# genuinely dead is caught by the next run, which waits longer and
+			# counts the failure.
+			tries=0
+			while [ "$hdmi_enabled" = 0 ] && [ "$hdmi_connected" = 1 ] &&
+				[ "$tries" -lt 20 ]; do
+				sleep 0.1
+				hdmi_probe
+				tries=$((tries + 1))
+			done
+			if [ "$hdmi_enabled" = 1 ]; then
+				rm -f "$fail_file" "$retry_file" 2>/dev/null || true
+			else
+				log "HDMI not enabled yet; the next run verifies the output"
+			fi
+		fi
+		restart_done=$(date +%s 2>/dev/null || printf 0)
+		case "$restart_began" in
+			'' | *[!0-9]*) restart_began=$restart_done ;;
+		esac
+		log "output: $target ($devices/$renderer), restart: $restart_reason ($((restart_done - restart_began))s)"
+	else
+		log "restart failed: $restart_reason"
+	fi
+	printf '%s\n' "$(date +%s 2>/dev/null || printf 0)" \
+		>"$restart_stamp" 2>/dev/null || true
+fi
+
+# A working HDMI session clears the failure history so a later unplug/replug
+# starts again from a clean slate.
+if [ "$target" = hdmi ] && [ "$hdmi_enabled" = 1 ] && session_up; then
+	rm -f "$fail_file" "$retry_file" 2>/dev/null || true
+fi
+
+write_state
+if [ "$target" = hdmi ]; then
+	panel_off
+else
+	panel_on
+fi

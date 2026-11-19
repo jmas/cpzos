@@ -1,0 +1,11 @@
+# Run the cage output reconciler as soon as a display connector changes
+# state instead of waiting for the next cpz-cage-output.timer sample. DRM
+# emits this uevent on HPD (cable unplug, monitor power) with HOTPLUG=1; the
+# timer remains the fallback.
+#
+# systemd only acts on SYSTEMD_WANTS device properties when a device first
+# becomes active, so a change event must queue the unit directly. systemctl
+# --no-block returns as soon as the job is queued and does not hold up udev.
+# The hotplug unit gives the monitor a moment to expose its EDID and cage a
+# moment to enable the new output; the timer does not pay that cost.
+ACTION=="change", SUBSYSTEM=="drm", ENV{HOTPLUG}=="1", RUN+="/bin/systemctl --no-block start cpz-cage-output-hotplug.service"

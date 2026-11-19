@@ -1,0 +1,72 @@
+#!/bin/sh
+# Switch to the next or previous terminal tab.
+#
+#   cpz-tab-cycle [SESSION] [next|prev]
+#
+# Plain `tmux next-window` also visits the Settings tab and any window whose
+# pane died, so cycling could land on a black, non-terminal screen. This helper
+# walks only live terminal tabs, wraps at the ends, and leaves Settings to the
+# dedicated Alt+S shortcut. With a single terminal tab it does nothing.
+set -eu
+
+session=${1:-main}
+direction=${2:-next}
+case "$direction" in
+	next | prev) ;;
+	*)
+		printf 'usage: %s [session] [next|prev]\n' "${0##*/}" >&2
+		exit 2
+		;;
+esac
+
+tmux has-session -t "=$session" 2>/dev/null || exit 0
+
+# run-shell -b starts one helper per keypress. Without the lock two quick
+# presses could read the same current tab and both select the same target.
+lock="${TMPDIR:-/tmp}/cpz-tab-cycle.${session}.lock"
+if command -v flock >/dev/null 2>&1; then
+	exec 9>"$lock"
+	flock -w 2 9 || exit 0
+fi
+
+# The window name is last so read() keeps spaces in user-renamed tabs.
+windows=$(tmux list-windows -t "=$session" -F \
+	'#{window_id} #{window_index} #{window_active} #{?@cpz_settings,1,0} #{pane_dead} #{window_name}')
+
+# Terminal tabs only: no Settings flag, no legacy "settings" name, live pane.
+ids=$(printf '%s\n' "$windows" | awk \
+	'$4 != 1 && $5 != 1 && $6 != "settings" { print $1 }')
+[ -n "$ids" ] || exit 0
+
+count=$(printf '%s\n' "$ids" | wc -l | tr -d ' ')
+[ "$count" -gt 1 ] || exit 0
+
+current=$(printf '%s\n' "$windows" | awk '$3 == 1 { print $1; exit }')
+position=$(printf '%s\n' "$ids" | awk -v current="$current" \
+	'$0 == current { print NR; exit }')
+
+if [ -z "$position" ]; then
+	# Settings (or another excluded window) is active: start at the matching
+	# end of the terminal list.
+	if [ "$direction" = next ]; then
+		position=1
+	else
+		position=$count
+	fi
+elif [ "$direction" = next ]; then
+	position=$((position % count + 1))
+else
+	position=$((position - 1))
+	[ "$position" -ge 1 ] || position=$count
+fi
+
+target=$(printf '%s\n' "$ids" | sed -n "${position}p")
+[ -n "$target" ] || exit 0
+
+# run-shell has no client context; switch the attached client explicitly.
+client=$(tmux list-clients -t "=$session" -F '#{client_name}' | head -n 1)
+if [ -n "$client" ]; then
+	tmux switch-client -c "$client" -t "$target"
+else
+	tmux select-window -t "$target" 2>/dev/null || true
+fi

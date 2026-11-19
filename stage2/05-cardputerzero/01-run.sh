@@ -18,7 +18,7 @@ printf '%s\n' "$DTOVERLAYS_REF" > "${ROOTFS_DIR}/opt/cpz-dtoverlays.ref"
 
 # The normal image drives the panel through DRM only and removes the driver's
 # fbdev emulation. The debug image keeps it: fbcon on the panel is the only
-# pre-kmscon console there. Pass the choice into the chroot as a marker file.
+# pre-session console there. Pass the choice into the chroot as a marker file.
 rm -f "${ROOTFS_DIR}/opt/cpz-keep-panel-fbdev"
 if [ "${CPZ_DEBUG_BOOT:-0}" = "1" ]; then
     install -m 0644 /dev/null "${ROOTFS_DIR}/opt/cpz-keep-panel-fbdev"
@@ -47,8 +47,8 @@ git -C /tmp/dtoverlays rev-parse HEAD \
 rm -f /opt/cpz-dtoverlays.ref
 
 # CPZ: in the normal image the internal panel is a pure DRM display. The
-# driver's fbdev emulation (/dev/fb1) is what made kmscon pick its fbdev
-# backend: kmscon only recognises a DRM-backed fbdev node when fix.id ends in
+# driver's fbdev emulation (/dev/fb1) is what made the old console stack pick
+# its fbdev backend: it only recognises a DRM-backed fbdev node when fix.id ends in
 # "drmfb", but fix.id is 16 bytes and "panel-mipi-dbi" + "drmfb" is truncated
 # to "panel-mipi-dbid". Without the fbdev node there is nothing to fall back
 # to. The debug image keeps the emulation for the panel fbcon.
@@ -65,7 +65,7 @@ old = """    if (bpp == 16)
 """
 new = """    /*
      * CPZ: do not register the DRM fbdev emulation. The panel is driven
-     * through KMS only; a /dev/fb1 node makes kmscon use its fbdev backend.
+     * through KMS only; a /dev/fb1 node makes the console stack use fbdev.
      */
 """
 if text.count(old) != 1:

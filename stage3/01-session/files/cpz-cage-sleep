@@ -1,0 +1,9 @@
+#!/bin/sh
+# systemd suspend hook: after resume the HDMI link and panel backlight can be
+# in a different state. Re-apply the cage output decision.
+case "${1:-}" in
+	post)
+		/usr/local/bin/cpz-cage-output --force >/dev/null 2>&1 || true
+		;;
+esac
+exit 0

@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-# Boot and service policy for the CPZ kmscon session.
+# Boot and service policy for the CPZ cage session.
 #
 # Hardware enablement, splash, kernel modules and boot firmware remain owned by
 # stage2/05-cardputerzero. This stage only replaces the login/UI surface.
@@ -111,7 +111,7 @@ if [ -n "${CPZ_HDMI_VIDEO:-}" ]; then
 fi
 
 # Debug boot: show a verbose console on the panel/HDMI plus serial. This is
-# the image to use when the normal kmscon session produces a black screen.
+# the image to use when the normal cage session produces a black screen.
 if [ "${CPZ_DEBUG_BOOT:-0}" = "1" ]; then
 	config="${ROOTFS_DIR}/boot/firmware/config.txt"
 	cmdline="${ROOTFS_DIR}/boot/firmware/cmdline.txt"
@@ -156,38 +156,38 @@ rm -f "${ROOTFS_DIR}/boot/firmware/rpi-preseed.toml"
 on_chroot <<'CHROOT'
 set -e
 
-# kmscon owns the DRM console on tty1. The normal image has no panel fbdev
-# node and boots with fbcon=map:off, so tty2/tty3 gettys are kept only as a
-# fallback; they are not drawn unless fbcon is bound again. SSH/serial and the
-# debug image are the primary recovery paths.
+# cage owns the DRM console on tty1. The normal image has no panel fbdev node
+# and boots with fbcon=map:off, so tty2/tty3 gettys are kept only as a fallback;
+# they are not drawn unless fbcon is bound again. SSH/serial and the debug
+# image are the primary recovery paths.
 systemctl set-default multi-user.target
 
 if [ -f /etc/cpz-debug-boot ]; then
 	# Debug image: keep tty1/tty2 as visible getty consoles so the
 	# kernel/systemd log and a login prompt are available. The debug build
 	# keeps the panel fbdev and uses fbcon=map:10, so these consoles appear
-	# on the panel. kmscon must not take the VT, otherwise the logs would be
-	# hidden.
-	systemctl disable kmsconvt@tty1.service 2>/dev/null || true
-	systemctl mask kmsconvt@tty1.service || true
-	systemctl disable cpz-kmscon-output.timer 2>/dev/null || true
+	# on the panel. The cage session must not take the VT, otherwise the logs
+	# would be hidden.
+	systemctl disable cpz-tmux.service 2>/dev/null || true
+	systemctl mask cpz-tmux.service || true
+	systemctl disable cpz-cage-output.timer cpz-cage-output.path 2>/dev/null || true
 	systemctl unmask getty@tty1.service getty@tty2.service getty@tty3.service || true
 	systemctl enable getty@tty1.service getty@tty2.service getty@tty3.service || true
 	systemctl enable console-setup.service 2>/dev/null || true
 else
-	# kmscon owns tty1. tty2/tty3 stay plain getty fallbacks; with
+	# The tty1 getty starts the login session that cpz-cage replaces; the
+	# tmux server is independent. tty2/tty3 stay plain getty fallbacks; with
 	# fbcon=map:off they have no visible console.
-	systemctl disable getty@tty1.service 2>/dev/null || true
-	systemctl mask getty@tty1.service || true
-	systemctl enable kmsconvt@tty1.service
-	systemctl disable kmsconvt@tty2.service kmsconvt@tty3.service 2>/dev/null || true
+	systemctl unmask getty@tty1.service || true
+	systemctl enable getty@tty1.service
+	systemctl enable cpz-tmux.service
+	systemctl enable cpz-pointer.service cpz-pointer.path
 	systemctl unmask getty@tty2.service getty@tty3.service || true
 	systemctl enable getty@tty2.service getty@tty3.service
-	# tty2/tty3 are not drawn while fbcon=map:off, and kmscon renders with
-	# its own FreeType font and XKB layout. setupcon/loadkeys at boot only
-	# delay the kmscon critical path; the debug image keeps them for the
-	# visible fbcon consoles. cpz-keyboard-layout still loads the recovery
-	# keymap for tty2/tty3 itself.
+	# tty2/tty3 are not drawn while fbcon=map:off, and foot renders with
+	# fontconfig and XKB. setupcon/loadkeys at boot only delay the graphical
+	# path; the debug image keeps them for the visible fbcon consoles.
+	# cpz-keyboard-layout still loads the recovery keymap for tty2/tty3.
 	systemctl disable console-setup.service keyboard-setup.service \
 		2>/dev/null || true
 fi
@@ -208,6 +208,7 @@ systemctl mask tmp.mount || true
 
 # rpi-preseed owns account/network setup on this image.
 systemctl disable userconfig.service || true
+
 systemctl mask userconfig.service || true
 
 # NetworkManager is the Wi-Fi backend used by cpz-settings/nmtui.
@@ -226,3 +227,17 @@ systemctl enable rpi-preseed-runcmd-late.service || true
 
 systemctl daemon-reload || true
 CHROOT
+
+# The fast build path reuses a cached stage2 rootfs, which may have been built
+# with ENABLE_SSH=0. Enable it here from the current config so the image always
+# matches the requested SSH policy.
+if [ "${ENABLE_SSH}" = "1" ]; then
+	on_chroot <<'CHROOT'
+ssh-keygen -A 2>/dev/null || true
+systemctl enable ssh 2>/dev/null || true
+CHROOT
+else
+	on_chroot <<'CHROOT'
+systemctl disable ssh 2>/dev/null || true
+CHROOT
+fi

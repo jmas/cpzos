@@ -1,0 +1,104 @@
+#!/usr/bin/python3
+"""Control the CPZ panel backlight through the m5ioe1 PWM registers.
+
+The kernel backlight stack cannot drive this panel on the 6.18 kernel. The
+vendor pwm-bl driver is bound and its update_status() is called, but the
+backlight core keeps BL_CORE_FBBLANK set (backlight_disable() sets it and the
+mipi-dbi path never clears it), so backlight_is_blank() is always true and the
+PWM is never programmed. brightness/bl_power writes are accepted and silently
+ignored, and the panel stays at the controller's idle level.
+
+The driver must stay bound: the panel's DRM card depends on the backlight
+device through a device link, and unbinding the driver removes the panel
+entirely. So the PWM channel cannot be exported through /sys/class/pwm either.
+
+Writing the two duty registers over I2C is the only working control. The
+driver never writes them (its apply always takes the blanked branch), so there
+is no race with it.
+"""
+
+import ctypes
+import fcntl
+import os
+import sys
+
+BUS = 1
+ADDR = 0x4F
+I2C_RDWR = 0x0707
+
+# m5ioe1 register map: PWM channel 3 (PWM4) duty, and the shared frequency.
+PWM_L = 0x21
+PWM_H = 0x22
+FREQ_L = 0x25
+FREQ_H = 0x26
+PERIOD_NS = 50000
+PWM_EN = 0x80
+
+
+class I2CMsg(ctypes.Structure):
+    _fields_ = [
+        ("addr", ctypes.c_uint16),
+        ("flags", ctypes.c_uint16),
+        ("len", ctypes.c_uint16),
+        ("buf", ctypes.POINTER(ctypes.c_uint8)),
+    ]
+
+
+class I2CRdwr(ctypes.Structure):
+    _fields_ = [
+        ("msgs", ctypes.POINTER(I2CMsg)),
+        ("nmsgs", ctypes.c_uint32),
+    ]
+
+
+def write_regs(fd, values):
+    """Write [(register, value), ...] in one I2C transaction per pair."""
+    for reg, value in values:
+        buf = (ctypes.c_uint8 * 2)(reg, value)
+        msg = (I2CMsg * 1)(I2CMsg(ADDR, 0, 2, buf))
+        data = I2CRdwr(msg, 1)
+        fcntl.ioctl(fd, I2C_RDWR, data)
+
+
+def set_level(percent):
+    percent = max(0, min(100, int(percent)))
+    duty = (percent * 4095 + 50) // 100
+    freq = 1000000000 // PERIOD_NS
+    fd = os.open("/dev/i2c-%d" % BUS, os.O_RDWR)
+    try:
+        write_regs(
+            fd,
+            [
+                (FREQ_L, freq & 0xFF),
+                (FREQ_H, (freq >> 8) & 0xFF),
+                (PWM_L, duty & 0xFF),
+                (PWM_H, ((duty >> 8) & 0x0F) | PWM_EN),
+            ],
+        )
+    finally:
+        os.close(fd)
+
+
+def main(argv):
+    action = argv[1] if len(argv) > 1 else "status"
+    if action == "on":
+        percent = argv[2] if len(argv) > 2 else "100"
+        try:
+            set_level(percent)
+        except ValueError:
+            return 2
+        return 0
+    if action == "off":
+        set_level(0)
+        return 0
+    if action == "init":
+        return 0
+    if action == "status":
+        print("m5ioe1 PWM4: period=%d ns, controlled over I2C" % PERIOD_NS)
+        return 0
+    print("usage: %s on [percent] | off | init | status" % argv[0], file=sys.stderr)
+    return 64
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

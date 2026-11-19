@@ -1,0 +1,47 @@
+#!/bin/sh
+# Render the foot configuration and replace only the visible terminal.
+#
+# foot reads foot.ini once at startup. A font or theme change therefore needs a
+# new foot process, but not a new compositor: cpz-cage-session keeps cage and
+# the DRM mode alive with an anchor terminal, so the swap takes milliseconds
+# and never renegotiates HDMI. tmux reattaches to the same tabs and panes.
+#
+# Exit status:
+#   0  a reload was requested, or no terminal was running to reload;
+#   1  a terminal is running under an older supervisor and must not be killed
+#      from here (the caller can restart the session as a fallback).
+set -eu
+
+run_dir=/run/cpz-cage
+pid_file=$run_dir/cage-session.pid
+foot_pid_file=$run_dir/foot.pid
+
+if [ ! -x /usr/local/bin/cpz-foot-config ]; then
+	exit 0
+fi
+/usr/local/bin/cpz-foot-config --quiet
+
+pid=$(cat "$pid_file" 2>/dev/null || true)
+case "$pid" in
+	'' | *[!0-9]*) pid= ;;
+esac
+
+# A stale pid must never receive the signal. The cmdline check also protects
+# against a reused pid after a crash. Both supervisors understand SIGUSR1:
+# cpz-cage-session replaces the foot under cage; the compositor itself stays up.
+if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+	cmd=$(tr '\000' '\n' <"/proc/$pid/cmdline" 2>/dev/null | head -n 1)
+	case "$cmd" in
+		/usr/local/bin/cpz-cage-session)
+			kill -USR1 "$pid" 2>/dev/null || exit 1
+			exit 0
+			;;
+	esac
+fi
+
+# Old sessions run foot directly under cage. Killing it would take the
+# compositor down, so let cpz-cage-output use its restart fallback.
+if [ -s "$foot_pid_file" ]; then
+	exit 1
+fi
+exit 0

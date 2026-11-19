@@ -31,13 +31,12 @@
 # published in /run/cpz-layout.active ("cpz" or a layout code) so cpz-status can
 # show it in the status bar.
 #
-# kmscon uses libxkbcommon and does not read the console keymap. It follows
-# systemd-localed through its Locale1 D-Bus listener, so this script also
-# updates the X11 layout with localectl. kmscon swaps its keymap in place: no
-# session restart, no DRM master drop and no monitor renegotiation. For the
-# internal keyboard the CPZ overlay is generated on top of the selected
-# language, with one layout name per language (cpz_us, cpz_ua, ...) so a
-# language change is visible to localed even though the prefix stays "cpz".
+# cage uses libxkbcommon and does not read the console keymap. This script
+# publishes the X11 layout through localectl; cpz-cage-output notices the
+# changed layout and restarts the compositor, so the next foot/tmux frame uses
+# it. For the internal keyboard the CPZ overlay is generated on top of the
+# selected language, with one layout name per language (cpz_us, cpz_ua, ...) so
+# a language change is visible to localed even though the prefix stays "cpz".
 # The overlay is language-aware: the driver's Sym layer reuses ordinary
 # punctuation keycodes, and national layouts put their extra letters on exactly
 # those keycodes. cpz-layout-map keeps the layout's letters on the Sym layer
@@ -206,7 +205,7 @@ fi
 # interface) as separate udev events. Wait until the queue is empty so the
 # first run already sees the final keyboard set instead of a half-removed
 # keyboard that still looks external. The boot service sets
-# CPZ_LAYOUT_SETTLE=0: sysinit normally has the device set ready, and kmscon
+# CPZ_LAYOUT_SETTLE=0: sysinit normally has the device set ready, and the
 # should not wait for a redundant settle before its first frame. If no input
 # node exists yet, fall back to the full settle.
 if [ "${CPZ_LAYOUT_SETTLE:-1}" = 0 ] &&
@@ -380,12 +379,23 @@ prepare_cpz_maps() {
 	return 1
 }
 
-# Push the layout to systemd-localed. kmscon listens to Locale1 and replaces
-# the live keymap in place, so the session, DRM master and HDMI link stay
-# untouched. localed itself ignores an unchanged RMLVO, so this is safe to call
-# on every keyboard event. Do not read /etc/default/keyboard here: Debian links
+# Push the layout to systemd-localed. cpz-cage-output reads the published XKB
+# layout on its next tick. localed itself ignores an unchanged RMLVO, so this
+# is safe to call on every keyboard event. Do not read /etc/default/keyboard
+# here: Debian links
 # /etc/vconsole.conf to it, localed replaces that link on its first write, and
 # the two then diverge from the layout localed actually has.
+publish_xkb_state() {
+	# Cache the XKB code for cpz-cage-output. Reading this file on the output
+	# timer avoids a localectl D-Bus round trip every second on the CM0.
+	code=$1
+	[ -d /run ] || return 0
+	tmp=/run/.cpz-layout.xkb.$$
+	printf 'layout=%s\n' "$code" >"$tmp" 2>/dev/null || return 0
+	chmod 0644 "$tmp" 2>/dev/null || true
+	mv "$tmp" /run/cpz-layout.xkb 2>/dev/null || rm -f "$tmp"
+}
+
 publish_xkb() {
 	code=$1
 	case "$code" in
@@ -394,6 +404,7 @@ publish_xkb() {
 	if command -v localectl >/dev/null 2>&1; then
 		if timeout 5 localectl --no-convert set-x11-keymap "$code" \
 			>/dev/null 2>&1; then
+			publish_xkb_state "$code"
 			log "xkb layout: $code"
 			return 0
 		fi

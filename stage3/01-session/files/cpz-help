@@ -1,46 +1,31 @@
 #!/bin/sh
 # Key reference shown by Alt+H in a tmux popup.
 #
-# The shortcut list comes from cpz-keys, the same registry that generates the
-# tmux bindings and drives Settings > Keyboard > Shortcuts. This page only adds
-# the status-bar legend. The list is taller than the 53x14 panel, so it is
-# paged with less. -X keeps the popup contents on screen instead of switching
-# the alternate screen. Do not add -F: less would quit as soon as the list fits
-# on a large HDMI console, so the popup flashed and closed before it could be
-# read. The pager must always wait for q.
+# The shortcut list, in-app key hints and status-bar legend all come from
+# cpz-keys, the same registry that generates the tmux bindings and drives
+# Settings > Input > Shortcuts. The list is taller than the 53x14 panel, so it
+# is paged with less. -X keeps the popup contents on screen instead of
+# switching the alternate screen. Do not add -F: less would quit as soon as the
+# list fits on a large HDMI console, so the popup flashed and closed before it
+# could be read. The pager must always wait for q.
 keys() {
 	if [ -x /usr/local/bin/cpz-keys ]; then
 		/usr/local/bin/cpz-keys help
 	else
-		cat <<'EOF'
-The cpz-keys helper is not installed; the shortcut registry is unavailable.
-EOF
+		message='The cpz-keys helper is not installed; the shortcut registry is unavailable.'
+		if [ -x /usr/local/bin/cpz-i18n ]; then
+			message=$(/usr/local/bin/cpz-i18n get "$message" "$message" 2>/dev/null || printf '%s' "$message")
+		fi
+		printf '%s\n' "$message"
 	fi
 
-	cat <<'EOF'
-
-==== Internal keyboard ====
- Sym+key           punctuation or the layout's extra letters
- Shift+Sym+key     uppercase, or a moved ASCII symbol
- Fn+F/X/Z/C        arrow keys while Fn is held
-
-==== In-app keys ====
- In Settings       Z/X/C/F move (Fn off)
- In Applications   Enter info  i install  e run
-
-==== Status bar ====
- 87% battery   + charging   ! low
- Wi Wi-Fi      Eth Ethernet   Bt Bluetooth
- V0-V4 volume  VM muted   L0-L10 brightness
- US, UA, ...   active input layout
-EOF
 }
 
 if command -v less >/dev/null 2>&1; then
-	keys | less -R -X -P 'q close'
+	keys | less -R -X --mouse -P 'q close'
 	exit 0
 fi
 
 keys
-printf '\nPress Enter to close.'
+printf '\n%s' "$(/usr/local/bin/cpz-i18n get 'Press Enter to close.' 'Press Enter to close.' 2>/dev/null || printf 'Press Enter to close.')"
 read -r _ || true

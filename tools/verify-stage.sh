@@ -1,5 +1,5 @@
 #!/bin/bash
-# Host-side structural checks for the CPZ kmscon image branch.
+# Host-side structural checks for the CPZ cage image branch.
 # No root, Docker or ARM hardware required.
 # shellcheck disable=SC2016  # grep patterns intentionally contain a literal $
 set -euo pipefail
@@ -197,29 +197,48 @@ echo "== stage layout =="
 for file in \
 	stage3/prerun.sh \
 	stage3/EXPORT_IMAGE \
-	stage3/00-kmscon/00-run.sh \
+	stage3/00-graphics/00-run.sh \
+	stage2/04-locales/00-run.sh \
 	stage3/01-session/00-packages \
 	stage3/01-session/01-run.sh \
 	stage3/01-session/02-run.sh \
 	stage3/01-session/files/cpz-first-login \
-	stage3/01-session/files/kmscon.conf \
-	stage3/01-session/files/cpz-kmscon \
-	stage3/01-session/files/cpz-kmscon-config \
-	stage3/01-session/files/cpz-login \
-	stage3/01-session/files/cpz-kmscon-output \
-	stage3/01-session/files/cpz-kmscon-output.service \
-	stage3/01-session/files/cpz-kmscon-output.timer \
-	stage3/01-session/files/cpz-kmscon-sleep \
-	stage3/01-session/files/99-cpz-kmscon-output.rules \
-	stage3/01-session/files/99-cpz-kmscon-nudge.rules \
+	stage3/01-session/files/cpz-cage \
+	stage3/01-session/files/cpz-cage-output \
+	stage3/01-session/files/cpz-cage-session \
+	stage3/01-session/files/10-ssh.conf \
+	stage3/01-session/files/cpz-cage-output.service \
+	stage3/01-session/files/cpz-cage-output.timer \
+	stage3/01-session/files/cpz-cage-output.path \
+	stage3/01-session/files/cpz-cage-output-hotplug.service \
+	stage3/01-session/files/cpz-panel-backlight \
+	stage3/01-session/files/cpz-cage-sleep \
+	stage3/01-session/files/cpz-cage.tmpfiles \
+	stage3/01-session/files/cpz-pointer \
+	stage3/01-session/files/cpz-i18n \
+	stage3/01-session/files/i18n/en.json \
+	stage3/01-session/files/i18n/uk.json \
+	stage3/01-session/files/i18n/de.json \
+	stage3/01-session/files/cpz-pointer.service \
+	stage3/01-session/files/cpz-pointer.path \
+	stage3/01-session/files/cpz-pointer-cursor.service \
+	stage3/01-session/files/cpz-foot-config \
+	stage3/01-session/files/cpz-foot-reload \
+	stage3/01-session/files/cpz-getty \
+	stage3/01-session/files/cpz-run \
+	stage3/01-session/files/cpz-session.sh \
+	stage3/01-session/files/getty@tty1.service.d/10-cpz.conf \
+	stage3/01-session/files/cpz-tmux \
+	stage3/01-session/files/cpz-tmux-start \
+	stage3/01-session/files/cpz-tmux.service \
+	stage3/01-session/files/99-cpz-cage-output.rules \
+	stage3/01-session/files/99-zz-cpz-input.rules \
 	stage3/01-session/files/99-cpz-automount.rules \
 	stage3/01-session/files/cpz-automount \
 	stage3/01-session/files/cpz-battery \
 	stage3/01-session/files/cpz-battery-guard.service \
 	stage3/01-session/files/battery.conf \
 	stage3/01-session/files/cpz-automount@.service \
-	stage3/01-session/files/kmsconvt@.service.d/10-cpz.conf \
-	stage3/01-session/files/cpz-session.sh \
 	stage3/01-session/files/tmux.conf \
 	stage3/01-session/files/cpz-session-ensure \
 	stage3/01-session/files/cpz-tab-new \
@@ -250,6 +269,9 @@ for file in \
 	stage3/01-session/files/cpz-layout-next \
 	stage3/01-session/files/cpz-layout-apply \
 	stage3/01-session/files/cpz-display-toggle \
+	stage3/01-session/files/cpz-locale-apply \
+	stage3/01-session/files/50-cpz-locale \
+	stage3/01-session/files/10-cpz-locale.sh \
 	stage3/01-session/files/50-cpz-layout \
 	stage3/01-session/files/cpz-keyboard-layout.service \
 	stage3/01-session/files/cpz-keyboard-layout.path \
@@ -264,7 +286,6 @@ for file in \
 	config.cpz.example \
 	config.debug.example \
 	docs/M5-IMAGER.md \
-	docs/CPZ-KMSCON.md \
 	docs/CPZ-KEYS.md \
 	docs/APPS.md \
 	tools/make-m5stack-entry.py; do
@@ -302,16 +323,20 @@ done
 
 for script in \
 	stage3/prerun.sh \
-	stage3/00-kmscon/00-run.sh \
+	stage3/00-graphics/00-run.sh \
 	stage3/01-session/01-run.sh \
 	stage3/01-session/02-run.sh \
 	stage3/01-session/files/cpz-first-login \
-	stage3/01-session/files/cpz-kmscon \
-	stage3/01-session/files/cpz-kmscon-config \
-	stage3/01-session/files/cpz-login \
-	stage3/01-session/files/cpz-kmscon-output \
-	stage3/01-session/files/cpz-kmscon-sleep \
-	stage3/01-session/files/cpz-session.sh \
+	stage3/01-session/files/cpz-cage \
+	stage3/01-session/files/cpz-cage-output \
+	stage3/01-session/files/cpz-cage-session \
+	stage3/01-session/files/cpz-cage-sleep \
+	stage3/01-session/files/cpz-pointer \
+	stage3/01-session/files/cpz-i18n \
+	stage3/01-session/files/cpz-foot-config \
+	stage3/01-session/files/cpz-foot-reload \
+	stage3/01-session/files/cpz-tmux \
+	stage3/01-session/files/cpz-tmux-start \
 	stage3/01-session/files/cpz-session-ensure \
 	stage3/01-session/files/cpz-tab-new \
 	stage3/01-session/files/cpz-tab-close \
@@ -363,7 +388,6 @@ contains stage3/01-session/files/cardputerzero-keymap.service 'CPZ_LAYOUT_SETTLE
 contains stage3/01-session/files/cpz-keyboard-layout 'CPZ_LAYOUT_SETTLE'
 contains stage3/01-session/02-run.sh 'disable console-setup.service'
 contains stage3/01-session/files/cpz-conn-status.timer 'OnBootSec=10s'
-contains stage3/01-session/files/cpz-kmscon-output 'confirm_hdmi'
 
 echo "== console session =="
 contains stage3/01-session/files/tmux.conf "status-position top"
@@ -375,44 +399,51 @@ contains stage3/01-session/files/tmux.conf 'tmux-keys.conf'
 not_contains stage3/01-session/files/tmux.conf 'bind -n M-'
 contains stage3/01-session/files/cpz-help 'cpz-keys help'
 contains stage3/01-session/files/cpz-hint 'cpz-keys hint'
-contains stage3/01-session/files/cpz-session.sh 'cpz-session-ensure main'
-contains stage3/01-session/files/cpz-session.sh 'cpz-first-login'
-contains stage3/01-session/files/cpz-session.sh '/run/cpz-kmscon/session.tty1.tty'
-contains stage3/01-session/files/cpz-login 'session.$vt.tty'
 contains stage3/01-session/files/cpz-first-login 'passwd'
 contains stage3/01-session/files/cpz-first-login 'CPZ_PASSWORD_PROMPT_TIMEOUT'
 contains stage3/01-session/files/cpz-first-login 'timeout'
 contains stage3/01-session/files/cpz-conn-status.timer 'OnUnitActiveSec=30s'
 contains stage3/01-session/files/cpz-session-save.timer 'OnUnitActiveSec=5min'
-contains stage3/01-session/files/cpz-kmscon-config 'get_setting font_size'
-contains stage3/01-session/files/cpz-kmscon-config 'get_setting font_panel'
-contains stage3/01-session/files/cpz-kmscon-config 'get_setting screen_timeout'
-not_contains stage3/01-session/files/cpz-kmscon-config "printf 'xkb-layout"
-contains stage3/01-session/files/cpz-kmscon-config 'palette-background'
-contains stage3/01-session/files/cpz-kmscon-config 'multi_monitor=clone'
-contains stage3/01-session/files/cpz-kmscon '--configdir /run/cpz-kmscon'
-contains stage3/01-session/files/cpz-kmscon-output 'hdmi_debounce=2'
-contains stage3/01-session/files/cpz-kmscon-output 'hdmi_edid'
-contains stage3/01-session/files/cpz-kmscon-output 'hdmi_pinned'
-contains stage3/01-session/files/cpz-kmscon-output 'bl_power'
-contains stage3/01-session/files/cpz-kmscon-output 'panel_off'
-contains stage3/01-session/files/cpz-kmscon-output 'panel_on'
-contains stage3/01-session/files/cpz-kmscon-output 'restart_session'
-contains stage3/01-session/files/cpz-kmscon-output '--status'
-contains stage3/01-session/files/cpz-kmscon-output '--recover'
-contains stage3/01-session/files/kmscon.conf 'multi-monitor=largest'
-contains stage3/01-session/files/kmscon.conf 'no-use-original-mode'
-contains stage3/01-session/files/kmscon.conf 'term=xterm-256color'
-not_contains stage3/01-session/files/cpz-kmscon-output.service '--auto'
-contains stage3/01-session/files/cpz-kmscon-output '--auto) override=""'
+contains stage3/01-session/files/cpz-cage-output.timer 'OnUnitActiveSec=5s'
 contains stage3/01-session/files/cpz-settings 'Text Size'
+contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'cpz-getty'
+contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'StartLimitIntervalSec=0'
+contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'cpz-cage-output --prepare'
+contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'RestartMaxDelaySec=60'
+contains stage3/01-session/files/cpz-cage 'set -a'
+contains stage3/01-session/files/cpz-cage 'export WLR_DRM_DEVICES'
+contains stage3/01-session/files/cpz-cage 'export WLR_RENDERER WLR_DRM_NO_MODIFIERS'
+contains stage3/01-session/files/cpz-cage-output 'restart_gap=5'
+contains stage3/01-session/files/cpz-cage-output 'restart_gap_inactive=20'
+contains stage3/01-session/files/cpz-cage-output 'flock -n 9'
+contains stage3/01-session/files/cpz-cage-output 'logger -t cpz-cage-output --'
+contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'ExecStartPre=-+/usr/local/bin/cpz-cage-output --prepare'
+contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'Type=simple'
+contains stage3/01-session/files/cpz-battery 'cpz-battery.boot-checked'
+contains stage3/01-session/files/cpz-cage-output 'user_request=1'
+contains stage3/01-session/files/cpz-cage-output 'cpz-panel-backlight off'
+contains stage3/01-session/files/cpz-cage-output 'cpz-panel-backlight on'
+contains stage3/01-session/files/cpz-panel-backlight 'PWM_H'
+contains stage3/01-session/files/cpz-panel-backlight '/dev/i2c-'
+contains stage3/01-session/files/cpz-brightness 'cpz-panel-backlight'
+contains stage3/01-session/files/50-cpz-backlight 'cpz-panel-backlight'
+contains stage3/01-session/files/cpz-cage-output 'HDMI unusable, panel fallback'
+contains stage3/01-session/files/cpz-cage-output '--report)'
+contains stage3/01-session/files/cpz-session.sh '/dev/tty1'
+contains stage3/01-session/files/cpz-session.sh '/usr/local/bin/cpz-cage'
+contains stage3/01-session/files/10-ssh.conf 'PasswordAuthentication yes'
+contains stage3/01-session/files/cpz-tmux.service 'RemainAfterExit=yes'
+contains stage3/01-session/files/cpz-tmux.service 'Requires=user-runtime-dir@1000.service'
+contains stage3/01-session/files/cpz-foot-config 'font=Terminus:pixelsize='
+contains stage3/01-session/files/cpz-tmux-start 'cpz-session-ensure main'
 not_contains stage3/01-session/files/cpz-settings 'Panel Text Size'
 not_contains stage3/01-session/files/cpz-settings 'HDMI Text Size'
 contains stage3/01-session/files/settings.conf 'font_size=12'
-contains stage3/01-session/files/99-cpz-kmscon-output.rules 'HOTPLUG'
-contains stage3/01-session/files/99-cpz-kmscon-output.rules 'systemctl --no-block start'
-contains stage3/01-session/01-run.sh 'cpz-kmscon-output.timer'
-contains stage3/01-session/01-run.sh '99-cpz-kmscon-output.rules'
+contains stage3/01-session/01-run.sh 'cpz-cage-output.timer'
+contains stage3/01-session/01-run.sh '99-cpz-cage-output.rules'
+contains stage3/01-session/files/cpz-cage-output 'devices=$hdmi_dev'
+contains stage3/01-session/files/cpz-cage-output 'devices=$panel_dev'
+not_contains stage3/01-session/files/cpz-cage-output 'panel_dev:$hdmi_dev'
 contains stage3/01-session/files/cpz-status '/run/cpz-conn'
 contains stage3/01-session/files/cpz-status 'show_volume'
 contains stage3/01-session/files/cpz-status 'show_brightness'
@@ -445,30 +476,28 @@ contains stage3/01-session/files/cpz-settings 'NAV_UP'
 contains stage3/01-session/files/cpz-settings 'ord("z")'
 not_contains stage3/01-session/files/cpz-settings 'cpz-console-theme'
 absent stage3/01-session/files/cpz-console-theme
-contains stage3/01-session/files/cpz-session.sh 'cpz-session-restore'
 contains stage3/01-session/files/cpz-session-ensure '@cpz_restoring'
 contains stage3/01-session/files/tmux.conf 'cpz-session-save'
 contains stage3/01-session/01-run.sh 'enable cpz-session-save.timer'
-contains stage3/01-session/01-run.sh 'cpz-kmscon'
+contains stage3/01-session/01-run.sh 'cpz-cage'
 absent stage3/01-session/files/cpz-panel-message
-contains stage3/01-session/01-run.sh 'enable cpz-kmscon-output.timer'
+contains stage3/01-session/01-run.sh 'enable cpz-cage-output.timer'
 contains stage3/01-session/01-run.sh 'system-sleep'
-contains stage3/01-session/files/cpz-kmscon-output '--force'
-contains stage3/01-session/files/cpz-kmscon-output 'pending_file'
-contains stage3/01-session/files/cpz-kmscon-output 'hdmi_debounce=2'
-contains stage3/01-session/files/99-cpz-kmscon-output.rules 'systemctl --no-block start'
-contains stage3/01-session/files/99-cpz-kmscon-output.rules 'HOTPLUG'
-contains stage3/01-session/01-run.sh '99-cpz-kmscon-output.rules'
-contains stage3/01-session/files/cpz-kmscon-output '--panel'
-contains stage3/01-session/files/cpz-kmscon-output 'status_mode'
-contains stage3/01-session/files/cpz-kmscon-output 'hdmi_usable'
-contains stage3/01-session/files/cpz-kmscon-output 'hdmi_edid'
-contains stage3/01-session/files/cpz-kmscon-output 'hdmi_pinned'
-contains stage3/01-session/files/cpz-kmscon-output '--recover'
-contains stage3/01-session/files/cpz-kmscon-output 'systemctl restart'
-contains stage3/01-session/files/cpz-kmscon-output 'nudge_drm'
-not_contains stage3/01-session/files/cpz-kmscon-output 'vt_nudge'
-contains stage3/01-session/files/99-cpz-kmscon-nudge.rules 'ENV{HOTPLUG}="1"'
+contains stage3/01-session/01-run.sh '99-cpz-cage-output.rules'
+contains stage3/01-session/files/99-zz-cpz-input.rules 'ID_INPUT_MOUSE'
+contains stage3/01-session/files/99-zz-cpz-input.rules 'CPZ_REAL_POINTER'
+contains stage3/01-session/files/99-zz-cpz-input.rules 'cpz-pointer-cursor.service'
+contains stage3/01-session/files/cpz-pointer 'seat-cpz-no-pointer'
+contains stage3/01-session/files/cpz-pointer 'request_foot_reload'
+have stage3/01-session/files/60-cpz-phantom-pointer.quirks
+contains stage3/01-session/files/60-cpz-phantom-pointer.quirks 'AttrEventCode=-EV_REL;-EV_ABS;'
+contains stage3/01-session/01-run.sh 'etc/libinput/local-overrides.quirks'
+contains stage3/01-session/files/cpz-settings 'language_codes'
+contains stage3/01-session/files/cpz-settings '"language"'
+contains stage3/01-session/files/i18n/uk.json 'Пошук'
+contains stage3/01-session/files/i18n/de.json 'Suche'
+contains stage2/04-locales/00-run.sh 'locale-gen'
+contains stage3/01-session/files/99-zz-cpz-input.rules 'ID_SEAT}="seat0"'
 contains stage3/01-session/files/99-cpz-automount.rules 'SUBSYSTEMS=="usb"'
 contains stage3/01-session/files/99-cpz-automount.rules 'DEVTYPE}=="partition"'
 contains stage3/01-session/files/99-cpz-automount.rules 'ID_PART_TABLE_TYPE}!="?*"'
@@ -479,6 +508,7 @@ contains stage3/01-session/files/cpz-automount@.service 'ExecStop=-/usr/local/bi
 contains stage3/01-session/files/cpz-automount 'on_system_disk'
 contains stage3/01-session/files/cpz-automount 'probe_filesystem'
 contains stage3/01-session/files/cpz-automount 'umask=0022'
+contains stage3/01-session/files/cpz-automount 'nosuid,nodev'
 contains stage3/01-session/files/cpz-automount 'umount -l'
 contains stage3/01-session/files/cpz-automount 'findmnt --fstab'
 contains stage3/01-session/files/cpz-automount 'open_mount_tab'
@@ -499,7 +529,6 @@ contains stage3/01-session/01-run.sh 'cpz-battery-guard.service'
 contains stage3/01-session/01-run.sh 'files/cpz-battery'
 contains stage3/01-session/01-run.sh 'battery.conf'
 contains stage3/01-session/01-run.sh 'enable cpz-battery-guard.service'
-contains stage3/01-session/files/cpz-login 'cpz-battery boot'
 contains stage3/01-session/files/cpz-battery '/sys/class/power_supply'
 contains stage3/01-session/files/cpz-battery 'shutdown_level'
 contains stage3/01-session/files/cpz-battery 'shutdown_voltage_uv'
@@ -509,15 +538,11 @@ contains stage3/01-session/files/cpz-battery-guard.service 'ExecStart=/usr/local
 contains stage3/01-session/02-run.sh 'CPZ_HDMI_VIDEO'
 contains build.sh 'CPZ_HDMI_VIDEO'
 contains config.cpz.example 'CPZ_HDMI_VIDEO'
-contains stage3/01-session/files/cpz-kmscon-output 'backlight'
-contains stage3/01-session/files/cpz-kmscon-output 'bl_power'
-contains stage3/01-session/files/cpz-kmscon-output 'panel_on'
 not_contains stage3/01-session/files/cpz-apply-settings 'cpz-screen-timeout'
 absent stage3/01-session/files/cpz-screen-timeout
 not_contains stage3/01-session/files/cpz-settings '-powerdown'
-contains stage3/01-session/files/kmscon.conf 'dpms-timeout'
 contains stage3/01-session/files/cmdline.append 'fbcon=map:off'
-contains stage3/01-session/02-run.sh "mask getty@tty1.service"
+contains stage3/01-session/02-run.sh "unmask getty@tty1.service"
 contains stage3/01-session/02-run.sh 'mask tmp.mount'
 contains stage3/01-session/01-run.sh 'install -d -m 1777'
 have stage3/03-cleanup/00-run.sh
@@ -543,7 +568,7 @@ contains stage3/01-session/files/settings.conf 'brightness=100'
 contains stage3/01-session/files/settings.conf 'screen_timeout=0'
 contains stage3/01-session/files/settings.conf 'mode_keys=vi'
 contains stage3/01-session/files/settings.conf 'status_interval=5'
-contains stage3/01-session/files/settings.conf 'set_clipboard=0'
+contains stage3/01-session/files/settings.conf 'set_clipboard=1'
 contains stage3/01-session/files/settings.conf 'automatic_rename=1'
 contains stage3/01-session/files/cpz-status 'show_conn'
 contains stage3/01-session/files/cpz-status 'show_eth'
@@ -581,7 +606,6 @@ not_contains stage3/01-session/files/cpz-apply-settings 'setterm'
 contains stage3/01-session/files/cpz-apply-settings 'mode-keys'
 contains stage3/01-session/files/cpz-apply-settings 'set-clipboard'
 contains stage3/01-session/files/cpz-apply-settings 'automatic-rename'
-contains stage3/01-session/files/cpz-kmscon-output 'get_setting display'
 contains stage3/01-session/files/99-cpz-backlight.rules 'backlight'
 contains stage3/01-session/files/cpz-keyboard-layout 'capabilities/key'
 contains stage3/01-session/files/cpz-keyboard-layout 'id/bustype'
@@ -603,8 +627,10 @@ contains stage3/01-session/files/xkb/symbols/cpz 'key <HIRA> { [ period'
 contains stage3/01-session/files/xkb/symbols/cpz 'key <ZENK> { [ greater'
 contains stage3/01-session/01-run.sh 'xkb/symbols/cpz'
 contains stage3/01-session/01-run.sh '<ZENK> = 93;'
-not_contains stage3/01-session/files/cpz-kmscon-config 'cpz-layout.active'
-not_contains stage3/01-session/files/cpz-kmscon-config 'xkb-layout='
+have stage3/01-session/files/99-cpz-xkb-data.pref
+contains stage3/01-session/files/99-cpz-xkb-data.pref 'Package: xkb-data'
+contains stage3/01-session/files/99-cpz-xkb-data.pref 'Pin-Priority: -1'
+contains stage3/01-session/01-run.sh '99-cpz-xkb-data.pref'
 contains stage3/01-session/files/cpz-keyboard-layout 'publish cpz'
 contains stage3/01-session/files/cpz-keyboard-layout 'localectl'
 contains stage3/01-session/files/cpz-keyboard-layout 'set-x11-keymap'
@@ -628,14 +654,9 @@ contains stage3/01-session/files/cpz-keys 'resize-pane -Z'
 contains stage3/01-session/files/cpz-keys 'confirm-before'
 contains stage3/01-session/files/cpz-keys 'command-prompt'
 contains stage3/01-session/files/cpz-keys 'choose-tree -Zw'
-contains stage3/01-session/files/cpz-keys 'detach-client'
 contains stage3/01-session/files/cpz-keys 'cpz-layout-next'
 contains stage3/01-session/files/cpz-keys 'copy-mode'
 contains stage3/01-session/files/cpz-keys 'paste-buffer'
-not_contains stage3/01-session/files/kmscon.conf 'grab-zoom-in='
-not_contains stage3/01-session/files/kmscon.conf 'grab-zoom-out='
-not_contains stage3/01-session/files/kmscon.conf '<Alt>plus'
-not_contains stage3/01-session/files/kmscon.conf '<Alt>minus'
 have stage3/01-session/files/cpz-hint
 contains stage3/01-session/files/cpz-hint 'display-message -c'
 contains stage3/01-session/files/cpz-hint 'cpz-keys hint'
@@ -654,7 +675,6 @@ contains stage3/01-session/files/cpz-session-save 'display-message -p -t "$id"'
 contains stage3/01-session/files/cpz-settings 'system_info_lines'
 contains stage3/01-session/files/cpz-settings 'theme_label'
 contains stage3/01-session/files/cpz-settings 'theme_labels'
-contains stage3/01-session/files/cpz-kmscon-config '# palette'
 contains stage3/01-session/files/cpz-settings 'select_popup'
 contains stage3/01-session/files/cpz-settings 'display-popup'
 contains stage3/01-session/files/cpz-settings 'Power:'
@@ -694,6 +714,13 @@ contains stage3/01-session/files/cpz-layout-apply 'cpz-keyboard-layout.service'
 contains stage3/01-session/01-run.sh '50-cpz-layout'
 contains stage3/01-session/01-run.sh 'cpz-layout-next'
 contains stage3/01-session/01-run.sh 'cpz-layout-map'
+contains stage3/01-session/01-run.sh 'cpz-locale-apply'
+contains stage3/01-session/01-run.sh '50-cpz-locale'
+contains stage3/01-session/01-run.sh '10-cpz-locale.sh'
+contains stage3/01-session/files/cpz-settings 'apply_system_locale'
+contains stage3/01-session/files/cpz-settings 'cpz-locale-apply'
+contains stage3/01-session/files/cpz-locale-apply 'LC_TIME'
+contains stage3/01-session/files/10-cpz-locale.sh 'LC_TIME'
 contains stage3/01-session/files/cpz-keyboard-layout 'cpz-layout-map'
 contains stage3/01-session/files/cpz-keyboard-layout 'prepare_cpz_maps'
 contains stage3/01-session/files/cpz-keyboard-layout 'cpz_base_map'
@@ -752,8 +779,6 @@ not_contains stage3/01-session/01-run.sh 'cpz-font-blocks'
 absent stage3/01-session/files/cpz-font-blocks
 not_contains stage3/01-session/01-run.sh 'cpz-font-scale'
 absent stage3/01-session/files/cpz-font-scale
-contains stage3/01-session/files/cpz-kmscon-config 'font_size'
-contains stage3/01-session/files/cpz-kmscon 'cpz-kmscon-config'
 contains stage3/01-session/01-run.sh 'chown 1000:1000 "$user_config"'
 contains stage2/05-cardputerzero/02-run.sh 'chown 1000:1000 "$user_config"'
 contains stage3/01-session/files/cpz-settings 'nmtui'
@@ -772,20 +797,20 @@ contains stage3/01-session/files/cpz-help 'less'
 not_contains stage3/01-session/files/cpz-help 'less -R -X -F'
 contains stage3/01-session/files/cpz-tab-close '@cpz_settings'
 not_contains stage3/01-session/files/cpz-tab-close '@cpz_main'
-contains stage3/01-session/files/cpz-tab-close 'terminals'
-contains stage3/01-session/files/cpz-tab-close 'Last tab stays open'
+not_contains stage3/01-session/files/cpz-tab-close 'Last tab stays open'
+contains stage3/01-session/files/cpz-tab-close 'Settings stays open'
 contains stage3/01-session/files/cpz-tab-close-key '@cpz_settings'
-contains stage3/01-session/files/cpz-tab-close-key 'terminals'
+not_contains stage3/01-session/files/cpz-tab-close-key 'Last tab stays open'
+contains stage3/01-session/files/cpz-tab-close-key 'Settings stays open'
+not_contains stage3/01-session/files/cpz-settings-shell 'Press Enter'
+contains stage3/01-session/files/cpz-settings-shell '/usr/local/bin/cpz-settings'
 contains stage3/01-session/01-run.sh 'cpz-tab-close'
 contains stage3/01-session/files/cpz-session-ensure '@cpz_main'
-contains stage3/01-session/01-run.sh "kmscon"
-contains stage3/01-session/02-run.sh "kmscon"
+contains stage3/01-session/01-run.sh "cage"
+contains stage3/01-session/02-run.sh "cage"
 contains stage3/01-session/02-run.sh "rpi-preseed.service"
 contains stage3/01-session/02-run.sh "enable getty@tty1.service"
-not_contains stage3/01-session/01-run.sh 'cpz-getty'
-absent stage3/01-session/files/cpz-getty
-absent stage3/01-session/files/getty@tty1.service.d
-contains stage3/01-session/02-run.sh 'enable kmsconvt@tty1.service'
+contains stage3/01-session/02-run.sh 'getty@tty1'
 contains stage2/05-cardputerzero/02-run.sh "fb_load.service"
 contains stage2/05-cardputerzero/01-run.sh 'panel-mipi-dbi-m.c'
 contains stage2/05-cardputerzero/01-run.sh 'drm_client_setup_with_fourcc'
@@ -798,6 +823,9 @@ not_contains stage2/05-cardputerzero/files/99-cpz-display.rules 'ENV{ID_SEAT}="s
 contains stage3/01-session/02-run.sh 'fbcon=map:10'
 contains build.sh 'STAGE_LIST=${STAGE_LIST:-${BASE_DIR}/stage*}'
 not_contains config.cpz.example 'STAGE_LIST='
+not_contains config.cpz.example 'IMG_FILENAME='
+not_contains config.debug.example 'IMG_FILENAME='
+contains .dockerignore '.venv/'
 not_contains stage2/05-cardputerzero/02-run.sh 'cmdline.txt'
 not_contains export-image/04-set-partuuid/00-run.sh 'console=serial0,115200'
 contains stage3/01-session/02-run.sh 'remove_cmdline_tokens'
@@ -807,7 +835,10 @@ contains stage3/01-session/02-run.sh 'WPA_COUNTRY'
 contains stage3/01-session/02-run.sh 'cfg80211.ieee80211_regdom='
 contains build.sh 'CPZ_DTOVERLAYS_REF'
 contains config.cpz.example 'CPZ_DTOVERLAYS_REF='
-contains config.cpz.example 'ENABLE_SSH=0'
+contains config.cpz.example 'ENABLE_SSH=1'
+contains config.cpz.example 'TIMEZONE_DEFAULT="UTC"'
+contains config.debug.example 'TIMEZONE_DEFAULT="UTC"'
+contains stage2/03-set-timezone/02-run.sh 'TIMEZONE_DEFAULT:-UTC'
 contains scripts/update_os_list.py 'init_format": "systemd'
 contains Dockerfile 'ARG BASE_IMAGE=debian:trixie'
 not_contains stage2/05-cardputerzero/00-packages 'fonts-noto-cjk'
@@ -896,6 +927,7 @@ contains docs/RELEASE.md '### Changes'
 contains docs/RELEASE.md '### Install'
 contains README.md 'docs/RELEASE.md'
 have tools/release.sh
+contains tools/release.sh '--untracked-files=all'
 contains tools/release.sh 'git tag -a'
 contains tools/release.sh 'refs/tags/$tag'
 contains tools/release.sh 'git commit -m "chore(release): $tag"'

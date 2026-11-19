@@ -38,6 +38,43 @@ mode; the free IWAD is `/usr/share/games/doom/freedoom1.wad`. Pass
 `-iwad /usr/share/games/doom/freedoom1.wad` if the default WAD search does not
 find it.
 
+Crispy Doom uses the same SDL2 path and works without extra flags. If a build
+or a very old SDL2 ignores the renderer hint, set `force_software_renderer 1`
+in `crispy-doom.cfg` (Crispy's own setting) or launch it through `cpz-run`.
+
+## Why accelerated rendering breaks on HDMI
+
+The panel and HDMI behave differently for one concrete reason:
+
+- The panel DRM card has **no render node**, so SDL cannot create an
+  accelerated (EGL/GLX) renderer there. It falls back to software, presents via
+  `wl_shm`, and cage's pixman renderer composites it normally.
+- HDMI uses the vc4 card, which **has** a render node. SDL then picks the
+  accelerated renderer, and the client or Xwayland allocates **dmabuf**
+  buffers. cage runs with `WLR_RENDERER=pixman`, which cannot import dmabuf, so
+  the application surface never reaches the screen. The hardware cursor plane
+  still works, which is exactly the “screen flickers with only a cursor”
+  symptom.
+
+The session therefore exports these defaults for every pane and every
+`cpz-run` launch:
+
+```text
+SDL_VIDEODRIVER=wayland
+SDL_RENDER_DRIVER=software
+```
+
+They are set in `cpz-tmux.service`, in `cpz-tmux`/`cpz-tmux-start` (the tmux
+global environment for new panes) and in `cpz-run`. An explicit value from the
+caller wins, so a future accelerated path can be tested per application. Do not
+remove them while `cpz-cage-output` keeps `renderer=pixman`: the panel needs
+pixman, and mixing an accelerated client with it is what produces the
+cursor-only output on HDMI.
+
+An application that uses raw OpenGL (not an SDL renderer) has no software
+fallback here and must run on the panel or be replaced. OpenTTD is the known
+example: use `-v sdl` (the software SDL video driver), not `sdl-opengl`.
+
 ## What is not supported
 
 - Multiple visible windows and window cycling. cage shows one application on

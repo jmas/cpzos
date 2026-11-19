@@ -1,0 +1,8 @@
+[Unit]
+Description=Clear a stale cage cursor after a pointer is removed
+After=systemd-udevd.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cpz-pointer --nudge

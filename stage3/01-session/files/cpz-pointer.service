@@ -1,0 +1,18 @@
+[Unit]
+Description=Apply the CPZ mouse and cursor policy to input devices
+After=local-fs.target systemd-udevd.service
+Before=getty@tty1.service
+# Settings writes the armed request file and the path unit starts this service.
+# Reopening the devices is fast and must not restart cage (which would blank
+# the display and renegotiate HDMI).
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cpz-pointer --apply
+# cage 0.3.1 can reattach a lagging client text cursor after pointer removal.
+# This nudge clears it without restarting the compositor.
+ExecStartPost=-/usr/local/bin/cpz-pointer --nudge
+
+[Install]
+WantedBy=multi-user.target

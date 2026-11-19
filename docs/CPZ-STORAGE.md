@@ -46,6 +46,11 @@ ext4 and other native filesystems keep the UID/GID stored on the disk; files
 owned by another user stay read-only without `sudo`. The helper does not
 recursively `chown` a filesystem.
 
+Because the disk is untrusted, every mount uses `nosuid` and `nodev`: a
+crafted ext4 image cannot install a working setuid binary or device node just
+by being plugged in. This does not prevent running ordinary programs from the
+disk.
+
 ## Using a drive
 
 ```bash

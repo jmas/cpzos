@@ -38,7 +38,7 @@ shellcheck -x $(cat "$list")
 echo "== ruff =="
 ruff check scripts tools tests stage3/01-session/files/cpz-settings \
 	stage3/01-session/files/cpz-keys stage3/01-session/files/cpz-search \
-	stage3/01-session/files/cpz-layout-map
+	stage3/01-session/files/cpz-layout-map stage3/01-session/files/cpz-pointer stage3/01-session/files/cpz-i18n
 
 echo "== mypy =="
 mypy --ignore-missing-imports scripts/*.py tools/*.py tests/*.py \
@@ -47,3 +47,5 @@ mypy --ignore-missing-imports scripts/*.py tools/*.py tests/*.py \
 mypy --ignore-missing-imports stage3/01-session/files/cpz-keys
 mypy --ignore-missing-imports stage3/01-session/files/cpz-search
 mypy --ignore-missing-imports stage3/01-session/files/cpz-layout-map
+mypy --ignore-missing-imports stage3/01-session/files/cpz-pointer
+mypy --ignore-missing-imports stage3/01-session/files/cpz-i18n

@@ -7,11 +7,13 @@ policy that decides what gets written to ~/.config/cpz/settings.conf.
 from __future__ import annotations
 
 import contextlib
+import curses
 import gzip
 import importlib.util
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime
@@ -27,6 +29,7 @@ PERSISTED = (
     "keyboard_layouts",
     "keyboard_layout_active",
     "theme",
+    "language",
     "show_clock",
     "clock_24h",
     "show_date",
@@ -121,9 +124,57 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(data["brightness"], 100)
         self.assertEqual(data["display"], "auto")
         self.assertEqual(data["font_size"], 12)
+        self.assertEqual(data["language"], "en")
+        self.assertEqual(data["mouse"], 1)
+        self.assertEqual(data["set_clipboard"], 1)
         self.assertEqual(data["keyboard_layouts"], "us")
         self.assertEqual(data["keyboard_layout_active"], "us")
         self.assertEqual(self.mod.theme_label("cpz-homebrew"), "Homebrew")
+
+    def test_system_locale_is_skipped_when_already_set(self):
+        with mock.patch.object(
+            self.mod, "locale_conf_value", return_value="uk_UA.UTF-8"
+        ), mock.patch.object(self.mod.subprocess, "run") as run:
+            self.assertTrue(self.mod.apply_system_locale("uk"))
+            run.assert_not_called()
+
+    def test_system_locale_uses_the_sudo_helper(self):
+        with mock.patch.object(
+            self.mod, "locale_conf_value", return_value="en_US.UTF-8"
+        ), mock.patch.object(
+            self.mod.os.path, "isfile", return_value=True
+        ), mock.patch.object(
+            self.mod.subprocess, "run", return_value=mock.Mock(returncode=0)
+        ) as run:
+            self.assertTrue(self.mod.apply_system_locale("uk"))
+            run.assert_called_once()
+            self.assertEqual(
+                run.call_args.args[0],
+                ["sudo", "-n", self.mod.LOCALE_HELPER, "uk"],
+            )
+            self.assertEqual(run.call_args.kwargs["timeout"], 10)
+
+    def test_system_locale_failure_keeps_the_cpz_language(self):
+        with mock.patch.object(
+            self.mod, "locale_conf_value", return_value="en_US.UTF-8"
+        ), mock.patch.object(
+            self.mod.os.path, "isfile", return_value=True
+        ), mock.patch.object(
+            self.mod.subprocess, "run", return_value=mock.Mock(returncode=1)
+        ), mock.patch.object(self.mod, "tmux") as tmux:
+            self.assertFalse(self.mod.apply_language("uk"))
+            self.assertEqual(self.mod.tr("Search"), "Пошук")
+            tmux.assert_any_call(
+                "set-environment", "-g", "LANG", "uk_UA.UTF-8"
+            )
+
+    def test_locale_helper_rejects_unknown_language(self):
+        helper = ROOT / "stage3" / "01-session" / "files" / "cpz-locale-apply"
+        result = subprocess.run(
+            [str(helper), "xx"], capture_output=True, text=True
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage:", result.stderr)
 
     def test_theme_names_with_unsupported_characters_are_ignored(self):
         # The renderers only accept [A-Za-z0-9_-], so Settings must not offer
@@ -226,6 +277,24 @@ class SettingsTUI(unittest.TestCase):
         self.assertIn(64, self.mod.FONT_SIZES)
         self.assertEqual(self.mod.FONT_SIZE_LABELS[14], "14px")
 
+    def test_shortcut_filter_matches_label_or_binding(self):
+        items = [
+            {"label": "Next Tab"},
+            {"label": "Settings"},
+            {"label": "New Tab"},
+        ]
+        values = ["Alt+Tab", "Alt+S", "Alt+T"]
+        self.assertEqual(self.mod.filter_item_indices(items, values, ""), [0, 1, 2])
+        self.assertEqual(self.mod.filter_item_indices(items, values, "alt+s"), [1])
+        self.assertEqual(self.mod.filter_item_indices(items, values, "tab"), [0, 2])
+        self.assertEqual(self.mod.filter_item_indices(items, values, "nothing"), [])
+
+    def test_shortcuts_page_is_filterable(self):
+        # 37 rows do not fit the 53x14 panel, so the page must offer "/".
+        self.assertIn("shortcuts", self.mod.FILTERABLE_PAGES)
+        items = self.mod.shortcut_items(self.mod.load_settings())
+        self.assertGreater(len(items), 20)
+
     def test_layouts_are_normalized_in_canonical_order(self):
         self.assertEqual(self.mod.normalize_layouts("de, us ,de,bogus"), ["us", "de"])
         self.assertEqual(
@@ -310,6 +379,67 @@ class SettingsTUI(unittest.TestCase):
                 self.assertLessEqual(
                     len(item["label"]), 16, f"{page}: {item['label']}"
                 )
+
+    def test_mouse_support_row_shows_state_and_detection(self):
+        self.mod.set_language("en")
+        with mock.patch.object(
+            self.mod,
+            "pointer_status",
+            return_value={"mouse": "connected", "cursor": "visible"},
+        ):
+            self.assertEqual(
+                self.mod.mouse_support_text({"mouse": 1}), "On · Connected"
+            )
+            self.assertEqual(
+                self.mod.mouse_support_text({"mouse": 0}), "Off · Connected"
+            )
+        with mock.patch.object(
+            self.mod,
+            "pointer_status",
+            return_value={"mouse": "disconnected", "cursor": "hidden"},
+        ):
+            self.assertEqual(
+                self.mod.mouse_support_text({"mouse": 1}), "On · Not connected"
+            )
+
+    def test_input_page_owns_keyboard_and_mouse(self):
+        data = dict(self.mod.DEFAULTS)
+        self.assertEqual(self.mod.PAGE_TITLES["keyboard"], "Input")
+        main_labels = [item["label"] for item in self.mod.page_items("main", data, None)]
+        self.assertIn("Input", main_labels)
+        self.assertNotIn("Keyboard", main_labels)
+        input_labels = [
+            item["label"] for item in self.mod.page_items("keyboard", data, None)
+        ]
+        self.assertIn("Mouse Support", input_labels)
+        self.assertNotIn("Mouse", input_labels)
+        self.assertNotIn("Cursor", input_labels)
+        terminal_labels = [
+            item["label"] for item in self.mod.page_items("terminal", data, None)
+        ]
+        self.assertNotIn("Mouse Support", terminal_labels)
+
+    def test_mouse_page_geometry_maps_clicks_and_wheels(self):
+        top, visible, first = self.mod.page_geometry(0, 10, 14)
+        self.assertEqual((top, visible, first), (2, 11, 0))
+        self.assertEqual(self.mod.page_row_at(2, top, first, visible, 10), 0)
+        self.assertEqual(self.mod.page_row_at(11, top, first, visible, 10), 9)
+        self.assertIsNone(self.mod.page_row_at(12, top, first, visible, 10))
+        self.assertIsNone(self.mod.page_row_at(1, top, first, visible, 10))
+
+        top, visible, first = self.mod.page_geometry(8, 10, 8)
+        self.assertEqual((top, visible, first), (2, 5, 4))
+        self.assertEqual(self.mod.page_row_at(2, top, first, visible, 10), 4)
+        self.assertEqual(self.mod.page_row_at(6, top, first, visible, 10), 8)
+        self.assertIsNone(self.mod.page_row_at(7, top, first, visible, 10))
+
+        self.assertEqual(
+            self.mod.mouse_wheel_delta(self.mod.MOUSE_BUTTON4_PRESSED), -3
+        )
+        self.assertEqual(
+            self.mod.mouse_wheel_delta(self.mod.MOUSE_BUTTON5_PRESSED), 3
+        )
+        self.assertEqual(self.mod.mouse_wheel_delta(curses.BUTTON1_CLICKED), 0)
 
     def test_full_screen_pages_keep_a_side_gutter(self):
         # The panel is 53 columns. Every full-screen page leaves one blank
@@ -771,7 +901,7 @@ class ModalChrome(unittest.TestCase):
                 6,
                 self.mod.MODAL_TEXT_COLUMN,
                 hint,
-                self.mod.curses.A_DIM,
+                self.mod.hint_attr(),
             ),
             popup.calls,
         )

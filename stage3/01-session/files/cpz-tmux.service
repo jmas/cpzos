@@ -1,0 +1,35 @@
+[Unit]
+Description=CPZ tmux server
+# rpi-preseed may rename uid 1000 on first boot; tmux must use the final
+# account's home. The server is independent of cage/foot so a compositor
+# restart keeps every tab and pane alive.
+#
+# tmux keeps its socket in $XDG_RUNTIME_DIR. /run/user/1000 is created by
+# systemd-logind, not by a system service, so pull in the runtime directory
+# explicitly; otherwise the server can fail before the first login creates it.
+Requires=user-runtime-dir@1000.service
+After=local-fs.target rpi-preseed.service user-runtime-dir@1000.service
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=1000
+RuntimeDirectory=cpz-cage
+RuntimeDirectoryMode=0755
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+# cage creates wayland-0 and Xwayland :0 on the CPZ image. These defaults cover
+# shells started before cpz-tmux publishes the exact values from foot.
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=DISPLAY=:0
+# cage uses the pixman renderer, so accelerated dmabuf clients never composite.
+# Keep every pane and every app on the SDL software path.
+Environment=SDL_VIDEODRIVER=wayland
+Environment=SDL_RENDER_DRIVER=software
+Environment=LANG=C.UTF-8
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games
+ExecStart=/usr/local/bin/cpz-tmux-start
+
+[Install]
+WantedBy=multi-user.target

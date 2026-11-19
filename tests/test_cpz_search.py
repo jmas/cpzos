@@ -44,6 +44,16 @@ class SearchItems(unittest.TestCase):
         os.environ["CPZ_AUTOMOUNT_STATE"] = str(self.root / "automount")
         self.addCleanup(self.restore_env, "CPZ_AUTOMOUNT_STATE", old)
 
+    def test_home_settings_pages_match_the_settings_main_menu(self):
+        settings = load_script("cpz_settings_menu", SETTINGS)
+        main = settings.page_items("main", dict(settings.DEFAULTS), None)
+        expected = [
+            (item["page"], settings.PAGE_TITLES[item["page"]])
+            for item in main
+            if item["kind"] == "submenu"
+        ]
+        self.assertEqual(list(self.mod.HOME_SETTINGS_PAGES), expected)
+
     def test_item_round_trip(self):
         item = self.mod.make_item("app", "vim", "vim  [app]", "", "installed")
         self.assertEqual(
@@ -111,39 +121,43 @@ class SearchItems(unittest.TestCase):
         self.assertLess(payloads.index("fzf"), payloads.index("lazygit"))
         self.assertNotIn(("tool", "fzf", "apps fzf  [run app]", "fzf", "managed,installed,runnable"), parsed)
 
-    def test_home_items_hold_settings_actions_and_power_when_no_apps_are_managed(self):
-        self.mod.managed_app_items = lambda: []
-        parsed = [self.mod.parse_item(line) for line in self.mod.home_items()]
+    def test_home_is_the_fast_priority_menu(self):
+        parsed = [
+            item
+            for item in (self.mod.parse_item(line) for line in self.mod.home_items())
+            if item
+        ]
+        payloads = [item[1] for item in parsed]
+        self.assertEqual(payloads[:3], ["new-tab", "close-tab", "volume-mute"])
         self.assertEqual(
-            len(parsed), len(self.mod.ACTIONS) + len(self.mod.POWER_ACTIONS) + 1
+            payloads[3 : 3 + len(self.mod.HOME_SETTINGS_PAGES)],
+            [page for page, _title in self.mod.HOME_SETTINGS_PAGES],
         )
-        self.assertEqual(
-            {item[0] for item in parsed if item}, {"action", "settings", "power"}
-        )
-        self.assertEqual(parsed[0][0], "settings")
-        self.assertEqual(
-            parsed[0], ("settings", "network", "Network  [settings]", "", "settings")
-        )
+        self.assertEqual(payloads[-1], "help")
+        self.assertEqual({item[0] for item in parsed}, {"action", "settings"})
+        self.assertNotIn("reboot", payloads)
+        self.assertNotIn("poweroff", payloads)
 
-    def test_home_ends_with_reboot_and_shut_down(self):
-        self.mod.managed_app_items = lambda: []
+    def test_home_does_not_start_expensive_providers(self):
+        with mock.patch.multiple(
+            self.mod,
+            managed_app_items=mock.DEFAULT,
+            trove_items=mock.DEFAULT,
+            settings_items=mock.DEFAULT,
+            scan_apps=mock.DEFAULT,
+            list_settings_pages=mock.DEFAULT,
+        ) as patched:
+            self.mod.home_items()
+        for provider in patched.values():
+            provider.assert_not_called()
+
+    def test_home_ends_with_help_after_the_settings_rows(self):
         items = self.mod.home_items()
         parsed = [self.mod.parse_item(line) for line in items]
-        self.assertEqual(
-            parsed[-2:],
-            [
-                ("power", "reboot", "Reboot  [power]", "", "power"),
-                ("power", "poweroff", "Shut Down  [power]", "", "power"),
-            ],
-        )
-        self.assertIn("Enter confirm", self.mod.hint_line(items[-1]))
+        self.assertEqual(parsed[-1][0:2], ("action", "help"))
+        self.assertIn("Enter run action", self.mod.hint_line(items[-1]))
 
     def test_home_settings_rows_carry_the_searchable_page_title(self):
-        self.mod.managed_app_items = lambda: []
-        self.mod.list_settings_pages = lambda: [
-            ("network", "Connections"),
-            ("sound", "Sound"),
-        ]
         displays = [
             (self.mod.parse_item(line) or ("", "", ""))[2]
             for line in self.mod.home_items()
@@ -151,7 +165,7 @@ class SearchItems(unittest.TestCase):
         self.assertIn("Connections  [settings]", displays)
         self.assertIn("Sound  [settings]", displays)
 
-    def test_home_prioritizes_managed_apps(self):
+    def test_default_loads_managed_apps_before_the_generic_list(self):
         self.mod.managed_app_items = lambda: [
             self.mod.make_item(
                 "tool",
@@ -161,7 +175,9 @@ class SearchItems(unittest.TestCase):
                 "managed,installed,runnable",
             )
         ]
-        parsed = [self.mod.parse_item(line) for line in self.mod.home_items()]
+        self.mod.trove_items = lambda: []
+        self.mod.scan_apps = lambda: ["vim"]
+        parsed = [self.mod.parse_item(line) for line in self.mod.default_items()]
         self.assertEqual(parsed[0][0], "tool")
         self.assertEqual(parsed[0][1], "btop")
 
@@ -744,6 +760,10 @@ class PopupChrome(unittest.TestCase):
             if argument.startswith("--preview-window=")
         )
         self.assertIn("border-none", preview)
+
+    def test_mouse_can_select_scroll_and_open_a_result(self):
+        self.assertNotIn("--no-mouse", self.arguments)
+        self.assertIn("double-click:accept", self.arguments)
 
 
 class SettingsRequests(unittest.TestCase):

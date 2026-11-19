@@ -1,8 +1,8 @@
 # CardputerZero image
 
-This branch builds the **CardputerZero CPZ** image: a terminal-first Raspberry
-Pi OS system with the CardputerZero hardware enablement plus a kmscon + tmux
-session. This is the regular image; there is no separate desktop or lite
+This branch builds the **CardputerZero CPZ** image: a small Raspberry Pi OS
+system with the CardputerZero hardware enablement and a **graphics-first CPZ
+session**. This is the regular image; there is no separate desktop or lite
 variant.
 
 It is intentionally small:
@@ -11,28 +11,30 @@ It is intentionally small:
 stage0       debootstrap / apt / firmware
 stage1       minimal bootable system
 stage2       Raspberry Pi OS base + CardputerZero hardware
-stage3       kmscon + tmux login session, build-only package cleanup
+stage3       cage + foot + tmux session, build-only package cleanup
 export-image final image export
 ```
 
-There is no desktop, launcher, NOOBS, cloud-init, Mathematica, or desktop/full
-image stage. Those paths were removed so the build is shorter and the boot
-surface is limited to the CPZ terminal session.
+The session is **cage** (a Wayland kiosk compositor) running **foot** (a
+fullscreen terminal) with tmux inside it. It is not a desktop: there is no
+launcher, panel, task switcher or window manager. Terminal programs run in
+tmux; a graphical program opens a window on top of foot and returns to the
+terminal when it closes. X11 programs use Xwayland, which cage provides.
 
-kmscon owns tty1 and starts tmux with a top status bar (numbered tabs,
-connected network tokens, input layout, optional volume/brightness, battery and
-clock), window 1 as the shell and the last window as the `cpz-settings` TUI.
-Closing a tab (Alt+W) keeps Settings and the last terminal tab open, so a shell
-is always available. Text is rendered by kmscon from the Terminus OTB font; the
-panel uses a 12px cell (53x14) by default. Settings → Display → Text Size
-selects any size from 10 to 64 px, the same range as `Alt+G` / `Alt+M`, and the
-choice is persisted across restarts. kmscon keeps the panel grid and scales the
-font up on HDMI, so the same layout fits both screens. Daily tmux actions are
-direct two-key `Alt+letter` bindings (`Alt+V` / `Alt+B` split, `Alt+N` /
-`Alt+P` switch pane, `Alt+Z` zoom and so on), so no tmux prefix is needed on
-the small CPZ keyboard. Volume is `Alt+U` / `Alt+I` and mute is `Alt+0` (5%
-steps through the same `wpctl` sink as Settings → Sound). Every binding can be
-reassigned in Settings → Keyboard → Shortcuts; see
+tmux has the CPZ top status bar (numbered tabs, connected network tokens, input
+layout, optional volume/brightness, battery and clock), the shell as window 1
+while a terminal tab exists, and the last window as the `cpz-settings` TUI.
+Closing the last terminal tab leaves Settings open so a new tab can be started
+from there. Closing a tab (Alt+W) never closes Settings; any terminal tab,
+including the last one, can be closed. Text is rendered by foot from the
+Terminus OTB font; the panel uses a 12px cell (53x14) by default. Settings →
+Display → Text Size selects any size from 10 to 64 px, the same range as
+`Alt+G` / `Alt+M`, and the choice is persisted across restarts. Daily tmux
+actions are direct two-key `Alt+letter` bindings (`Alt+V` / `Alt+B` split,
+`Alt+N` / `Alt+P` switch pane, `Alt+Z` zoom and so on), so no tmux prefix is
+needed on the small CPZ keyboard. Volume is `Alt+U` / `Alt+I` and mute is
+`Alt+0` (5% steps through the same `wpctl` sink as Settings → Sound). Every
+binding can be reassigned in Settings → Input → Shortcuts; see
 [docs/CPZ-KEYS.md](docs/CPZ-KEYS.md) for the complete default list and the
 shortcut rules.
 
@@ -42,42 +44,73 @@ blank row, and a muted hint. Successful results fade after a moment; errors
 stay until `Enter`/`Esc`.
 In-progress text such as `Scanning...` remains inline because the action is
 already blocking.
+Settings → System → Language switches both the CPZ interface and the system
+locale between English, Ukrainian and German. The choice is persistent: the
+helper writes `/etc/locale.conf` and `/etc/default/locale`, so new login
+shells, recovery consoles and child apps use the same locale. Already running
+programs may need a restart to pick it up.
 
 Themes are switchable from Settings: Campbell (default), Homebrew, Ocean, Red
 Sands, Terminal Basic, Man Page, Novel and PaperColor Light, plus Mono and
 Light High Contrast for accessibility. The rules for labels, navigation and
 new UI patterns are in [docs/CPZ-UI.md](docs/CPZ-UI.md).
 
-There is exactly one working output at a time. kmscon uses
-`multi-monitor=largest`: the session is drawn on HDMI and the panel screen is
-disabled when a usable monitor is attached, and the panel backlight is
-switched off. Unplugging HDMI restores the panel without restarting the
-session, so the monitor does not renegotiate its link. `Alt+D` switches to
-clone mode and forces the panel back (useful when a monitor keeps HPD asserted
-in standby). Changing the keyboard layout (`Alt+Space`) updates the live kmscon
-keymap through systemd-localed, so the HDMI link is not renegotiated and the
-monitor does not blink. Settings changes that kmscon can only read at startup
-(font, theme, timeout, forced panel) restart the session; tmux runs as a
-detached server, so tabs, panes and running programs survive the restart.
+There is exactly one working output at a time. `cpz-cage-output` selects the
+active DRM card: the internal panel (`card1`, `SPI-1`) or HDMI (`card0`). cage
+runs on **only the selected card**, as its primary DRM device, so HDMI is never
+a secondary GPU. That matters on this hardware: the panel card has no render
+node, and the pixman renderer cannot render on a secondary GPU. A panel:HDMI
+device list made HDMI show only a cursor (the cursor plane worked while the
+composited terminal never appeared) and flicker as page flips failed. Both
+outputs use pixman and dumb buffers, which works for the SPI panel and for the
+vc4 card as primary. When a usable monitor is attached, cage restarts onto the
+HDMI card, the panel backlight is switched off, and unplugging it restarts
+back to the panel. The switch costs a short blank frame but cannot fall into a
+cursor-only output. `Alt+D` forces the panel back (useful when a monitor keeps
+HPD asserted in standby). `display=panel` uses only the panel; it no longer
+mirrors HDMI.
+
+A font or theme change no longer restarts the compositor. `cpz-foot-reload`
+renders the new `foot.ini` and the session supervisor replaces only the visible
+terminal; an idle anchor window keeps cage and the current DRM mode alive while
+the swap happens. tmux is a separate service, so tabs, panes and running
+programs survive. A display-mode change is applied immediately through a
+systemd path unit; a change of the target (HDMI or panel) restarts the session
+because it changes the DRM card. Keyboard-layout changes still restart it.
+
+The mouse cursor follows the device, not just the compositor: it appears only
+when a real USB/Bluetooth mouse is connected and **Settings → Input → Mouse
+Support** is on. Phantom pointers exposed by HDMI CEC and the internal keyboard
+are stripped, and a pure pointer that must not be visible is moved to a seat
+cage does not watch, so libinput drops it before device classification. A
+libinput quirk also removes the relative/absolute axes from the internal
+keyboard and the CEC node. Changing the setting reopens the input devices
+without restarting cage; when the cursor disappears, the visible terminal is
+replaced so a delayed client cursor cannot remain as a ghost.
+`cpz-pointer --status` reports the effective state.
 
 The internal panel is a pure DRM display (`/dev/dri/card1`, `SPI-1`): the
 driver's fbdev emulation is disabled, so there is no `/dev/fb1`, and fbcon is
-off (`fbcon=map:off`). kmscon sets the panel mode through KMS itself.
-`getty@tty1` is masked; tty2/tty3 stay as getty fallbacks (not drawn while
-fbcon is off). SSH, serial and the debug image remain available for recovery.
+off (`fbcon=map:off`). cage sets the panel mode through KMS itself.
+`getty@tty1` autologins uid 1000 and its login shell is replaced by
+`cpz-cage`; tty2/tty3 stay as getty fallbacks (not drawn while fbcon is off).
+SSH, serial and the debug image remain available for recovery.
 
 The hardware stage still supports the CM0 panel, keyboard, audio, battery,
-backlight, WiFi/Bluetooth and boot splash. The terminal session replaces the
-old APPLaunch/desktop UI. See [docs/CPZ-KMSCON.md](docs/CPZ-KMSCON.md) for the
-boot path, output policy and recovery/debug image details.
+backlight, WiFi/Bluetooth and boot splash. The graphics session replaces the
+old APPLaunch/desktop UI. See [docs/CPZ-CAGE.md](docs/CPZ-CAGE.md) for the boot
+path, output policy and recovery/debug image details, and
+[docs/CPZ-GRAPHICS.md](docs/CPZ-GRAPHICS.md) for how graphical applications
+are launched.
 
 On battery, `cpz-battery-guard.service` polls the BQ27220 fuel gauge. It shows
 a low-battery notice at 20% and powers off cleanly at 10% (or at 3.35 V if the
 pack collapses earlier); running the pack down to the gauge's 3.15 V hardware
 cutoff makes the voltage sag under load and the board resets, which looks like
-an unexpected reboot. `cpz-login` also checks the gauge before starting the
-session: if the pack is too low, it prints the charge and a countdown on the
-panel and powers off unless the charger is connected. The thresholds live in
+an unexpected reboot. The tty1 getty also runs `cpz-battery boot` before
+starting the session: if the pack is too low, it prints the charge and a
+countdown on the panel and powers off unless the charger is connected. The
+thresholds live in
 `/etc/cpz/battery.conf`; `cpz-battery status` and `cpz-battery check` show the
 current state.
 
@@ -120,7 +153,9 @@ starting the CPZ session:
 ./build-docker.sh -c config.debug.example
 ```
 
-Results are written to `deploy/`.
+Results are written to `deploy/`. With the example configuration the file
+name includes the build date, so repeated local builds do not overwrite each
+other.
 
 ### Fast local iterations
 
@@ -204,7 +239,8 @@ local or `--skip-checks` only for recovery.
 `site/` is the static feature reference. It has no build step and ships the
 English page plus translations in `site/i18n/` (Ukrainian, Polish, German,
 French, Spanish, Italian, Portuguese, Turkish, Japanese and Simplified
-Chinese). `.github/workflows/pages.yml` validates the translations and deploys
+Chinese). The device UI itself ships in English, Ukrainian and German.
+`.github/workflows/pages.yml` validates the translations and deploys
 the folder with GitHub Pages. Enable Pages once in *Settings → Pages → Source:
 GitHub Actions*, then push a change under `site/`. Preview it locally:
 
@@ -219,13 +255,13 @@ python3 -m http.server 8000 --directory site
 | Variable | Purpose |
 | --- | --- |
 | `IMG_NAME` | Image name used by the work directory |
-| `IMG_FILENAME` / `ARCHIVE_FILENAME` | Output file names |
+| `IMG_FILENAME` / `ARCHIVE_FILENAME` | Optional fixed output names. Leave unset to get the dated default; a fixed name is overwritten by the next build |
 | `CPZ_VERSION` | Version written to `/etc/cpz-version`; defaults to `VERSION` |
 | `RELEASE` | Debian release (`trixie` for this branch) |
 | `DEPLOY_COMPRESSION` | `xz`, `gz`, `zip`, or `none` |
 | `TARGET_HOSTNAME` | Hostname written into the image |
 | `FIRST_USER_NAME` / `FIRST_USER_PASS` | First user account (`cpz` / `cpz` by default). The first local console login recommends a new password but does not block the session |
-| `ENABLE_SSH` | Enable the SSH server (`0` by default) |
+| `ENABLE_SSH` | Enable the SSH server (`1` by default; password login as the first user) |
 | `PASSWORDLESS_SUDO` | Give the first user passwordless sudo |
 | `LOCALE_DEFAULT`, `KEYBOARD_KEYMAP`, `KEYBOARD_LAYOUT`, `TIMEZONE_DEFAULT` | System defaults |
 | `WPA_COUNTRY` | Wi-Fi regulatory domain (ISO 3166-1 alpha-2). Empty keeps Wi-Fi off until enabled in Settings |
@@ -275,10 +311,11 @@ removed with one confirmation; the manager records its state in
 
 ## Search
 
-`Alt+O` opens CPZ Search in a centred tmux popup. It starts with the mounted USB
-drives, the apps installed through Applications, one row per Settings page, the
-daily CPZ actions with their current (possibly rebound) keys, and the Reboot
-and Shut Down rows; typing anything loads the searchable providers:
+`Alt+O` opens CPZ Search in a centred tmux popup. It starts with a short
+priority list: mounted USB drives, New Tab, Close Tab, Mute, the first-level
+Settings pages and Help. Typing anything loads the rest of the searchable
+providers in the background, so the popup is usable before the catalog and
+PATH scan finish:
 
 | Input | Provider |
 | --- | --- |
@@ -331,7 +368,7 @@ by the default provider instead.
 stage0/                      bootstrap and firmware pinning
 stage1/                      boot files, network, base packages
 stage2/05-cardputerzero/     CM0 hardware, splash, audio, kernel modules
-stage3/                      kmscon and tmux session
+stage3/                      cage + foot + tmux session
 export-image/                image finalisation
 scripts/                     pi-gen helpers
 VERSION                      release version (source of truth)
@@ -341,7 +378,7 @@ tools/verify-stage.sh        host-side structural checks (no root)
 tools/verify-image.sh        full image content checks (Linux, root)
 tests/                       unit tests and linter entry points
 .github/workflows/           build/publish, CI and os-list workflows
-docs/                        UI rules, boot path, M5 Imager and Applications notes
+docs/                        UI rules, cage session, graphics mode, M5 Imager and Applications notes
 ```
 
 ## Verify before flashing

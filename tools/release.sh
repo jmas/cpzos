@@ -194,8 +194,12 @@ branch_now=$(git rev-parse --abbrev-ref HEAD)
 [ "$branch_now" = "$BRANCH" ] ||
 	die "on branch '$branch_now', expected '$BRANCH' (set RELEASE_BRANCH to override)"
 
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-	die "working tree has uncommitted changes; commit or stash them first"
+# Untracked files must count here. The image is built from the tag, not from
+# the working tree, so new session files that are present locally but never
+# committed would be missing from the release. A dry run of the build succeeds
+# locally for the same reason; only the clean tag checkout exposes the gap.
+if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+	die "working tree has uncommitted or untracked changes; commit them first"
 fi
 
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then

@@ -1,10 +1,20 @@
 #!/bin/sh
-# Close-tab shortcut entry point (Alt+W by default): check the protected tabs
-# before prompting. The binding is rebindable in Settings > Keyboard > Shortcuts.
+# Close-tab shortcut entry point (Alt+W by default): only Settings is
+# protected. Any terminal tab can be closed, including the last one; the
+# Settings tab remains last so a new tab can be opened from it. The binding is
+# rebindable in Settings > Input > Shortcuts.
 #
 # confirm-before needs a client context; run-shell does not have one, so the
 # prompt is sent to an explicitly listed client.
 set -eu
+
+translate() {
+	if [ -x /usr/local/bin/cpz-i18n ]; then
+		/usr/local/bin/cpz-i18n get "$1" "$1" 2>/dev/null || printf '%s' "$1"
+	else
+		printf '%s' "$1"
+	fi
+}
 
 session=${1:-main}
 tmux has-session -t "=$session" 2>/dev/null || exit 0
@@ -21,22 +31,16 @@ read -r _window_id _index _active is_settings name <<EOF
 $current
 EOF
 
-# Settings is not a terminal tab, so it never counts towards the last tab.
-terminals=$(printf '%s\n' "$windows" |
-	awk '$4 != 1 && $5 != "settings" { count++ } END { print count + 0 }')
-
 notice=
 if [ "$is_settings" = 1 ] || [ "$name" = settings ]; then
 	notice="Settings stays open"
-elif [ "$terminals" -le 1 ]; then
-	notice="Last tab stays open"
 fi
 
 client=$(tmux list-clients -t "=$session" -F '#{client_name}' | head -n 1)
 [ -n "$client" ] || exit 0
 
 if [ -n "$notice" ]; then
-	tmux display-message -c "$client" -d 3000 "$notice"
+	tmux display-message -c "$client" -d 3000 "$(translate "$notice")"
 	exit 0
 fi
 
