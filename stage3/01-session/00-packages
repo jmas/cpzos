@@ -19,12 +19,23 @@ bluez-tools
 pipewire
 wireplumber
 
-# Fonts: foot renders Terminus through fontconfig/FreeType, so the OTB build
-# is required. The PSF build stays for the fbcon recovery consoles on tty2/tty3.
-fonts-dejavu-core
+# Fonts: every family in Settings > Display > Font must be installed, because
+# foot resolves the saved family through fontconfig/FreeType. Terminus also
+# needs the OTB build for foot; the PSF build stays for the fbcon recovery
+# consoles on tty2/tty3. Keep this list in sync with cpz-settings
+# FONT_FAMILIES and cpz-foot-config.
 fontconfig
 fonts-terminus
 fonts-terminus-otb
+fonts-dejavu-core
+fonts-liberation
+fonts-noto-mono
+fonts-hack
+fonts-firacode
+fonts-jetbrains-mono
+# Japanese and Chinese UI catalogs need CJK glyphs; fontconfig falls back to
+# Noto when the selected family does not cover a character.
+fonts-noto-cjk
 
 # Terminal tooling.
 nano

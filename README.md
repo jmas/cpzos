@@ -36,13 +36,13 @@ open over the terminal and return you to the same tab when they close.
 - **Graphical apps** — X11 and Wayland programs run over the terminal through
   Xwayland.
 - **Panel and HDMI** — automatic output switching, per-output text size,
-  themes and 12–32 px text on the Terminus bitmap strikes.
+  themes, a selectable typeface and 12–32 px text.
 - **Battery aware** — low-battery warnings and a clean shutdown before the
   pack collapses.
-- **Three languages** — English, Ukrainian and German for both the UI and the
+- **Eleven languages** — the same set as the website for both the UI and the
   system locale.
-- **Recoverable** — SSH, serial console, getty fallbacks and a verbose debug
-  image.
+- **Recoverable** — optional SSH, serial console, getty fallbacks and a verbose
+  debug image.
 
 ## Install
 
@@ -52,9 +52,14 @@ open over the terminal and return you to the same tab when they close.
 3. Boot the device. The first start takes a little longer.
 
 Log in as `cpz` / `cpz`, then set a new password in
-**Settings → System → Security**. Wi-Fi is off by default; enable it in
-**Settings → Connections**. Power off from **Settings → Power**, not by
-unplugging. For M5 Imager notes see [docs/M5-IMAGER.md](docs/M5-IMAGER.md).
+**Settings → System → Security**. Wi-Fi and Bluetooth are off by default.
+**Settings → Connections** opens one borderless manager for both radios: `s`
+scans, `Enter` connects or disconnects, `d` forgets a Wi-Fi network or removes
+a Bluetooth device, `o` toggles the radio, and `q` returns. Bluetooth adds `p`
+to pair and `t` to trust. The key hints and the scan/operation status share the
+bottom line, and the list adapts to the narrow panel. Power off from
+**Settings → Power**, not by unplugging. For M5 Imager notes see
+[docs/M5-IMAGER.md](docs/M5-IMAGER.md).
 
 ## The session
 
@@ -72,8 +77,8 @@ tmux shows the CPZ top status bar (numbered tabs, network, input layout,
 optional volume/brightness, battery, clock). The shell is window 1 while a
 terminal tab exists, and `cpz-settings` is the last window. Closing the last
 terminal tab leaves Settings open. Closing a tab with `Alt+W` never closes
-Settings. Text is rendered by foot from the Terminus OTB font at a 12px cell
-(53x14) by default.
+Settings. Text is rendered by foot in the selected typeface (Terminus OTB by
+default) at a 12px cell (53x14) by default.
 
 The usual keys:
 
@@ -108,13 +113,14 @@ and the pickers. Successful results fade; errors stay until `Enter`/`Esc`.
 Blocking progress such as `Scanning...` stays inline.
 
 **Settings → System → Language** switches both the CPZ interface and the system
-locale between English, Ukrainian and German. The helper writes
+locale between every language offered on the website. The helper writes
 `/etc/locale.conf` and `/etc/default/locale`, so login shells, recovery consoles
 and child apps follow; already running programs may need a restart.
 
 Themes: Campbell (default), Homebrew, Ocean, Red Sands, Terminal Basic,
 Man Page, Novel, PaperColor Light, plus Mono and Light High Contrast for
-accessibility. UI rules for labels, navigation and new screens are in
+accessibility. Midnight Commander uses a palette skin, so it follows the
+selected theme too. UI rules for labels, navigation and new screens are in
 [docs/CPZ-UI.md](docs/CPZ-UI.md).
 
 ## Display and input
@@ -137,6 +143,12 @@ separate service, so tabs, panes and programs survive. Display-mode changes
 apply through a systemd path unit; changing the target card restarts the
 session. Keyboard-layout changes also restart it.
 
+**Settings → Display → Font** selects the typeface for the whole terminal
+interface — the shell, tmux, Settings and every app in a tab. The change
+replaces only the visible terminal, like a theme change. The shipped families
+are Terminus, DejaVu Sans Mono, Liberation Mono, Noto Sans Mono, Hack, Fira
+Code and JetBrains Mono.
+
 The text size follows the output: **Settings → Display → Text Size** (or
 `Alt+G` / `Alt+M`) changes the active screen from 12 to 32 px, and each output
 remembers its own size across restarts.
@@ -154,7 +166,8 @@ The internal panel is pure DRM (`/dev/dri/card1`, `SPI-1`): fbdev emulation is
 disabled, there is no `/dev/fb1`, and fbcon is off (`fbcon=map:off`). cage sets
 the mode through KMS. `getty@tty1` autologins uid 1000 and replaces its login
 shell with `cpz-cage`; tty2/tty3 remain getty fallbacks (not drawn while fbcon
-is off). SSH, serial and the debug image remain available for recovery.
+is off). SSH is off by default and can be enabled in Settings → System →
+Security; serial and the debug image remain available for recovery.
 
 See [docs/CPZ-CAGE.md](docs/CPZ-CAGE.md) for the boot path, output policy and
 recovery details, and [docs/CPZ-GRAPHICS.md](docs/CPZ-GRAPHICS.md) for how
@@ -200,25 +213,27 @@ through the same `/usr/local/bin/cpz-open` dispatcher (`MC_XDG_OPEN` and an lf
 ## Search
 
 `Alt+O` opens CPZ Search in a centred tmux popup. It starts with mounted drives
-(`Open <label>`, `Unmount <label>`), then New Tab, Close Tab, Mute, first-level
-Settings pages and Help. Typing loads the remaining providers in the
-background, so it is usable before the catalog and PATH scan finish:
+(`Open <label>`, `Unmount <label>`), then New Tab, Close Tab, Mute, the apps
+installed through **Settings → Applications**, first-level Settings pages and
+Help. Typing loads the remaining providers: catalog apps available to install,
+CPZ/power actions and Settings rows.
 
 | Input | Provider |
 | --- | --- |
-| no prefix | mounted media, installed apps, Settings pages, CPZ/power actions, catalog apps, PATH commands |
+| no prefix | mounted media, installed apps, catalog apps available to install, Settings pages, CPZ/power actions |
 | `/` | files under `$HOME`, `/etc`, `/usr/local`, `/opt`, `/srv`, `/media`, `/mnt` |
 | `=` | calculator |
-| `apps` | Terminal Trove apps (installed first, others offer install) |
+| `apps` | installed apps and catalog apps available to install |
 | `$` | tmux paste buffers, searchable by name or preview |
 
-App rows carry a state tag: `[run app]`, `[install app]`, `[installed]` or
-`[info]`. Only `[run app]` launches directly; other app rows open the
-Applications details page where `i` installs, `e` runs and `d` removes. `Enter`
-acts on the highlighted row, including the very first one. `Ctrl+Y` copies the
-selection to the tmux buffer, `Ctrl+O` opens its directory in `lf` (or the app
-details page). Settings targets are queued to the running Settings tab instead
-of opening a second TUI.
+App rows carry a state tag: `[run app]`, `[installed]` or `[install app]`. Only
+`[run app]` launches directly; other app rows open the Applications details
+page where `i` installs, `e` runs and `d` removes. `Enter` acts on the
+highlighted row, including the very first one. `Ctrl+Y` copies the selection to
+the tmux buffer, `Ctrl+O` opens its directory in `lf` (or the app details page).
+Settings targets are queued to the running Settings tab instead of opening a
+second TUI. Search deliberately does not list arbitrary PATH commands or every
+apt package; the wider apt search lives in Settings → Applications.
 
 Search has no daemon, database or background index: it runs only while the
 popup is open, using `fzf`, `find`, `file`, `tmux` and `python3` from the image.
@@ -230,9 +245,11 @@ File search is scoped to user data and configuration; package trees such as
 **Settings → Applications** browses CLI/TUI programs from
 [Terminal Trove](https://terminaltrove.com/) using a local catalog snapshot
 generated by [terminal-trove-index](https://github.com/jmas/terminal-trove-index).
-Browse shows apt-backed tools by default; `a` switches between apt-only and the
-full catalog, `u` refreshes the snapshot. Set `CPZ_TROVE_INDEX_URL` at build
-time to use another index.
+Browse shows apt-backed tools by default; typing also finds ordinary apt
+packages that are not in the catalog. Index matches stay first in search
+results, with the apt packages below them. `a` switches between apt-only and
+the full catalog, `u` refreshes the snapshot. Set `CPZ_TROVE_INDEX_URL` at
+build time to use another index.
 
 Only packages that exist in apt are installed and tracked. The catalog's
 Debian/Ubuntu command is preferred; otherwise the tool slug/name is checked in
@@ -240,6 +257,11 @@ apt. If no apt package exists, the screen shows the published instructions and
 marks the tool as unmanaged — those commands are never run automatically.
 Tracked apps appear in the Installed tab, run with `e`, and are removed with
 one confirmation. State lives in `~/.local/state/cpz/trove-apps.json`.
+
+The app details page warns when the package looks like a desktop application
+(apt section, GUI toolkit dependencies or an installed `.desktop` launcher).
+Graphical clients can still be installed and run through cage, but the warning
+makes it clear that they are not a CLI/TUI app.
 
 ## Build
 
@@ -315,10 +337,10 @@ package downloads without changing package contents.
 | `DEPLOY_COMPRESSION` | `xz`, `gz`, `zip`, or `none` |
 | `TARGET_HOSTNAME` | Hostname written into the image |
 | `FIRST_USER_NAME` / `FIRST_USER_PASS` | First user account (`cpz` / `cpz`). The first console login recommends a new password but does not block the session |
-| `ENABLE_SSH` | Enable the SSH server (`1` by default; password login as the first user) |
+| `ENABLE_SSH` | Enable the SSH server (`0` by default; password login as the first user) |
 | `PASSWORDLESS_SUDO` | Give the first user passwordless sudo |
 | `LOCALE_DEFAULT`, `KEYBOARD_KEYMAP`, `KEYBOARD_LAYOUT`, `TIMEZONE_DEFAULT` | System defaults |
-| `WPA_COUNTRY` | Wi-Fi regulatory domain (ISO 3166-1 alpha-2). Empty keeps Wi-Fi off until enabled in Settings |
+| `WPA_COUNTRY` | Wi-Fi regulatory domain (ISO 3166-1 alpha-2). Empty keeps the 5 GHz band and some channels unavailable; the radio can still be enabled from Settings |
 | `CPZ_DEBUG_BOOT` | `1` builds the verbose recovery image |
 | `CPZ_DTOVERLAYS_REF` | Pinned CardputerZero driver commit/tag; `main` tracks upstream |
 | `CPZ_HDMI_VIDEO` | Optional fixed HDMI mode, e.g. `HDMI-A-1:1920x1080@60`; empty uses EDID |
@@ -387,7 +409,7 @@ local; `--skip-checks` is for recovery only.
 `site/` is the static feature reference: no build step, an English page plus
 translations in `site/i18n/` (Ukrainian, Polish, German, French, Spanish,
 Italian, Portuguese, Turkish, Japanese and Simplified Chinese). The device UI
-ships in English, Ukrainian and German. `.github/workflows/pages.yml` validates
+ships in the same set of languages as the site. `.github/workflows/pages.yml` validates
 translations and deploys the folder with GitHub Pages. Enable Pages once in
 *Settings → Pages → Source: GitHub Actions*, then push a change under `site/`.
 

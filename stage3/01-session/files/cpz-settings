@@ -27,6 +27,7 @@ import sys
 import tempfile
 import textwrap
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -62,6 +63,28 @@ FONT_SIZES = (12, 14, 16, 18, 20, 22, 24, 28, 32)
 FONT_SIZE_MIN = FONT_SIZES[0]
 FONT_SIZE_MAX = FONT_SIZES[-1]
 FONT_SIZE_LABELS = {size: f"{size}px" for size in FONT_SIZES}
+# Typefaces for the whole terminal interface. The slug is stored in
+# settings.conf and resolved by cpz-foot-config, so the file stays ASCII and a
+# saved value always names a font installed by stage3/01-session/00-packages.
+# Terminus stays the default: its bitmap strikes give the 53x14 panel grid.
+FONT_FAMILIES = (
+    "terminus",
+    "dejavu",
+    "liberation",
+    "noto",
+    "hack",
+    "fira",
+    "jetbrains",
+)
+FONT_FAMILY_LABELS = {
+    "terminus": "Terminus",
+    "dejavu": "DejaVu Sans Mono",
+    "liberation": "Liberation Mono",
+    "noto": "Noto Sans Mono",
+    "hack": "Hack",
+    "fira": "Fira Code",
+    "jetbrains": "JetBrains Mono",
+}
 
 
 def nearest_font_size(value) -> int:
@@ -340,14 +363,38 @@ def language_codes() -> tuple[str, ...]:
     try:
         return tuple(i18n_module().SUPPORTED)
     except (FileNotFoundError, AttributeError):
-        return ("en", "uk", "de")
+        return (
+            "en",
+            "uk",
+            "pl",
+            "de",
+            "fr",
+            "es",
+            "it",
+            "pt",
+            "tr",
+            "ja",
+            "zh",
+        )
 
 
 def language_labels() -> dict[str, str]:
     try:
         return dict(i18n_module().LANGUAGE_LABELS)
     except (FileNotFoundError, AttributeError):
-        return {"en": "English", "uk": "Українська", "de": "Deutsch"}
+        return {
+            "en": "English",
+            "uk": "Українська",
+            "pl": "Polski",
+            "de": "Deutsch",
+            "fr": "Français",
+            "es": "Español",
+            "it": "Italiano",
+            "pt": "Português (BR)",
+            "tr": "Türkçe",
+            "ja": "日本語",
+            "zh": "中文",
+        }
 
 
 DEFAULTS: dict[str, Any] = {
@@ -364,12 +411,10 @@ DEFAULTS: dict[str, Any] = {
     "show_volume": 0,
     "show_brightness": 0,
     "show_conn": 1,
-    "show_eth": 0,
-    "show_wifi": 1,
-    "show_bt": 1,
     "show_layout": 1,
     "display": "auto",
-    # The panel and HDMI remember their own Terminus pixel height.
+    "font_family": "terminus",
+    # The panel and HDMI remember their own font pixel height.
     "font_size_panel": 12,
     "font_size_hdmi": 16,
     "brightness": 100,
@@ -417,7 +462,15 @@ def mouse_speed_label(value: int) -> str:
 LANGUAGE_LOCALES = {
     "en": "en_US.UTF-8",
     "uk": "uk_UA.UTF-8",
+    "pl": "pl_PL.UTF-8",
     "de": "de_DE.UTF-8",
+    "fr": "fr_FR.UTF-8",
+    "es": "es_ES.UTF-8",
+    "it": "it_IT.UTF-8",
+    "pt": "pt_BR.UTF-8",
+    "tr": "tr_TR.UTF-8",
+    "ja": "ja_JP.UTF-8",
+    "zh": "zh_CN.UTF-8",
 }
 
 THEME_ORDER = (
@@ -641,6 +694,7 @@ def parse_file(path: str, data: dict) -> None:
                     "language",
                     "date_format",
                     "display",
+                    "font_family",
                     "mode_keys",
                     "keyboard_layout",
                     "keyboard_layouts",
@@ -710,6 +764,8 @@ def load_settings() -> dict:
         data["date_format"] = DEFAULTS["date_format"]
     if data["display"] not in DISPLAY_MODES:
         data["display"] = DEFAULTS["display"]
+    if data["font_family"] not in FONT_FAMILIES:
+        data["font_family"] = DEFAULTS["font_family"]
     # Per-output text size: a value in the user's file wins over the system
     # default; an explicit font_size_panel/font_size_hdmi wins over the legacy
     # single font_size in the same or a lower-priority file.
@@ -763,9 +819,6 @@ def load_settings() -> dict:
         "show_volume",
         "show_brightness",
         "show_conn",
-        "show_eth",
-        "show_wifi",
-        "show_bt",
         "show_layout",
         "mouse",
         "set_clipboard",
@@ -795,11 +848,9 @@ def save_settings(data: dict) -> None:
             "show_volume",
             "show_brightness",
             "show_conn",
-            "show_eth",
-            "show_wifi",
-            "show_bt",
             "show_layout",
             "display",
+            "font_family",
             "font_size_panel",
             "font_size_hdmi",
             "brightness",
@@ -959,9 +1010,31 @@ def apply_system_locale(code: str) -> bool:
     return result.returncode == 0
 
 
+def rename_settings_tab() -> None:
+    """Keep the Settings tab title in the selected language."""
+    try:
+        result = subprocess.run(
+            ["tmux", "list-windows", "-F", "#{window_id} #{?@cpz_settings,1,0}"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    if result.returncode != 0:
+        return
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "1":
+            tmux("rename-window", "-t", parts[0], tr("settings"))
+            return
+
+
 def apply_language(code: str) -> bool:
     """Switch the CPZ UI, the session and the system locale to a language."""
     set_language(code)
+    rename_settings_tab()
     locale = LANGUAGE_LOCALES.get(_LANGUAGE, "en_US.UTF-8")
     os.environ["LANG"] = locale
     os.environ["LC_MESSAGES"] = locale
@@ -969,6 +1042,14 @@ def apply_language(code: str) -> bool:
     tmux("set-environment", "-g", "LANG", locale)
     tmux("set-environment", "-g", "LC_MESSAGES", locale)
     tmux("set-environment", "-g", "LC_TIME", locale)
+    # Regenerate the tmux bindings so embedded prompts (Rename tab, Close
+    # pane) and the help popup title follow the new language too.
+    try:
+        keys = keys_module()
+        keys.refresh_language()
+        keys.apply_tmux()
+    except (AttributeError, FileNotFoundError, OSError):
+        pass
     return apply_system_locale(_LANGUAGE)
 
 
@@ -1001,7 +1082,7 @@ def apply_live(data: dict, key: str) -> None:
         # The path unit runs cpz-cage-output immediately; the five-second
         # timer stays as a fallback for edits made outside Settings.
         request_output_apply()
-    elif key in ("font_size_panel", "font_size_hdmi"):
+    elif key in ("font_family", "font_size_panel", "font_size_hdmi"):
         # foot reads foot.ini only at startup. The session supervisor replaces
         # just the visible terminal, so there is no compositor restart. Each
         # output keeps its own size; only the active one is rendered.
@@ -1033,7 +1114,7 @@ def apply_live(data: dict, key: str) -> None:
     # Clock/battery/volume/date are read by cpz-status on the next status
     # refresh.
     refresh_clients(status_only=True)
-    if key in ("theme", "font_size_panel", "font_size_hdmi"):
+    if key in ("theme", "font_family", "font_size_panel", "font_size_hdmi"):
         reload_foot()
 
 
@@ -1240,12 +1321,14 @@ def ethernet_info() -> str:
     for device in nm_devices():
         if device["type"] == "ethernet":
             ip = nm_ip(device["device"])
-            return f"{device['device']} {device['state']}" + (f" - {ip}" if ip else "")
+            return f"{device['device']} {tr(device['state'])}" + (
+                f" - {ip}" if ip else ""
+            )
     return "none"
 
 
 def wifi_info() -> str:
-    summary = wifi_summary()
+    summary = tr(wifi_summary())
     ip = wifi_ip()
     return f"{summary}" + (f" - {ip}" if ip else "")
 
@@ -1272,12 +1355,12 @@ def network_details_lines():
     lines = ["Connections", ""]
     for device in nm_devices():
         lines.append(
-            f"{device['device']}: {device['type']} {device['state']}"
+            f"{device['device']}: {device['type']} {tr(device['state'])}"
             + (f" ({device['connection']})" if device["connection"] else "")
         )
         ip = nm_ip(device["device"])
         if ip:
-            lines.append(f"  IP: {ip}")
+            lines.append("  " + tr("IP: {address}", address=ip))
     lines.extend(["", "Addresses"])
     rc, out, _ = nm_run(["ip", "-brief", "addr", "show"], timeout=10)
     if rc == 0:
@@ -1454,7 +1537,7 @@ def set_datetime_action(screen, _data) -> str | None:
     rc = run_privileged(screen, ["timedatectl", "set-time", value])
     if rc != 0:
         return "Date/time change failed"
-    return f"Set: {value}"
+    return tr("Set: {value}", value=value)
 
 
 def cpz_version() -> str:
@@ -1476,7 +1559,7 @@ def battery_info() -> str:
                     status = fh.read().strip()
             except OSError:
                 pass
-            return f"{capacity}%" + (f" {status}" if status else "")
+            return f"{capacity}%" + (f" {tr(status)}" if status else "")
         except (OSError, ValueError):
             continue
     return "no battery"
@@ -1495,7 +1578,7 @@ def ssh_status() -> str:
         enabled = out.strip() or "enabled"
     else:
         enabled = "disabled"
-    return f"{active}, {enabled}"
+    return f"{tr(active)}, {tr(enabled)}"
 
 
 def ssh_switch_text() -> str:
@@ -1568,14 +1651,7 @@ def modal_text(message: str, width: int) -> list[str]:
         if not paragraph.strip():
             lines.append("")
             continue
-        lines.extend(
-            textwrap.wrap(
-                paragraph,
-                max(8, width),
-                break_long_words=True,
-                break_on_hyphens=False,
-            )
-        )
+        lines.extend(wrap_display(paragraph, max(8, width)))
     return lines or [""]
 
 
@@ -1600,7 +1676,7 @@ def draw_modal_frame(popup, title: str, hint: str = "", error: bool = False) -> 
             popup,
             height - 2,
             MODAL_TEXT_COLUMN,
-            hint[: max(0, width - 2 * MODAL_TEXT_COLUMN)],
+            text_truncate(hint, max(0, width - 2 * MODAL_TEXT_COLUMN)),
             hint_attr(),
         )
 
@@ -1619,12 +1695,12 @@ def modal_window(
     screen_height, screen_width = screen.getmaxyx()
     available = max(10, screen_width - 4)
     body_width = min(MODAL_MAX_WIDTH, max(8, available - 4))
-    hint_width = len(hint) + 2 * MODAL_TEXT_COLUMN if hint else 0
+    hint_width = text_width(hint) + 2 * MODAL_TEXT_COLUMN if hint else 0
     body = modal_text(message, body_width)
-    longest = max((len(line) for line in body), default=0)
+    longest = max((text_width(line) for line in body), default=0)
     box_width = min(
         available,
-        max(len(title) + 6, longest + 4, hint_width, 24),
+        max(text_width(title) + 6, longest + 4, hint_width, 24),
     )
     body_width = max(8, box_width - 4)
     body = modal_text(message, body_width)
@@ -1633,7 +1709,7 @@ def modal_window(
     max_body_rows = max(1, screen_height - 2 - 4 - hint_rows)
     if len(body) > max_body_rows:
         body = body[:max_body_rows]
-        body[-1] = body[-1][: max(0, body_width - 3)] + "..."
+        body[-1] = text_truncate(body[-1], max(0, body_width - 3)) + "..."
     box_height = min(screen_height - 2, len(body) + hint_rows + 4)
     top = max(0, (screen_height - box_height) // 2)
     left = max(0, (screen_width - box_width) // 2)
@@ -1729,6 +1805,55 @@ def confirm(
             if key in (27, ord("n"), ord("N"), ord("q"), ord("Q"), *NAV_LEFT):
                 return False
     finally:
+        close_modal(screen, popup)
+
+
+def text_input(
+    screen,
+    title: str,
+    message: str,
+    secret: bool = False,
+    hint: str = "Enter accept  Esc cancel",
+) -> str | None:
+    """Ask for one line of text in the standard CPZ modal frame.
+
+    ``secret`` masks the value for Wi-Fi passphrases and Bluetooth PINs; the
+    value itself is never echoed by a command. Returns None when cancelled.
+    """
+    popup = modal_window(screen, title, message, hint)
+    value = ""
+    try:
+        try:
+            curses.curs_set(1)
+        except curses.error:
+            pass
+        while True:
+            height, width = popup.getmaxyx()
+            column = MODAL_TEXT_COLUMN
+            room = max(1, width - 2 * column)
+            shown = "*" * len(value) if secret else value
+            row = max(2, height - 3)
+            put(popup, row, column, text_pad(text_truncate(shown, room), room))
+            try:
+                popup.move(row, min(width - 2, column + text_width(shown)))
+            except curses.error:
+                pass
+            popup.refresh()
+            key = popup.getch()
+            if key in (curses.KEY_ENTER, 10, 13):
+                return value
+            if key == 27:
+                return None
+            if key in (curses.KEY_BACKSPACE, 8, 127):
+                value = value[:-1]
+                continue
+            if 32 <= key < 127:
+                value += chr(key)
+    finally:
+        try:
+            curses.curs_set(0)
+        except curses.error:
+            pass
         close_modal(screen, popup)
 
 
@@ -1845,44 +1970,196 @@ def wifi_summary() -> str:
     return "no adapter"
 
 
-def open_network_tui() -> str:
-    if not shutil.which("nmtui"):
-        return "nmtui is not installed"
-    # The image writes WirelessEnabled=false until a country is configured;
-    # enable the radio before opening the NetworkManager TUI.
-    nm_run(["nmcli", "radio", "wifi", "on"], timeout=15)
+def refresh_connection_tokens() -> None:
+    """Refresh /run/cpz-conn after a radio or connection change.
 
-    # Run nmtui in a popup so its alternate-screen/terminal-mode changes do not
-    # leak into the Settings pane or trigger a console/tmux resize.
-    if os.environ.get("TMUX") and shutil.which("tmux"):
-        result = subprocess.call(
-            [
-                "tmux",
-                "display-popup",
-                "-E",
-                "-w",
-                "100%",
-                "-h",
-                "100%",
-                "nmtui",
-            ],
-            env=nm_env(),
-        )
-        return "" if result == 0 else "nmtui exited with an error"
-
-    curses.def_prog_mode()
-    curses.endwin()
+    cpz-conn-status can spend a few seconds in nmcli/bluetoothctl, so it runs
+    detached; the status bar picks the new tokens up on its next tick.
+    """
+    executable = shutil.which("cpz-conn-status") or "/usr/local/bin/cpz-conn-status"
+    if not os.access(executable, os.X_OK):
+        return
     try:
-        subprocess.call(["nmtui"], env=nm_env())
-    except OSError as error:
-        return str(error).splitlines()[0]
-    finally:
-        curses.reset_prog_mode()
+        subprocess.Popen(
+            [executable],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
+
+
+def parse_wifi_networks(text: str) -> list[dict]:
+    """Turn `nmcli -t device wifi list` output into one row per SSID."""
+    networks: dict[str, dict] = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        fields = split_terse(line)
+        if len(fields) < 4:
+            continue
+        in_use, signal_text, security, ssid = (
+            fields[0].strip(),
+            fields[1].strip(),
+            fields[2].strip(),
+            fields[3].strip(),
+        )
+        if not ssid:
+            continue
         try:
-            curses.curs_set(0)
-        except curses.error:
-            pass
+            signal = max(0, min(100, int(signal_text)))
+        except ValueError:
+            signal = 0
+        entry = {
+            "ssid": ssid,
+            "signal": signal,
+            "security": security,
+            "active": in_use == "*",
+        }
+        previous = networks.get(ssid)
+        if previous is None or (
+            entry["active"],
+            entry["signal"],
+        ) > (
+            previous["active"],
+            previous["signal"],
+        ):
+            networks[ssid] = entry
+    return sorted(
+        networks.values(),
+        key=lambda item: (
+            not item["active"],
+            -item["signal"],
+            item["ssid"].lower(),
+        ),
+    )
+
+
+def wifi_networks(scan: bool = False) -> tuple[list[dict], str]:
+    command = [
+        "nmcli",
+        "-t",
+        "-f",
+        "IN-USE,SIGNAL,SECURITY,SSID",
+        "device",
+        "wifi",
+        "list",
+    ]
+    if scan:
+        command.extend(["--rescan", "yes"])
+    rc, out, err = nm_run(command, timeout=30)
+    if rc != 0:
+        return [], error_line(err or out) or "Cannot list Wi-Fi networks"
+    return parse_wifi_networks(out), ""
+
+
+def wifi_saved_networks() -> set[str]:
+    rc, out, _ = nm_run(
+        ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"], timeout=10
+    )
+    if rc != 0:
+        return set()
+    saved = set()
+    for line in out.splitlines():
+        fields = split_terse(line)
+        if len(fields) >= 2 and fields[1] in ("802-11-wireless", "wifi"):
+            saved.add(fields[0])
+    return saved
+
+
+def wifi_interface() -> str:
+    for device in nm_devices():
+        if device["type"] == "wifi":
+            return device["device"]
     return ""
+
+
+def wifi_radio_enabled() -> bool:
+    rc, out, _ = nm_run(["nmcli", "-t", "-f", "WIFI", "general"], timeout=6)
+    return rc == 0 and out.split(":", 1)[-1].strip() == "enabled"
+
+
+def wifi_prepare(screen) -> str:
+    """Clear rfkill and switch the NetworkManager radio on before the list."""
+    if wifi_radio_enabled():
+        return ""
+    rc = run_privileged(screen, ["/usr/local/bin/cpz-wifi", "--prepare"])
+    if rc != 0 or not wifi_radio_enabled():
+        return "Cannot enable Wi-Fi"
+    refresh_connection_tokens()
+    return ""
+
+
+def wifi_set_radio(screen, enabled: bool) -> str:
+    if enabled:
+        return wifi_prepare(screen)
+    rc, out, err = nm_run(["nmcli", "radio", "wifi", "off"], timeout=10)
+    refresh_connection_tokens()
+    return "" if rc == 0 else (error_line(err or out) or "Cannot disable Wi-Fi")
+
+
+def wifi_connect(screen, network: dict) -> str | None:
+    """Connect or disconnect one network. None means the user cancelled."""
+    ssid = network["ssid"]
+    if network["active"]:
+        interface = wifi_interface()
+        if not interface:
+            return "No Wi-Fi interface"
+        rc, out, err = nm_run(
+            ["nmcli", "device", "disconnect", interface], timeout=20
+        )
+        return "" if rc == 0 else (error_line(err or out) or "Cannot disconnect")
+
+    saved = wifi_saved_networks()
+    if ssid in saved:
+        command = ["nmcli", "connection", "up", "id", ssid]
+    elif network["security"] in ("", "--"):
+        command = ["nmcli", "device", "wifi", "connect", ssid]
+    else:
+        password = text_input(
+            screen,
+            "Wi-Fi password",
+            tr("Network: {name}", name=ssid),
+            secret=True,
+            hint="Enter connect  Esc cancel",
+        )
+        if password is None:
+            return None
+        if not password:
+            return "Password is required"
+        command = [
+            "nmcli",
+            "device",
+            "wifi",
+            "connect",
+            ssid,
+            "password",
+            password,
+        ]
+    rc, out, err = nm_run(command, timeout=45)
+    refresh_connection_tokens()
+    return "" if rc == 0 else (error_line(err or out) or "Cannot connect")
+
+
+def wifi_forget(screen, ssid: str) -> str | None:
+    if ssid not in wifi_saved_networks():
+        return tr("Network is not saved")
+    if not confirm(
+        screen,
+        tr("Forget {name}?", name=ssid),
+        title="Wi-Fi",
+        danger=True,
+    ):
+        return None
+    rc, out, err = nm_run(
+        ["nmcli", "connection", "delete", "id", ssid], timeout=20
+    )
+    return "" if rc == 0 else (error_line(err or out) or "Cannot forget network")
+
+
+def wifi_action(screen, _data) -> None:
+    """Open the shared radio manager on its Wi-Fi list."""
+    radio_manager_screen(screen, "wifi")
 
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -1987,20 +2264,23 @@ def bt_device_lines(command: str) -> list[tuple[str, str]]:
 def bt_devices() -> list[dict]:
     if not shutil.which("bluetoothctl"):
         return []
-    # `devices`, `devices Connected` and `devices Paired` are three cheap
-    # calls. The previous implementation ran `bluetoothctl info` once per
-    # device, so the Settings page could block for seconds on a busy adapter.
+    # `devices`, `devices Connected`, `devices Paired` and `devices Trusted`
+    # are four cheap calls. The previous implementation ran `bluetoothctl
+    # info` once per device, so the Settings page could block for seconds on a
+    # busy adapter.
     named = dict(bt_device_lines(""))
     if not named:
         return []
     connected = {mac for mac, _name in bt_device_lines("Connected")}
     paired = {mac for mac, _name in bt_device_lines("Paired")}
+    trusted = {mac for mac, _name in bt_device_lines("Trusted")}
     devices = [
         {
             "mac": mac,
             "name": name or mac,
             "paired": mac in paired,
             "connected": mac in connected,
+            "trusted": mac in trusted,
         }
         for mac, name in named.items()
     ]
@@ -2012,70 +2292,6 @@ def bt_devices() -> list[dict]:
         )
     )
     return devices
-
-
-def bt_scan(seconds: int = 6) -> str:
-    rc, out, err = bt_run(
-        ["bluetoothctl", "--timeout", str(seconds), "scan", "on"],
-        timeout=seconds + 8,
-    )
-    if rc != 0:
-        return error_line(err or out) or "scan failed"
-    return ""
-
-
-def bt_power(on: bool) -> str:
-    rc, out, err = bt_run(
-        ["bluetoothctl", "power", "on" if on else "off"], timeout=10
-    )
-    if rc != 0:
-        return error_line(err or out) or "power failed"
-    return ""
-
-
-def bt_set_power(screen, on: bool) -> str:
-    result = bt_power(on)
-    if not result:
-        return ""
-    # A normal user may lack rfkill/BlueZ permission. Fall back to a single
-    # sudo prompt, unblocking the radio first when enabling.
-    if on:
-        run_privileged(screen, ["rfkill", "unblock", "bluetooth"])
-    rc = run_privileged(
-        screen, ["bluetoothctl", "power", "on" if on else "off"]
-    )
-    if rc == 0:
-        return ""
-    return result or "power change failed"
-
-
-def bt_connect(device: dict) -> str:
-    rc, out, err = bt_run(
-        ["bluetoothctl", "connect", device["mac"]], timeout=40
-    )
-    if rc != 0 or "fail" in (out + err).lower():
-        return error_line(err or out) or "connect failed"
-    return "connected"
-
-
-def bt_disconnect(device: dict) -> str:
-    rc, out, err = bt_run(
-        ["bluetoothctl", "disconnect", device["mac"]], timeout=20
-    )
-    if rc != 0 or "fail" in (out + err).lower():
-        return error_line(err or out) or "disconnect failed"
-    return "disconnected"
-
-
-def bt_pair_connect(device: dict) -> str:
-    mac = device["mac"]
-    if not device["paired"]:
-        rc, out, err = bt_run(["bluetoothctl", "pair", mac], timeout=60)
-        text = (out + "\n" + err).lower()
-        if rc != 0 or "failed" in text or "not available" in text:
-            return error_line(err or out) or "pairing failed"
-        bt_run(["bluetoothctl", "trust", mac], timeout=10)
-    return bt_connect(device)
 
 
 def bluetooth_summary() -> str:
@@ -2092,105 +2308,428 @@ def bluetooth_summary() -> str:
         return connected[0]
     paired = sum(1 for device in devices if device["paired"])
     if paired:
-        return f"{paired} paired"
+        return tr("{count} paired", count=paired)
     return "On"
 
 
-def draw_bluetooth(screen, adapter: dict, devices: list, selected: int, notice: str = "") -> None:
-    screen.erase()
-    height, width = screen.getmaxyx()
-    left = SCREEN_PAD
+def bluetooth_info() -> str:
+    """One-line Bluetooth status for the Connections page.
 
-    put(screen, 0, left, tr("Bluetooth") + "  (* " + tr("Connected") + "  + " + tr("Paired") + ")", curses.A_BOLD)
-
-    status = notice or adapter["error"]
-    top = 3 if status else 2
-    if status:
-        put(screen, 2, left, tr(status))
-    elif not devices:
-        put(screen, 4, left + 1, tr("No devices. Press r to scan."))
-
-    items = ["power", "scan"] + devices
-    for index, item in enumerate(items):
-        y = top + index
-        if y >= height - 1:
-            break
-        if item == "power":
-            mark = " "
-            label = tr("Power: On" if adapter["powered"] else "Power: Off")
-        elif item == "scan":
-            mark = " "
-            label = tr("Scan")
-        else:
-            mark = "*" if item["connected"] else ("+" if item["paired"] else " ")
-            label = item["name"]
-        text = f"{'>' if index == selected else ' '} {mark} {label}"
-        attr = curses.A_REVERSE if index == selected else 0
-        put(screen, y, left, text.ljust(content_width(width)), attr)
-
-    put(
-        screen,
-        height - 1,
-        left,
-        tr("F/X move  Enter toggle  r scan  q back"),
-        hint_attr(),
-    )
-    screen.refresh()
-
-
-def bluetooth_screen(screen) -> None:
+    Mirrors wifi_info(): current device or radio state, then one short detail.
+    """
+    if not shutil.which("bluetoothctl"):
+        return tr("no bluetoothctl")
     adapter = bt_adapter()
+    if adapter["error"]:
+        return tr("no adapter") if "no adapter" in adapter["error"].lower() else tr("unavailable")
+    if not adapter["powered"]:
+        return tr("Off")
     devices = bt_devices()
+    connected = [device for device in devices if device["connected"]]
+    if connected:
+        return f"{connected[0]['name']} - {tr('connected')}"
+    paired = sum(1 for device in devices if device["paired"])
+    if paired:
+        return f"{tr('{count} paired', count=paired)} - {adapter['name']}"
+    return f"{tr('On')} - {adapter['name']}"
+
+
+def bt_set_radio(screen, enabled: bool) -> str:
+    """Unblock/ power the adapter through the narrow sudo helper."""
+    rc = run_privileged(
+        screen,
+        [
+            "/usr/local/bin/cpz-bt-unblock",
+            "on" if enabled else "off",
+        ],
+    )
+    if rc == 0:
+        refresh_connection_tokens()
+        return ""
+    return "Cannot enable Bluetooth" if enabled else "Cannot disable Bluetooth"
+
+
+def bt_start_scan():
+    """Start an eight-second BlueZ discovery, or None when unavailable."""
+    if not shutil.which("bluetoothctl"):
+        return None
+    try:
+        return subprocess.Popen(
+            ["bluetoothctl", "--timeout", "8", "scan", "on"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
+
+
+def bt_command(arguments: list[str], timeout: int = 30) -> str:
+    rc, out, err = bt_run(["bluetoothctl", *arguments], timeout=timeout)
+    refresh_connection_tokens()
+    return "" if rc == 0 else (error_line(err or out) or "Bluetooth operation failed")
+
+
+def bt_pair_command(mac: str) -> str:
+    """Pair through the non-interactive agent used by the headless image.
+
+    Just Works and numeric-comparison devices need no terminal UI. A device
+    that demands a typed PIN is not handled by this one-screen flow; pair it
+    from a terminal with bluetoothctl or bluetuith.
+    """
+    rc, out, err = bt_run(
+        ["bluetoothctl", "-a", "NoInputNoOutput", "pair", mac],
+        timeout=40,
+    )
+    refresh_connection_tokens()
+    return "" if rc == 0 else (error_line(err or out) or "Cannot pair device")
+
+
+def radio_manager_screen(screen, mode: str) -> None:
+    """One borderless list for Wi-Fi and Bluetooth.
+
+    Both radios share the same layout: one header, a control line with the
+    current connect/power actions, a scrolling list and a single footer that
+    carries the remaining key hints on the left and the scan or operation
+    status on the right.
+    """
+    wifi = mode == "wifi"
+    title = tr("Wi-Fi") if wifi else tr("Bluetooth")
+    networks: list[dict] = []
+    devices: list[dict] = []
+    saved: set[str] = set()
     selected = 0
+    offset = 0
+    status = ""
+    summary = ""
+    adapter = ""
+    radio_on = False
+    scan_process = None
+    scan_until = 0.0
+
+    if wifi:
+        status = wifi_prepare(screen)
+        networks, error = wifi_networks()
+        if error:
+            status = error
+        saved = wifi_saved_networks()
+        adapter = wifi_interface()
+        summary = tr(wifi_summary())
+        radio_on = wifi_radio_enabled()
+    else:
+        status = bt_set_radio(screen, True)
+        devices = bt_devices()
+        info = bt_adapter()
+        adapter = "" if info["error"] else info["name"]
+        radio_on = bool(info["powered"])
+        summary = tr(bluetooth_summary())
+
+    def refresh() -> None:
+        nonlocal networks, devices, saved, summary, adapter, radio_on
+        if wifi:
+            networks, _error = wifi_networks()
+            saved = wifi_saved_networks()
+            adapter = wifi_interface()
+            summary = tr(wifi_summary())
+            radio_on = wifi_radio_enabled()
+        else:
+            devices = bt_devices()
+            info = bt_adapter()
+            adapter = "" if info["error"] else info["name"]
+            radio_on = bool(info["powered"])
+            summary = tr(bluetooth_summary())
+
+    def draw() -> None:
+        nonlocal selected, offset
+        rows = networks if wifi else devices
+        screen.erase()
+        height, width = screen.getmaxyx()
+        left = SCREEN_PAD
+        cw = content_width(width)
+        header = title + (f"  {adapter}" if adapter else "")
+        put(screen, 0, left, text_truncate(header, cw), curses.A_BOLD)
+
+        controls = []
+        if rows:
+            if wifi:
+                action = "Disconnect" if rows[selected]["active"] else "Connect"
+            elif rows[selected]["connected"]:
+                action = "Disconnect"
+            elif rows[selected]["paired"]:
+                action = "Connect"
+            else:
+                action = "Pair"
+            controls.append(f"[Enter] {tr(action)}")
+        controls.append(f"[o] {tr('Turn off' if radio_on else 'Turn on')}")
+        put(
+            screen,
+            1,
+            left,
+            text_pad(text_truncate("   ".join(controls), cw), cw),
+            hint_attr(),
+        )
+
+        visible = max(1, height - 3)
+        selected = max(0, min(selected, len(rows) - 1))
+        if selected < offset:
+            offset = selected
+        elif selected >= offset + visible:
+            offset = selected - visible + 1
+        offset = max(0, min(offset, max(0, len(rows) - visible)))
+
+        for row in range(visible):
+            index = offset + row
+            if index >= len(rows):
+                break
+            item = rows[index]
+            if wifi:
+                name = item["ssid"]
+                parts = []
+                if cw >= 44 and item["security"] not in ("", "--"):
+                    parts.append(item["security"])
+                if cw >= 34 and item["signal"]:
+                    parts.append(f"{item['signal']}%")
+                if item["active"]:
+                    parts.append(tr("connected"))
+                elif item["ssid"] in saved:
+                    parts.append(tr("saved"))
+                detail = "  ".join(parts)
+            else:
+                name = item["name"]
+                if item["connected"]:
+                    detail = tr("connected")
+                elif item["paired"]:
+                    detail = tr("paired")
+                else:
+                    detail = tr("new")
+                if cw >= 46 and item["trusted"] and not item["connected"]:
+                    detail += "  " + tr("trusted")
+
+            room = max(2, cw - 2)
+            if cw < 32:
+                detail = ""
+            detail = text_truncate(detail, max(0, room // 2))
+            name_room = max(1, room - text_width(detail) - 1)
+            line = f"{'>' if index == selected else ' '} " + text_pad(
+                text_truncate(name, name_room), name_room
+            )
+            if detail:
+                line += detail
+            put(
+                screen,
+                2 + row,
+                left,
+                text_pad(line, cw),
+                curses.A_REVERSE if index == selected else 0,
+            )
+
+        if not rows:
+            message = (
+                "No networks. Press s to scan."
+                if wifi
+                else "No devices. Press s to scan."
+            )
+            put(screen, 2, left, tr(message))
+
+        if wifi:
+            parts = [tr("s scan")]
+            if rows and rows[selected]["ssid"] in saved:
+                parts.append(tr("d forget"))
+            parts.append(tr("q back"))
+        else:
+            parts = [tr("s stop" if scan_process is not None else "s scan")]
+            if rows:
+                parts.append(tr("d remove"))
+            parts.append(tr("q back"))
+
+        right = text_truncate(
+            tr(status or summary), max(6, min(18, cw // 3))
+        )
+        room = max(0, cw - text_width(right) - 2) if right else cw
+        chosen: list[str] = []
+        for part in parts:
+            candidate = " ".join(chosen + [part])
+            if text_width(candidate) <= room:
+                chosen.append(part)
+            else:
+                break
+        footer = " ".join(chosen)
+        if not footer and parts:
+            footer = text_truncate(parts[0], room)
+        if right:
+            put(
+                screen,
+                height - 1,
+                left + max(0, cw - text_width(right)),
+                right,
+                hint_attr(),
+            )
+        put(screen, height - 1, left, footer, hint_attr())
+        screen.refresh()
 
     while True:
-        draw_bluetooth(screen, adapter, devices, selected)
+        if not wifi and scan_process is not None:
+            if (
+                time.monotonic() >= scan_until
+                or scan_process.poll() is not None
+            ):
+                scan_process = None
+                status = tr("Scan complete")
+                refresh()
+            else:
+                status = tr("Scanning...")
+                devices = bt_devices()
+        rows = networks if wifi else devices
+        draw()
+        screen.timeout(1000 if scan_process is not None else -1)
         key = screen.getch()
+        if key == -1:
+            continue
         if key == curses.KEY_MOUSE:
-            wheel = read_wheel_key()
-            if wheel is None:
+            event = read_mouse()
+            if event is None:
                 continue
-            key = wheel
-        count = 2 + len(devices)
-
+            delta = mouse_wheel_delta(event[2])
+            if delta:
+                selected = max(0, min(len(rows) - 1, selected + delta))
+            continue
         if key in (ord("q"), ord("Q"), 27):
-            return
+            break
         if key in NAV_UP:
-            selected = (selected - 1) % count
+            selected = max(0, selected - 1)
             continue
         if key in NAV_DOWN:
-            selected = (selected + 1) % count
+            selected = min(max(0, len(rows) - 1), selected + 1)
             continue
-        if key in (ord("r"), ord("R")):
-            draw_bluetooth(screen, adapter, devices, selected, "Scanning...")
-            result = bt_scan()
-            if result:
-                notify(screen, result, title="Bluetooth")
-            adapter = bt_adapter()
-            devices = bt_devices()
-            selected = min(selected, 1 + len(devices))
+        if key == curses.KEY_PPAGE:
+            selected = max(0, selected - max(1, screen.getmaxyx()[0] - 3))
             continue
-        if key in (*NAV_LEFT, *NAV_RIGHT, ord(" "), 10, 13):
-            result = ""
-            if selected == 0:
-                result = bt_set_power(screen, not adapter["powered"])
-            elif selected == 1:
-                draw_bluetooth(screen, adapter, devices, selected, "Scanning...")
-                result = bt_scan()
+        if key == curses.KEY_NPAGE:
+            selected = min(
+                max(0, len(rows) - 1),
+                selected + max(1, screen.getmaxyx()[0] - 3),
+            )
+            continue
+        if key == curses.KEY_HOME:
+            selected = 0
+            continue
+        if key == curses.KEY_END:
+            selected = max(0, len(rows) - 1)
+            continue
+        if key == ord("s"):
+            if wifi:
+                status = tr("Scanning...")
+                draw()
+                networks, error = wifi_networks(scan=True)
+                saved = wifi_saved_networks()
+                summary = tr(wifi_summary())
+                status = error or tr("Scan complete")
+                selected = offset = 0
+            elif scan_process is not None:
+                scan_process.terminate()
+                scan_process = None
+                status = tr("Scan stopped")
             else:
-                device = devices[selected - 2]
-                if device["connected"]:
-                    result = bt_disconnect(device)
-                elif device["paired"]:
-                    result = bt_connect(device)
+                scan_process = bt_start_scan()
+                if scan_process is None:
+                    status = tr("Cannot start scan")
                 else:
-                    result = bt_pair_connect(device)
-            if result:
-                notify(screen, result, title="Bluetooth")
-            adapter = bt_adapter()
-            devices = bt_devices()
-            selected = min(selected, 1 + len(devices))
+                    scan_until = time.monotonic() + 8
+                    status = tr("Scanning...")
             continue
+        if key == ord("r"):
+            refresh()
+            status = ""
+            selected = offset = 0
+            continue
+        if key == ord("o"):
+            if wifi:
+                enabled = not wifi_radio_enabled()
+                status = wifi_set_radio(screen, enabled) or tr(
+                    "Wi-Fi on" if enabled else "Wi-Fi off"
+                )
+            else:
+                info = bt_adapter()
+                enabled = not info["powered"]
+                status = bt_set_radio(screen, enabled) or tr(
+                    "Bluetooth on" if enabled else "Bluetooth off"
+                )
+            refresh()
+            selected = offset = 0
+            continue
+        if not rows:
+            continue
+        device = rows[selected]
+        if wifi:
+            if key in (curses.KEY_ENTER, 10, 13):
+                status = tr("Connecting...") if not device["active"] else ""
+                draw()
+                result = wifi_connect(screen, device)
+                if result is not None:
+                    if result:
+                        notify(screen, result, title="Wi-Fi")
+                    status = result or tr("Connected")
+                    refresh()
+                else:
+                    status = ""
+            elif key == ord("d"):
+                result = wifi_forget(screen, device["ssid"])
+                if result is not None:
+                    if result:
+                        notify(screen, result, title="Wi-Fi")
+                    status = result or tr("Network forgotten")
+                    refresh()
+            continue
+
+        mac = device["mac"]
+        if key in (curses.KEY_ENTER, 10, 13):
+            if device["connected"]:
+                status = tr("Disconnecting...")
+                draw()
+                status = bt_command(["disconnect", mac], 20) or tr("Disconnected")
+            elif device["paired"]:
+                status = tr("Connecting...")
+                draw()
+                status = bt_command(["connect", mac], 30) or tr("Connected")
+            else:
+                status = tr("Pairing...")
+                draw()
+                status = bt_pair_command(mac)
+                if not status:
+                    status = bt_command(["connect", mac], 30) or tr("Paired")
+            refresh()
+            continue
+        if key == ord("p"):
+            status = tr("Pairing...")
+            draw()
+            status = bt_pair_command(mac) or tr("Paired")
+            refresh()
+            continue
+        if key == ord("t"):
+            if device["trusted"]:
+                status = bt_command(["untrust", mac], 20) or tr("Untrusted")
+            else:
+                status = bt_command(["trust", mac], 20) or tr("Trusted")
+            refresh()
+            continue
+        if key == ord("d"):
+            if confirm(
+                screen,
+                tr("Remove {name}?", name=device["name"]),
+                title="Bluetooth",
+                danger=True,
+            ):
+                status = bt_command(["remove", mac], 20) or tr("Removed")
+                refresh()
+
+    if scan_process is not None:
+        scan_process.terminate()
+        scan_process = None
+    screen.timeout(-1)
+
+
+def bt_action(screen, _data) -> None:
+    """Open the shared radio manager on its Bluetooth list."""
+    radio_manager_screen(screen, "bluetooth")
 
 
 def content_width(width: int) -> int:
@@ -2198,12 +2737,74 @@ def content_width(width: int) -> int:
     return max(1, width - 2 * SCREEN_PAD)
 
 
+def char_width(char: str) -> int:
+    """Terminal cell width of one character, matching curses/foot."""
+    if not char:
+        return 0
+    if unicodedata.combining(char):
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+
+
+def text_width(text: object) -> int:
+    return sum(char_width(char) for char in str(text))
+
+
+def text_truncate(text: object, width: int) -> str:
+    """Cut text to a terminal-cell width, never splitting a wide glyph."""
+    value = str(text)
+    if text_width(value) <= width:
+        return value
+    used = 0
+    out = []
+    for char in value:
+        cells = char_width(char)
+        if used + cells > width:
+            break
+        out.append(char)
+        used += cells
+    return "".join(out)
+
+
+def text_pad(text: object, width: int) -> str:
+    value = text_truncate(text, width)
+    return value + " " * max(0, width - text_width(value))
+
+
+def wrap_display(text: object, width: int) -> list[str]:
+    """Wrap text to terminal cells, preferring spaces but allowing CJK breaks."""
+    width = max(1, width)
+    lines: list[str] = []
+    current: list[str] = []
+    cells = 0
+    last_space = -1
+    for char in str(text):
+        cells_here = char_width(char)
+        if cells + cells_here > width and current:
+            if last_space >= 0:
+                lines.append("".join(current[:last_space]).rstrip())
+                rest = "".join(current[last_space + 1 :]).lstrip()
+                current = list(rest)
+                cells = text_width(rest)
+                last_space = -1
+            else:
+                lines.append("".join(current).rstrip())
+                current = []
+                cells = 0
+        current.append(char)
+        cells += cells_here
+        if char == " ":
+            last_space = len(current) - 1
+    lines.append("".join(current).rstrip())
+    return lines or [""]
+
+
 def put(screen, y: int, x: int, text: str, attr: int = 0) -> None:
     height, width = screen.getmaxyx()
     if y < 0 or y >= height or x < 0 or x >= width:
         return
     try:
-        screen.addstr(y, x, text[: max(0, width - x - 1)], attr)
+        screen.addstr(y, x, text_truncate(text, max(0, width - x - 1)), attr)
     except curses.error:
         pass
 
@@ -2498,7 +3099,7 @@ def disk_info(path: str) -> str:
         return "n/a"
     total = usage.total // (1024**3)
     free = usage.free // (1024**3)
-    return f"{free}G free / {total}G"
+    return tr("{free}G free / {total}G", free=free, total=total)
 
 
 def event_sysfs(event: str) -> str:
@@ -2581,7 +3182,7 @@ def cpu_temperature() -> str:
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 value = int(handle.read().strip()) / 1000
-            return f"{value:.1f} C"
+            return tr("{value} C", value=f"{value:.1f}")
         except (OSError, ValueError):
             continue
     return "n/a"
@@ -2596,7 +3197,11 @@ def memory_info() -> str:
                 values[key] = int(raw.split()[0])
         total = values["MemTotal"] // 1024
         available = values["MemAvailable"] // 1024
-        return f"{total - available}M used / {total}M"
+        return tr(
+            "{used}M used / {total}M",
+            used=total - available,
+            total=total,
+        )
     except (OSError, KeyError, ValueError):
         return "n/a"
 
@@ -2611,8 +3216,13 @@ def uptime_info() -> str:
     hours, seconds = divmod(seconds, 3600)
     minutes = seconds // 60
     if days:
-        return f"{days}d {hours}h {minutes}m"
-    return f"{hours}h {minutes}m"
+        return tr(
+            "{days}d {hours}h {minutes}m",
+            days=days,
+            hours=hours,
+            minutes=minutes,
+        )
+    return tr("{hours}h {minutes}m", hours=hours, minutes=minutes)
 
 
 def load_info() -> str:
@@ -2623,53 +3233,19 @@ def load_info() -> str:
         return "n/a"
 
 
-def help_lines() -> list:
-    """Fallback help for hosts without /usr/local/bin/cpz-help.
-
-    The shortcut section comes from cpz-keys so it cannot drift from the live
-    bindings; this and the status-bar legend match cpz-help.
-    """
-    try:
-        lines = list(keys_module().shortcut_lines())
-    except FileNotFoundError:
-        lines = [
-            "The cpz-keys helper is not installed.",
-        ]
-    lines.extend(
-        [
-            "",
-            "==== Internal keyboard ====",
-            " Sym+key           punctuation or the layout's extra letters",
-            " Shift+Sym+key     uppercase, or a moved ASCII symbol",
-            " Fn+F/X/Z/C        arrow keys while Fn is held",
-            "",
-            "==== In-app keys ====",
-            " In Settings       Z/X/C/F move (Fn off)",
-            " In Applications   Enter info  i install  e run",
-            "",
-            "==== Status bar ====",
-            " 87% battery  + charging  ! low",
-            " Wi Wi-Fi  Eth Ethernet  Bt Bluetooth",
-            " V0-V4 volume  VM muted  L0-L10 brightness",
-            " US, UA, ...  active input layout",
-        ]
-    )
-    return lines
-
-
 def system_info_lines(data: dict) -> list:
     display = str(data.get("display", ""))
     lines = [
         tr("Device"),
         "",
-        f"{tr('CPZ version:')} {cpz_version()}",
+        f"{tr('CPZ version:')} {tr(cpz_version())}",
         f"{tr('Uptime:')} {uptime_info()}",
         f"{tr('Memory:')} {memory_info()}",
         f"{tr('Battery:')} {tr(battery_info())}",
         f"{tr('Input:')} {keyboard_status(data)}",
         f"{tr('Bluetooth:')} {tr(bluetooth_summary())}",
         f"{tr('Display:')} {tr(DISPLAY_LABELS.get(display, display))}",
-        f"{tr('Output:')} {active_output_text(data)}",
+        f"{tr('Output:')} {tr(active_output_text(data))}",
         f"{tr('SSH:')} {ssh_status()}",
         "",
         tr("Network"),
@@ -2679,7 +3255,7 @@ def system_info_lines(data: dict) -> list:
         lines.append("  " + tr("no NetworkManager devices"))
     for device in devices:
         lines.append(
-            f"  {device['device']}: {device['type']} {device['state']}"
+            f"  {device['device']}: {device['type']} {tr(device['state'])}"
             + (f" ({device['connection']})" if device["connection"] else "")
         )
         ip = nm_ip(device["device"])
@@ -2692,19 +3268,22 @@ def system_info_lines(data: dict) -> list:
             f"  /              {disk_info('/')}",
             f"  /tmp           {disk_info('/tmp')}",
             f"  /boot/firmware {disk_info('/boot/firmware')}",
+            "",
+            tr("Diagnostics"),
+            *diagnostic_lines(data),
         ]
     )
     return lines
 
 
 def diagnostic_lines(data: dict) -> list:
-    """Low-level details for support, kept out of the main About page."""
+    """Low-level details for support, shown at the end of the About page."""
     display = str(data.get("display", ""))
     return [
         f"{tr('Host:')} {platform.node() or tr('unknown')}",
         f"{tr('Kernel:')} {platform.release()}",
-        f"{tr('CPU temp:')} {cpu_temperature()}",
-        f"{tr('Load:')} {load_info()}",
+        f"{tr('CPU temp:')} {tr(cpu_temperature())}",
+        f"{tr('Load:')} {tr(load_info())}",
         f"{tr('HDMI:')} {tr(hdmi_status_text())}",
         f"{tr('HDMI EDID:')} {hdmi_edid_size()} {tr('bytes')}",
         f"{tr('Display mode:')} {tr(DISPLAY_LABELS.get(display, display))}",
@@ -2790,7 +3369,7 @@ def shortcut_items(data: dict) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for action in keys.ACTIONS:
         binding = bindings.get(action["id"], {})
-        display = binding.get("display", "unbound")
+        display = binding.get("display") or tr("unbound")
         items.append(
             {
                 "label": action["label"],
@@ -2908,14 +3487,22 @@ def rebind_action(screen, item: dict) -> None:
             except OSError as error:
                 notify(screen, str(error), title="Shortcuts", error=True)
                 return
-            message = f"{action['label']} restored to {keys.display_key(action['default'])}"
+            message = tr(
+                "{action} restored to {key}",
+                action=tr(action["label"]),
+                key=keys.display_key(action["default"]),
+            )
         else:
             other = keys.conflict_for(action["id"], choice)
             if other:
                 label = keys.ACTIONS_BY_ID[other]["label"]
                 notify(
                     screen,
-                    f"{keys.display_key(choice)} is already used by {label}.",
+                    tr(
+                        "{key} is already used by {label}.",
+                        key=keys.display_key(choice),
+                        label=tr(label),
+                    ),
                     title="Shortcut",
                     error=True,
                 )
@@ -2926,7 +3513,10 @@ def rebind_action(screen, item: dict) -> None:
                 if keys.set_override(action["id"], choice) != 0:
                     notify(
                         screen,
-                        f"Could not save {keys.display_key(choice)}.",
+                        tr(
+                            "Could not save {key}.",
+                            key=keys.display_key(choice),
+                        ),
                         title="Shortcuts",
                         error=True,
                     )
@@ -2941,7 +3531,7 @@ def rebind_action(screen, item: dict) -> None:
         if not applied:
             notify(
                 screen,
-                "Shortcuts were saved but the new binding could not be applied."
+                tr("Shortcuts were saved but the new binding could not be applied.")
                 + (f"\n{detail}" if detail else ""),
                 title="Shortcuts",
                 error=True,
@@ -2966,7 +3556,9 @@ def reset_shortcuts_action(screen, _data) -> str | None:
     keys.clear_all_overrides()
     rc, detail = apply_shortcuts(screen)
     if rc != 0:
-        return "Shortcuts reset, apply failed" + (f": {detail}" if detail else "")
+        return tr("Shortcuts reset, apply failed") + (
+            f": {detail}" if detail else ""
+        )
     return "Shortcuts reset"
 
 
@@ -3017,9 +3609,10 @@ def draw_layouts(
         row = first + offset
         mark = "[x]" if code in enabled else "[ ]"
         suffix = "  " + tr("Active") if code == active else ""
-        text = f"{'>' if row == selected else ' '} {mark} {label[:26]:<26}{suffix}"
+        label = text_truncate(label, 26)
+        text = f"{'>' if row == selected else ' '} {mark} {text_pad(label, 26)}{suffix}"
         attr = curses.A_REVERSE if row == selected else 0
-        put(screen, top + offset, left, text.ljust(cw), attr)
+        put(screen, top + offset, left, text_pad(text, cw), attr)
     if not shown:
         put(screen, top, left + 1, tr("No matches"))
 
@@ -3164,7 +3757,7 @@ def draw_timezone(
         mark = "*" if zone == current else " "
         text = f"{'>' if row == selected else ' '} {mark} {zone}"
         attr = curses.A_REVERSE if row == selected else 0
-        put(screen, top + offset, left, text.ljust(cw), attr)
+        put(screen, top + offset, left, text_pad(text, cw), attr)
     if not shown:
         put(screen, top, left + 1, tr("No matches"))
 
@@ -3261,26 +3854,18 @@ def timezone_screen(screen) -> None:
         zone = shown[selected][0]
         rc = run_privileged(screen, ["timedatectl", "set-timezone", zone])
         if rc == 0:
-            notify(screen, f"Time zone set to {zone}", title="Time Zone", error=False)
+            notify(
+                screen,
+                tr("Time zone set to {zone}", zone=zone),
+                title="Time Zone",
+                error=False,
+            )
             return
         notify(screen, "Time zone change failed", title="Time Zone")
 
 
-def show_help(screen, _data) -> None:
-    # Use the same pager as Alt+H so the two help screens cannot drift.
-    helper = "/usr/local/bin/cpz-help"
-    if os.path.exists(helper):
-        run_interactive(screen, [helper])
-    else:
-        text_page(screen, "Key Bindings", help_lines())
-
-
 def show_system(screen, data) -> None:
     text_page(screen, "About", system_info_lines(data))
-
-
-def show_diagnostics(screen, data) -> None:
-    text_page(screen, "Diagnostics", diagnostic_lines(data))
 
 
 def show_resources(screen, _data) -> None:
@@ -3311,6 +3896,61 @@ TROVE_APT_INSTALL = (
     "--no-install-recommends",
 )
 APT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]*$")
+# Apt metadata is read once per package. The Applications screen redraws on
+# every key press, while the section and dependency list cannot change during
+# one search or one details visit.
+_TROVE_APT_METADATA: dict[str, dict[str, str]] = {}
+# Sections and dependency names that usually mean a graphical application.
+# They are only hints: packaging is inconsistent, so the details page says
+# "may be" and still leaves installation to the user.
+GUI_SECTIONS = frozenset(
+    {
+        "cinnamon",
+        "gnome",
+        "kde",
+        "lxde",
+        "lxqt",
+        "mate",
+        "x11",
+        "xfce",
+    }
+)
+GUI_DEPENDENCY_MARKERS = (
+    "libgdk-3",
+    "libgdk-x11",
+    "libgtk",
+    "libqt",
+    "libsdl",
+    "libvulkan",
+    "libwayland-client",
+    "libwebkit",
+    "libx11",
+    "libxext",
+    "libxfixes",
+    "libxinerama",
+    "libxrandr",
+    "libxrender",
+    "xserver-xorg",
+)
+# Packages that are libraries, build artifacts or data rather than runnable
+# applications. Names are matched because a fresh image only has the build-time
+# package-name snapshot and no apt metadata until the first apt update.
+APT_LIBRARY_RE = re.compile(r"^lib[a-z0-9+.-]*[0-9][a-z0-9+.-]*$")
+APT_NON_APP_SUFFIX_RE = re.compile(
+    r"-(?:dev|dbg|dbgsym|doc|docs|data|common|headers|examples?|tests?|"
+    r"locale|l10n|translations?|icons?|themes?|fonts?)$"
+)
+APT_NON_APP_PREFIXES = (
+    "firmware-",
+    "fonts-",
+    "golang-",
+    "linux-headers-",
+    "linux-image-",
+    "node-",
+    "perl-",
+    "ruby-",
+    "texlive-",
+)
 PKG_CORE = frozenset(
     {
         "apt",
@@ -3470,26 +4110,24 @@ def download_trove_index() -> tuple[bool, str]:
         with urllib.request.urlopen(request, timeout=30) as response:
             raw = response.read(20 * 1024 * 1024 + 1)
     except (urllib.error.URLError, OSError, ValueError) as error:
-        return False, "Catalog update failed: " + (
-            error_line(str(error)) or "network error"
-        )
+        return False, catalog_error(error_line(str(error)) or "network error")
     if len(raw) > 20 * 1024 * 1024:
-        return False, "Catalog update failed: index is too large"
+        return False, catalog_error("index is too large")
     if raw[:2] == b"\x1f\x8b":
         try:
             raw = gzip.decompress(raw)
         except OSError:
-            return False, "Catalog update failed: bad gzip data"
+            return False, catalog_error("bad gzip data")
     if len(raw) > 50 * 1024 * 1024:
-        return False, "Catalog update failed: index is too large"
+        return False, catalog_error("index is too large")
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
-        return False, "Catalog update failed: invalid JSON"
+        return False, catalog_error("invalid JSON")
     if not valid_trove_index(data):
-        return False, "Catalog update failed: unsupported index"
+        return False, catalog_error("unsupported index")
     if not data.get("tools"):
-        return False, "Catalog update failed: empty index"
+        return False, catalog_error("empty index")
     path = trove_cache_path()
     try:
         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
@@ -3498,10 +4136,15 @@ def download_trove_index() -> tuple[bool, str]:
             handle.write(raw)
         os.replace(temp, path)
     except OSError as error:
-        return False, "Catalog update failed: " + (
-            error_line(str(error)) or "cannot write cache"
-        )
-    return True, f"Catalog updated: {len(data.get('tools', []))} tools"
+        return False, catalog_error(error_line(str(error)) or "cannot write cache")
+    return True, tr(
+        "Catalog updated: {count} tools",
+        count=len(data.get("tools", [])),
+    )
+
+
+def catalog_error(reason: str) -> str:
+    return tr("Catalog update failed: {reason}", reason=tr(reason))
 
 
 def apt_command_package(command: str) -> str:
@@ -3653,6 +4296,264 @@ def trove_apt_names() -> set[str]:
         except OSError:
             continue
     return names
+
+
+def parse_apt_stanzas(text: str) -> dict[str, dict[str, str]]:
+    """Parse the first apt/dpkg stanza per package.
+
+    Only stable metadata is kept: the section, dependency lists and the short
+    description. Continuation lines are dropped because the details page and
+    the list only need the summary.
+    """
+    result: dict[str, dict[str, str]] = {}
+    for block in re.split(r"\n\s*\n", text.strip()):
+        fields: dict[str, str] = {}
+        for line in block.splitlines():
+            if line[:1].isspace():
+                continue
+            match = re.match(r"^([A-Za-z0-9-]+):\s*(.*)$", line)
+            if not match:
+                continue
+            key = match.group(1).lower()
+            value = match.group(2).strip()
+            if key == "description":
+                fields["summary"] = value
+            else:
+                fields[key] = value
+        package = fields.get("package", "")
+        if package and package not in result:
+            result[package] = fields
+    return result
+
+
+def apt_metadata_many(packages: list[str]) -> dict[str, dict[str, str]]:
+    """Return apt metadata for several packages in one or two subprocesses.
+
+    The build-time snapshot contains package names only because export-image
+    removes /var/lib/apt/lists. apt-cache provides richer metadata once the
+    lists exist; dpkg-query covers installed packages on a fresh image.
+    """
+    wanted = [
+        package
+        for package in dict.fromkeys(packages)
+        if APT_NAME_RE.fullmatch(package)
+    ]
+    missing = [package for package in wanted if package not in _TROVE_APT_METADATA]
+    if missing:
+        timeout = max(10, min(30, len(missing) * 2))
+        rc, out, _ = nm_run(
+            ["apt-cache", "show", "--no-all-versions", *missing],
+            timeout=timeout,
+        )
+        if rc != 0 or not out:
+            rc, out, _ = nm_run(
+                ["apt-cache", "show", *missing],
+                timeout=timeout,
+            )
+        if out:
+            _TROVE_APT_METADATA.update(parse_apt_stanzas(out))
+        still_missing = [
+            package
+            for package in missing
+            if package not in _TROVE_APT_METADATA
+        ]
+        if still_missing:
+            rc, out, _ = nm_run(
+                [
+                    "dpkg-query",
+                    "-W",
+                    "-f=${Package}\t${Section}\t${Depends}\n",
+                    *still_missing,
+                ],
+                timeout=10,
+            )
+            if out:
+                for line in out.splitlines():
+                    parts = line.split("\t")
+                    package = parts[0].strip().split(":", 1)[0]
+                    if not APT_NAME_RE.fullmatch(package):
+                        continue
+                    _TROVE_APT_METADATA[package] = {
+                        "package": package,
+                        "section": parts[1].strip() if len(parts) > 1 else "",
+                        "depends": parts[2].strip() if len(parts) > 2 else "",
+                        "summary": "",
+                    }
+    return {
+        package: _TROVE_APT_METADATA.get(package, {})
+        for package in wanted
+    }
+
+
+def apt_metadata(package: str) -> dict[str, str]:
+    return apt_metadata_many([package]).get(package, {})
+
+
+def apt_looks_like_app(package: str) -> bool:
+    """Reject packages that are clearly libraries, docs or build artifacts."""
+    lowered = package.lower()
+    if APT_LIBRARY_RE.fullmatch(lowered):
+        return False
+    if APT_NON_APP_SUFFIX_RE.search(lowered):
+        return False
+    return not lowered.startswith(APT_NON_APP_PREFIXES)
+
+
+def apt_search_tools(
+    query: str,
+    apt_names: set[str],
+    skip_packages: set[str] | None = None,
+    limit: int = 30,
+    candidates: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Find ordinary apt packages that are not in the Terminal Trove catalog.
+
+    Filtering happens against the package-name snapshot, so search works on a
+    fresh image after export-image deletes /var/lib/apt/lists. Metadata is only
+    requested for the short list that is about to be displayed.
+
+    ``candidates`` is the precomputed app-like subset of ``apt_names``; the
+    screen builds it once because the full snapshot is large.
+    """
+    words = [word.lower() for word in query.split() if word]
+    if not words or len(query.strip()) < 2 or not apt_names:
+        return []
+    if candidates is None:
+        candidates = [
+            name for name in apt_names if apt_looks_like_app(name)
+        ]
+    skip = {package.lower() for package in (skip_packages or set())}
+    matches = []
+    for name in candidates:
+        lowered = name.lower()
+        if lowered in skip or not apt_looks_like_app(lowered):
+            continue
+        if all(word in lowered for word in words):
+            matches.append(name)
+    matches.sort(
+        key=lambda name: (
+            not name.lower().startswith(words[0]),
+            len(name),
+            name.lower(),
+        )
+    )
+    matches = matches[: max(1, limit)]
+    metadata = apt_metadata_many(matches)
+    tools = []
+    for package in matches:
+        fields = metadata.get(package, {})
+        tools.append(
+            {
+                "slug": package,
+                "name": package,
+                "summary": str(fields.get("summary", "")).strip(),
+                "description": "",
+                "language": "",
+                "language_label": "",
+                "categories": [],
+                "platforms": ["linux"],
+                "install": {},
+                "apt": {
+                    "command": f"apt install {package}",
+                    "package": package,
+                },
+                "website": "",
+                "source": "",
+                "license": "",
+                "stars": 0,
+                "release": "",
+                "_package": package,
+                "_apt_search": True,
+            }
+        )
+    return tools
+
+
+def package_desktop_files(package: str) -> list[str]:
+    """Return .desktop launchers shipped by an installed package."""
+    if not package or not APT_NAME_RE.fullmatch(package):
+        return []
+    if not shutil.which("dpkg"):
+        return []
+    rc, out, _ = nm_run(["dpkg", "-L", package], timeout=10)
+    if rc != 0:
+        return []
+    return [
+        path.strip()
+        for path in out.splitlines()
+        if path.strip().startswith("/usr/share/applications/")
+        and path.strip().endswith(".desktop")
+    ]
+
+
+def trove_gui_signals(
+    tool: dict[str, Any], apt: dict[str, str]
+) -> list[str]:
+    """Return human-readable hints that an app is not CLI/TUI.
+
+    This is deliberately a heuristic, not a gate: CPZ can run graphical apps
+    through cage, but a desktop package usually needs integration that the
+    device does not provide. The details page shows the hints before install.
+    """
+    package = str(tool.get("_package") or apt.get("package", "")).strip()
+    if not package or not APT_NAME_RE.fullmatch(package):
+        return []
+    fields = apt_metadata(package)
+    signals = []
+    section = str(fields.get("section", "")).strip().lower()
+    if section in GUI_SECTIONS:
+        signals.append(tr("apt section: {section}", section=section))
+    dependencies = " ".join(
+        str(fields.get(key, ""))
+        for key in ("depends", "pre-depends", "recommends")
+    ).lower()
+    for marker in GUI_DEPENDENCY_MARKERS:
+        if marker in dependencies:
+            signals.append(tr("depends on {library}", library=marker))
+            break
+    if package_desktop_files(package):
+        signals.append(tr("installs a desktop launcher"))
+    categories = {
+        str(category).strip().lower()
+        for category in tool.get("categories", [])
+    }
+    if categories & {"desktop", "gui"}:
+        signals.append(tr("catalog category: {category}", category="GUI"))
+    return list(dict.fromkeys(signals))
+
+
+def trove_tool_from_record(
+    record: dict[str, Any], tool: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Build a catalog-shaped tool for a managed app missing from the index."""
+    package = str(record.get("package", "")).strip()
+    slug = str(record.get("slug", "")).strip() or package
+    data = dict(tool or {})
+    data.setdefault("slug", slug)
+    data.setdefault("name", str(record.get("name", "")).strip() or slug)
+    data.setdefault("summary", tr("Managed apt package"))
+    data.setdefault("description", "")
+    data.setdefault("language", "")
+    data.setdefault("language_label", "")
+    data.setdefault("categories", [])
+    data.setdefault("platforms", ["linux"])
+    data.setdefault("install", {})
+    existing_apt = data.get("apt")
+    if package and not (
+        isinstance(existing_apt, dict) and existing_apt.get("package")
+    ):
+        data["apt"] = {
+            "command": f"apt install {package}",
+            "package": package,
+        }
+    data.setdefault("website", "")
+    data.setdefault("source", "")
+    data.setdefault("license", "")
+    data.setdefault("stars", 0)
+    data.setdefault("release", "")
+    data["_record"] = record
+    data["_package"] = package
+    return data
 
 
 def trove_tool_apt_supported(
@@ -3897,7 +4798,11 @@ def trove_filter_popup(
     hint = "Type to filter  Enter keep  Esc cancel"
     popup_height = min(16, max(8, height - 2))
     popup_width = min(
-        max(28, len(title) + 12, len(hint) + 2 * MODAL_TEXT_COLUMN),
+        max(
+            28,
+            text_width(title) + 12,
+            text_width(hint) + 2 * MODAL_TEXT_COLUMN,
+        ),
         max(20, width - 2),
     )
     top = max(0, (height - popup_height) // 2)
@@ -3926,12 +4831,20 @@ def trove_filter_popup(
             initialized = True
         selected = max(0, min(selected, len(filtered) - 1))
         visible = max(1, popup_height - 6)
-        text_width = max(0, popup_width - 2 * MODAL_TEXT_COLUMN)
+        content_cols = max(0, popup_width - 2 * MODAL_TEXT_COLUMN)
         first = max(0, min(selected - visible + 1, len(filtered) - visible))
         first = max(0, first)
 
         draw_modal_frame(popup, title, hint)
-        put(popup, 2, MODAL_TEXT_COLUMN, f"Search: {query}"[:text_width])
+        put(
+            popup,
+            2,
+            MODAL_TEXT_COLUMN,
+            text_truncate(
+                tr("Search: {query}", query=query),
+                content_cols,
+            ),
+        )
         for offset, (_value, label, count) in enumerate(
             filtered[first : first + visible]
         ):
@@ -3944,7 +4857,7 @@ def trove_filter_popup(
                 popup,
                 3 + offset,
                 MODAL_TEXT_COLUMN,
-                text.ljust(text_width),
+                text_pad(text, content_cols),
                 attr,
             )
         if not filtered:
@@ -3981,20 +4894,16 @@ def trove_installed_tools(
     apps: dict[str, dict[str, Any]],
     query: str = "",
 ) -> list[dict[str, Any]]:
+    """Return the manager's journal only, never apt/system packages.
+
+    ``apps`` is ``read_trove_apps()``. A catalog tool that dpkg reports as
+    installed but that has no record here was installed by the image or by
+    apt directly and must stay out of the Installed tab.
+    """
     by_slug = {tool["slug"]: tool for tool in index.get("tools", [])}
     installed = []
     for slug, record in apps.items():
-        tool = dict(by_slug.get(slug) or {})
-        tool.setdefault("slug", slug)
-        tool.setdefault("name", record.get("name", slug))
-        tool.setdefault("summary", "Managed apt package")
-        tool.setdefault("categories", [])
-        tool.setdefault("language", "")
-        tool.setdefault("language_label", "")
-        tool.setdefault("install", {})
-        tool.setdefault("website", "")
-        tool["_record"] = record
-        tool["_package"] = record.get("package", "")
+        tool = trove_tool_from_record(record, by_slug.get(slug))
         if not trove_matches(tool, query):
             continue
         installed.append(tool)
@@ -4006,6 +4915,7 @@ def trove_details_lines(
     apt: dict[str, str],
     record: dict[str, Any] | None,
     width: int,
+    gui_signals: list[str] | None = None,
 ) -> list[str]:
     name = tool.get("name", tool.get("slug", "?"))
     categories = ", ".join(
@@ -4019,34 +4929,69 @@ def trove_details_lines(
     elif apt.get("status") == "installed":
         status = "installed (system)"
     lines = [
-        f"Name: {name}",
-        f"Language: {language}",
+        tr("Name: {name}", name=name),
+        tr("Language: {language}", language=language),
     ]
     lines.extend(
-        textwrap.wrap(f"Categories: {categories}", max(20, width - 1))
+        textwrap.wrap(
+            tr("Categories: {categories}", categories=categories),
+            max(20, width - 1),
+        )
     )
-    lines.extend(textwrap.wrap(f"Platforms: {platforms}", max(20, width - 1)))
-    lines.append(f"Status: {status}")
+    lines.extend(
+        textwrap.wrap(
+            tr("Platforms: {platforms}", platforms=platforms),
+            max(20, width - 1),
+        )
+    )
+    lines.append(tr("Status: {status}", status=tr(status)))
+    if gui_signals is None:
+        gui_signals = trove_gui_signals(tool, apt)
+    if gui_signals:
+        lines.extend(
+            textwrap.wrap(
+                tr("Warning: this may be a desktop app, not a CLI/TUI app."),
+                max(20, width - 1),
+            )
+        )
+        for signal in gui_signals:
+            lines.extend(
+                textwrap.wrap(
+                    tr("  - {signal}", signal=signal),
+                    max(20, width - 1),
+                )
+            )
     if tool.get("license"):
-        lines.append(f"License: {tool['license']}")
+        lines.append(tr("License: {license}", license=tool["license"]))
     if tool.get("stars"):
-        lines.append(f"Stars: {int(tool['stars']):,}")
+        lines.append(tr("Stars: {stars}", stars=f"{int(tool['stars']):,}"))
     if tool.get("release"):
-        lines.append(f"Latest release: {tool['release']}")
+        lines.append(tr("Latest release: {release}", release=tool["release"]))
     if apt.get("package"):
         version = f" {apt['version']}" if apt.get("version") else ""
-        lines.append(f"Apt package: {apt['package']}{version}")
+        lines.append(
+            tr(
+                "Apt package: {package}",
+                package=f"{apt['package']}{version}",
+            )
+        )
     else:
         lines.append("Apt package: not available")
     if apt.get("needs_update") == "1":
         lines.append("Package lists: update before install")
     if record:
-        lines.append(f"Remove: {record.get('uninstall_command') or 'apt-get purge ' + record.get('package', '')}")
+        lines.append(
+            tr(
+                "Remove: {command}",
+                command=record.get("uninstall_command")
+                or "apt-get purge " + record.get("package", ""),
+            )
+        )
     elif apt.get("status") == "available":
         command = catalog_trove_apt(tool).get("command") or (
             f"apt install {apt.get('package', '')}"
         )
-        lines.append(f"Install: {command}")
+        lines.append(tr("Install: {command}", command=command))
     elif apt.get("status") == "installed":
         lines.append("Installed outside the manager; not tracked here.")
     lines.append("")
@@ -4080,9 +5025,9 @@ def trove_details_lines(
             )
             lines.append("")
     if tool.get("url"):
-        lines.append(f"Catalog: {tool['url']}")
+        lines.append(tr("Catalog: {url}", url=tool["url"]))
     if tool.get("website"):
-        lines.append(f"Website: {tool['website']}")
+        lines.append(tr("Website: {url}", url=tool["website"]))
     return lines
 
 
@@ -4094,14 +5039,24 @@ def trove_install_tool(
     apt = resolve_trove_apt(tool, apt_names)
     name = tool.get("name", tool.get("slug", "?"))
     if apt["status"] == "missing":
-        return f"{name} is not in apt; press Enter for instructions"
+        return tr(
+            "{name} is not in apt; press Enter for instructions",
+            name=name,
+        )
     if apt["status"] == "installed":
-        return f"{name} is already installed"
+        return tr("{name} is already installed", name=name)
     package = apt["package"]
-    question = f"Install {name}?"
-    detail = ""
+    question = tr("Install {name}?", name=name)
+    detail_lines = []
     if package != name:
-        detail = f"apt package: {package}"
+        detail_lines.append(tr("apt package: {package}", package=package))
+    gui_signals = trove_gui_signals(tool, apt)
+    if gui_signals:
+        detail_lines.append(
+            tr("Warning: this may be a desktop app, not a CLI/TUI app.")
+        )
+        detail_lines.extend(f"  - {signal}" for signal in gui_signals)
+    detail = "\n".join(detail_lines)
     if not confirm(screen, question, title="Install App", detail=detail):
         return None
     if apt.get("needs_update") == "1":
@@ -4117,12 +5072,25 @@ def trove_install_tool(
         )
         if rc != 0:
             return "apt update failed"
+        _TROVE_APT_METADATA.clear()
         apt = resolve_trove_apt(tool, set())
         if apt["status"] == "installed":
-            return f"{name} is already installed"
+            return tr("{name} is already installed", name=name)
         if apt["status"] == "missing":
-            return f"{name} is not in apt after update"
+            return tr("{name} is not in apt after update", name=name)
         package = apt["package"]
+        updated_signals = trove_gui_signals(tool, apt)
+        if updated_signals and updated_signals != gui_signals:
+            detail = "\n".join(
+                [
+                    tr("Warning: this may be a desktop app, not a CLI/TUI app."),
+                    *(f"  - {signal}" for signal in updated_signals),
+                ]
+            )
+            if not confirm(
+                screen, question, title="Install App", detail=detail
+            ):
+                return None
     rc = run_privileged(screen, list(TROVE_APT_INSTALL) + [package])
     if rc != 0:
         return "Install failed (try sudo apt update)"
@@ -4141,15 +5109,15 @@ def trove_install_tool(
     try:
         write_trove_apps(apps)
     except OSError:
-        return f"Installed {name} (manager state not saved)"
-    return f"Installed {name}"
+        return tr("Installed {name} (manager state not saved)", name=name)
+    return tr("Installed {name}", name=name)
 
 
 def trove_uninstall_tool(screen, record: dict[str, Any]) -> str | None:
     package = str(record.get("package", ""))
     name = str(record.get("name", package)) or package
     if package in PKG_CORE:
-        return f"{name} is a system package"
+        return tr("{name} is a system package", name=name)
     if apt_status(package)["status"] == "missing":
         apps = read_trove_apps()
         apps.pop(str(record.get("slug", "")), None)
@@ -4157,7 +5125,10 @@ def trove_uninstall_tool(screen, record: dict[str, Any]) -> str | None:
             write_trove_apps(apps)
         except OSError:
             return "Cannot update manager state"
-        return f"Removed {name} from the manager (package is gone)"
+        return tr(
+            "Removed {name} from the manager (package is gone)",
+            name=name,
+        )
     planned = simulate_removal(package)
     if planned is None:
         return "Cannot check what would be removed"
@@ -4165,11 +5136,15 @@ def trove_uninstall_tool(screen, record: dict[str, Any]) -> str | None:
         return "Refused: would remove core packages"
     extra = [item for item in planned if item != package]
     label = name if name == package else f"{name} ({package})"
-    question = f"Remove {label}?"
+    question = tr("Remove {label}?", label=label)
     detail = ""
     if extra:
-        question = f"Remove {label} and {len(extra)} more package(s)?"
-        detail = "Also removes: " + ", ".join(extra)
+        question = tr(
+            "Remove {label} and {count} more package(s)?",
+            label=label,
+            count=len(extra),
+        )
+        detail = tr("Also removes: {packages}", packages=", ".join(extra))
     if not confirm(screen, question, title="Remove App", detail=detail, danger=True):
         return None
     rc = run_privileged(
@@ -4183,8 +5158,8 @@ def trove_uninstall_tool(screen, record: dict[str, Any]) -> str | None:
     try:
         write_trove_apps(apps)
     except OSError:
-        return f"Removed {name} (manager state not saved)"
-    return f"Removed {name}"
+        return tr("Removed {name} (manager state not saved)", name=name)
+    return tr("Removed {name}", name=name)
 
 
 def find_trove_tool(slug: str) -> dict[str, Any] | None:
@@ -4195,6 +5170,10 @@ def find_trove_tool(slug: str) -> dict[str, Any] | None:
     for tool in index.get("tools", []):
         if str(tool.get("slug", "")).strip() == slug:
             return tool
+    record = read_trove_apps().get(slug)
+    if record:
+        # Apps installed as ordinary apt packages have no catalog entry.
+        return trove_tool_from_record(record)
     return None
 
 
@@ -4218,19 +5197,24 @@ def cli_install_tool(slug: str) -> int:
     apt_names = trove_apt_names()
     apt = resolve_trove_apt(tool, apt_names)
     if apt["status"] == "installed":
-        print(f"{name} is already installed")
+        print(tr("{name} is already installed", name=name))
         return 0
     if apt["status"] == "missing":
-        print(f"{name} is not available in apt")
+        print(tr("{name} is not available in apt", name=name))
         commands = trove_install_commands(tool)
         if commands:
-            print("Install it manually:")
+            print(tr("Install it manually:"))
             for manager, command in commands:
                 print(f"  {manager}: {command}")
         return 1
 
     package = apt["package"]
-    print(f"Installing {name} ({package})...")
+    gui_signals = trove_gui_signals(tool, apt)
+    if gui_signals:
+        print(tr("Warning: this may be a desktop app, not a CLI/TUI app."))
+        for signal in gui_signals:
+            print(f"  - {signal}")
+    print(tr("Installing {name} ({package})...", name=name, package=package))
     if apt.get("needs_update") == "1":
         print("Updating apt lists...")
         rc = subprocess.call(
@@ -4245,14 +5229,28 @@ def cli_install_tool(slug: str) -> int:
         if rc != 0:
             print("apt update failed", file=sys.stderr)
             return 1
+        _TROVE_APT_METADATA.clear()
         apt = resolve_trove_apt(tool, set())
         if apt["status"] == "installed":
-            print(f"{name} is already installed")
+            print(tr("{name} is already installed", name=name))
             return 0
         if apt["status"] == "missing":
-            print(f"{name} is not available in apt after update", file=sys.stderr)
+            print(
+                tr(
+                    "{name} is not available in apt after update",
+                    name=name,
+                ),
+                file=sys.stderr,
+            )
             return 1
         package = apt["package"]
+        updated_signals = trove_gui_signals(tool, apt)
+        if updated_signals and updated_signals != gui_signals:
+            print(
+                tr("Warning: this may be a desktop app, not a CLI/TUI app.")
+            )
+            for signal in updated_signals:
+                print(f"  - {signal}")
 
     rc = subprocess.call(["sudo", *TROVE_APT_INSTALL, package])
     if rc != 0:
@@ -4273,10 +5271,10 @@ def cli_install_tool(slug: str) -> int:
     try:
         write_trove_apps(apps)
     except OSError:
-        print(f"Installed {name} (manager state not saved)")
+        print(tr("Installed {name} (manager state not saved)", name=name))
         return 0
-    print(f"Installed {name}")
-    print("Open Search (Alt+O) to run it.")
+    print(tr("Installed {name}", name=name))
+    print(tr("Open Search (Alt+O) to run it."))
     return 0
 
 
@@ -4346,12 +5344,17 @@ def draw_trove_list(
         put(screen, 2, left, tr("Search: {query}", query=query) + "_")
     elif mode == "browse":
         filters = [
-            tr("Category: {label}", label=category_label),
-            tr("Language: {label}", label=language_label),
+            tr("Category: {label}", label=tr(category_label)),
+            tr("Language: {label}", label=tr(language_label)),
         ]
         if apt_only:
             filters.insert(0, tr("Apt only"))
-        put(screen, 2, left, (" " + " · ".join(filters))[:cw])
+        put(
+            screen,
+            2,
+            left,
+            text_truncate(" " + " · ".join(filters), cw),
+        )
 
     top = 3
     list_bottom = max(top + 1, height - 2)
@@ -4365,22 +5368,28 @@ def draw_trove_list(
     for offset, tool in enumerate(tools[first : first + visible]):
         row = first + offset
         marker = "*" if tool.get("slug") in managed else " "
-        name = str(tool.get("name", tool.get("slug", "?")))[:name_width]
+        name = text_truncate(
+            str(tool.get("name", tool.get("slug", "?"))),
+            name_width,
+        )
         if mode == "installed":
             record = tool.get("_record") or {}
             package = str(record.get("package", ""))
             version = str(record.get("version", "")).strip()
             text = (
                 f"{marker}{'>' if row == selected else ' '} "
-                f"{name:<{name_width}} {package} {version}"
+                f"{text_pad(name, name_width)} {package} {version}"
             )
         else:
-            text = f"{marker}{'>' if row == selected else ' '} {name:<{name_width}} {tool.get('summary', '')}"
+            text = (
+                f"{marker}{'>' if row == selected else ' '} "
+                f"{text_pad(name, name_width)} {tool.get('summary', '')}"
+            )
         put(
             screen,
             top + offset,
             left,
-            text.ljust(cw),
+            text_pad(text, cw),
             curses.A_REVERSE if row == selected else 0,
         )
     if not tools:
@@ -4424,6 +5433,9 @@ def trove_details_screen(
     offset = 0
     if apt_names is None:
         apt_names = trove_apt_names()
+    gui_signals = trove_gui_signals(
+        tool, resolve_trove_apt(tool, apt_names)
+    )
     while True:
         apt = resolve_trove_apt(tool, apt_names)
         managed = read_trove_apps()
@@ -4432,7 +5444,7 @@ def trove_details_screen(
         _height, width = screen.getmaxyx()
         left = SCREEN_PAD
         cw = content_width(width)
-        lines = trove_details_lines(tool, apt, record, cw)
+        lines = trove_details_lines(tool, apt, record, cw, gui_signals)
         screen.erase()
         height, _width = screen.getmaxyx()
         title = str(tool.get("name", tool.get("slug", "?")))
@@ -4496,6 +5508,9 @@ def trove_details_screen(
                     screen,
                     trove_install_tool(screen, tool, apt_names),
                     title="Applications",
+                )
+                gui_signals = trove_gui_signals(
+                    tool, resolve_trove_apt(tool, apt_names)
                 )
             continue
         if key in (ord("e"), ord("E")):
@@ -4625,6 +5640,7 @@ def list_tools_payload() -> dict[str, Any]:
     index = load_trove_index()
     managed = read_trove_apps()
     available = executable_names()
+    apt_names = trove_apt_names()
     tools = []
     for tool in index.get("tools", []):
         slug = str(tool.get("slug", "")).strip()
@@ -4645,6 +5661,26 @@ def list_tools_payload() -> dict[str, Any]:
                 "installed": bool(command or record),
                 "managed": record is not None,
                 "apt": apt.get("package", ""),
+                "available": bool(
+                    record or trove_tool_apt_supported(tool, apt_names)
+                ),
+            }
+        )
+    seen = {str(tool.get("slug", "")) for tool in tools}
+    for slug, record in managed.items():
+        if slug in seen:
+            continue
+        tools.append(
+            {
+                "slug": slug,
+                "name": str(record.get("name", "")).strip() or slug,
+                "summary": tr("Managed apt package"),
+                "categories": [],
+                "command": managed_trove_command(record, available),
+                "installed": True,
+                "managed": True,
+                "apt": str(record.get("package", "")).strip(),
+                "available": True,
             }
         )
     return {"schema": 1, "tools": tools}
@@ -4661,6 +5697,18 @@ def run_trove_app(
     if not command and record:
         command = managed_trove_command(record, available)
     if not command:
+        package = str(
+            tool.get("_package") or catalog_trove_apt(tool).get("package", "")
+        ).strip()
+        command = next(
+            (
+                name
+                for name in package_executables(package)
+                if name in available
+            ),
+            "",
+        )
+    if not command:
         return "No runnable command found"
     # The tmux server predates cage, so it does not hold WAYLAND_DISPLAY or
     # XAUTHORITY. cpz-run applies the environment published by foot before
@@ -4669,6 +5717,52 @@ def run_trove_app(
     command_line = [runner, command] if os.access(runner, os.X_OK) else [command]
     run_interactive(screen, command_line)
     return None
+
+
+def browse_trove_tools(
+    tools: list[dict[str, Any]],
+    apt_names: set[str],
+    apt_candidates: list[str],
+    query: str,
+    category: str,
+    language: str,
+    apt_only: bool,
+    apt_search_cache: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Return the Browse list for one query.
+
+    A plain listing stays on the catalog index (apt-filtered by default). Once
+    the user searches, catalog matches stay first and ordinary apt packages are
+    appended after them.
+    """
+    shown = filter_trove_tools(
+        tools,
+        query,
+        category,
+        language,
+        apt_names if apt_only else None,
+    )
+    if len(query.strip()) < 2:
+        return shown
+    # Skip packages already represented by a visible catalog row, so one app
+    # cannot appear twice. The index rows always keep their position at the top.
+    skip_packages = set()
+    for tool in shown:
+        skip_packages.add(str(tool.get("slug", "")).strip().lower())
+        skip_packages.add(str(tool.get("name", "")).strip().lower())
+        skip_packages.add(
+            catalog_trove_apt(tool).get("package", "").lower()
+        )
+    skip_packages.discard("")
+    cache_key = (query, tuple(sorted(skip_packages)))
+    if cache_key not in apt_search_cache:
+        apt_search_cache[cache_key] = apt_search_tools(
+            query,
+            apt_names,
+            skip_packages,
+            candidates=apt_candidates,
+        )
+    return shown + apt_search_cache[cache_key]
 
 
 def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
@@ -4684,6 +5778,9 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
     draw_loading(screen, "Checking installable apps...")
     apt_names = trove_apt_names()
     apt_available = bool(apt_names)
+    apt_candidates = [
+        name for name in apt_names if apt_looks_like_app(name)
+    ]
     apt_only = apt_available and not focus_slug
     mode = "browse"
     category = ""
@@ -4691,7 +5788,8 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
     query = focus_slug or ""
     search_active = False
     row = {"browse": 0, "installed": 0}
-    if not tools:
+    apt_search_cache: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] = {}
+    if not tools and not (focus_slug and focus_slug in managed):
         notify(
             screen,
             "Catalog not downloaded. Press u to update.",
@@ -4718,6 +5816,8 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             ),
             None,
         )
+        if focused is None and focus_slug in managed:
+            focused = trove_tool_from_record(managed[focus_slug])
         if focused is not None:
             trove_details_screen(
                 screen, focused, managed.get(focus_slug), apt_names or None
@@ -4726,12 +5826,15 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
 
     while True:
         if mode == "browse":
-            shown = filter_trove_tools(
+            shown = browse_trove_tools(
                 tools,
+                apt_names,
+                apt_candidates,
                 query,
                 category,
                 language,
-                apt_names if apt_only else None,
+                apt_only,
+                apt_search_cache,
             )
         else:
             shown = trove_installed_tools(index, managed, query)
@@ -4836,9 +5939,13 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
                 draw_loading(screen, "Checking installable apps...")
                 apt_names = trove_apt_names()
                 apt_available = bool(apt_names)
+                apt_candidates = [
+                    name for name in apt_names if apt_looks_like_app(name)
+                ]
                 if not apt_available:
                     apt_only = False
                 row = {"browse": 0, "installed": 0}
+                apt_search_cache.clear()
             continue
         if key in (ord("t"), ord("T")) and mode == "browse":
             value = trove_filter_popup(screen, "Category", categories, category)
@@ -4938,12 +6045,18 @@ def network_details_action(screen, _data) -> None:
 def ssh_toggle(screen, _data) -> str | None:
     status = ssh_status()
     active = status.split(",", 1)[0].strip() == "active"
-    command = (
-        ["systemctl", "disable", "--now", "ssh"]
-        if active
-        else ["systemctl", "enable", "--now", "ssh"]
-    )
-    rc = run_privileged(screen, command)
+    if active:
+        run_privileged(screen, ["systemctl", "disable", "--now", "ssh.socket"])
+        rc = run_privileged(screen, ["systemctl", "disable", "--now", "ssh"])
+        return None if rc == 0 else "SSH change failed"
+
+    # Host keys are generated at build time only when SSH starts enabled. A
+    # fresh image starts with ssh off, so create them on the first enable.
+    rc = run_privileged(screen, ["ssh-keygen", "-A"])
+    if rc != 0:
+        return "SSH key generation failed"
+    run_privileged(screen, ["systemctl", "disable", "--now", "ssh.socket"])
+    rc = run_privileged(screen, ["systemctl", "enable", "--now", "ssh"])
     return None if rc == 0 else "SSH change failed"
 
 
@@ -4995,11 +6108,17 @@ def reset_settings_action(screen, data) -> str | None:
     data.clear()
     data.update(DEFAULTS)
     save_settings(data)
-    # Apply the fast path once. Calling apply_live for theme, font_size and
-    # display would queue several terminal replacements and output runs for the
-    # same reset.
+    # Apply the fast path once. Calling apply_live for theme, font and display
+    # would queue several terminal replacements and output runs for the same
+    # reset.
     for name in data:
-        if name in ("theme", "font_size_panel", "font_size_hdmi", "display"):
+        if name in (
+            "theme",
+            "font_family",
+            "font_size_panel",
+            "font_size_hdmi",
+            "display",
+        ):
             continue
         apply_live(data, name)
     apply_theme(data["theme"])
@@ -5129,13 +6248,6 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "page": "shortcuts",
             }
         )
-        items.append(
-            {
-                "label": "Key List",
-                "kind": "action",
-                "action": show_help,
-            }
-        )
         return items
     if name == "shortcuts":
         return shortcut_items(data)
@@ -5161,6 +6273,13 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "key": "display",
                 "values": DISPLAY_MODES,
                 "labels": DISPLAY_LABELS,
+            },
+            {
+                "label": "Font",
+                "kind": "picker",
+                "key": "font_family",
+                "values": FONT_FAMILIES,
+                "labels": FONT_FAMILY_LABELS,
             },
             {
                 "label": "Text Size",
@@ -5210,14 +6329,6 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 {"label": "Network", "kind": "toggle", "key": "show_conn"},
             ]
         )
-        if data.get("show_conn"):
-            status_items.extend(
-                [
-                    {"label": "Ethernet", "kind": "toggle", "key": "show_eth"},
-                    {"label": "Wi-Fi", "kind": "toggle", "key": "show_wifi"},
-                    {"label": "Bluetooth", "kind": "toggle", "key": "show_bt"},
-                ]
-            )
         return status_items
     if name == "terminal":
         return [
@@ -5311,13 +6422,13 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "label": "Wi-Fi",
                 "kind": "action",
                 "get": lambda _d: wifi_info(),
-                "action": lambda _s, _d: open_network_tui(),
+                "action": wifi_action,
             },
             {
                 "label": "Bluetooth",
                 "kind": "action",
-                "get": lambda _d: bluetooth_summary(),
-                "action": lambda s, _d: bluetooth_screen(s),
+                "get": lambda _d: bluetooth_info(),
+                "action": bt_action,
             },
             {"label": "Ethernet", "kind": "info", "get": lambda _d: ethernet_info()},
         ]
@@ -5392,11 +6503,6 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "kind": "action",
                 "action": power_action("poweroff", "Shut down now?", "Shut Down"),
             },
-            {
-                "label": "Suspend",
-                "kind": "action",
-                "action": power_action("suspend", "Suspend now?", "Suspend"),
-            },
         ]
     if name == "security":
         return [
@@ -5426,11 +6532,6 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "label": "System Monitor",
                 "kind": "action",
                 "action": show_resources,
-            },
-            {
-                "label": "Diagnostics",
-                "kind": "action",
-                "action": show_diagnostics,
             },
             {"label": "Security", "kind": "submenu", "page": "security"},
             {"label": "Terminal", "kind": "submenu", "page": "terminal"},
@@ -5478,12 +6579,14 @@ def select_popup(screen, item: dict, data: dict):
 
     height, width = screen.getmaxyx()
     popup_height = min(max(len(values) + 6, 8), max(6, height - 2), 16)
-    longest = max(len(str(labels.get(value, value))) for value in values)
+    longest = max(
+        text_width(str(labels.get(value, value))) for value in values
+    )
     popup_width = min(
         max(
             longest + 8,
-            len(title) + 6,
-            len(hint) + 2 * MODAL_TEXT_COLUMN,
+            text_width(title) + 6,
+            text_width(hint) + 2 * MODAL_TEXT_COLUMN,
             20,
         ),
         max(20, width - 2),
@@ -5497,7 +6600,7 @@ def select_popup(screen, item: dict, data: dict):
     popup.keypad(True)
 
     visible = max(1, popup_height - 5)
-    text_width = max(0, popup_width - 2 * MODAL_TEXT_COLUMN)
+    content_cols = max(0, popup_width - 2 * MODAL_TEXT_COLUMN)
     first = 0
     if selected >= visible:
         first = selected - visible + 1
@@ -5514,7 +6617,7 @@ def select_popup(screen, item: dict, data: dict):
                 popup,
                 2 + offset,
                 MODAL_TEXT_COLUMN,
-                text.ljust(text_width),
+                text_pad(text, content_cols),
                 attr,
             )
         popup.refresh()
@@ -5612,7 +6715,7 @@ def draw_page(
             screen,
             1,
             left,
-            warning[:cw].ljust(cw),
+            text_pad(text_truncate(warning, cw), cw),
             curses.A_REVERSE | curses.A_BOLD,
         )
     elif searching or query:
@@ -5627,9 +6730,12 @@ def draw_page(
         y = top + offset
         value = values[row] if row < len(values) else item_value(item, data)
         label = item.get("label", "")
-        text = f"{'>' if row == selected else ' '} {tr(label):<16} {tr(value)}"
+        text = (
+            f"{'>' if row == selected else ' '} "
+            f"{text_pad(tr(label), 16)} {tr(value)}"
+        )
         attr = curses.A_REVERSE if row == selected else 0
-        put(screen, y, left, text.ljust(cw), attr)
+        put(screen, y, left, text_pad(text, cw), attr)
 
     if first > 0:
         put(screen, 1, left + cw - 1, "^")

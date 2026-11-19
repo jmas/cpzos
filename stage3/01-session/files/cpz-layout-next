@@ -12,6 +12,27 @@ home=${HOME:-/root}
 user_settings=${XDG_CONFIG_HOME:-$home/.config}/cpz/settings.conf
 system_settings=/etc/cpz/settings.conf
 state_file=/run/cpz-layout.active
+translate() {
+	key=$1
+	shift
+	message=$key
+	if [ -x /usr/local/bin/cpz-i18n ]; then
+		message=$(/usr/local/bin/cpz-i18n get "$key" "$key" "$@" 2>/dev/null ||
+			printf '%s' "$key")
+	fi
+	while [ $# -gt 0 ]; do
+		case $1 in
+			--field) field=${2:-}; shift 2 ;;
+			*) shift; continue ;;
+		esac
+		name=${field%%=*}
+		value=${field#*=}
+		[ -n "$name" ] &&
+			message=$(printf '%s' "$message" | sed "s/{$name}/$value/g")
+	done
+	printf '%s' "$message"
+}
+
 
 get() {
 	for file in "$user_settings" "$system_settings"; do
@@ -82,15 +103,20 @@ mv "$tmp" "$user_settings" 2>/dev/null || { rm -f "$tmp"; exit 1; }
 label=$(printf '%s' "$next" | tr '[:lower:]' '[:upper:]')
 
 if ! sudo -n /usr/local/bin/cpz-layout-apply >/dev/null 2>&1; then
-	say "layout $label saved; apply from Settings > Input"
+	say "$(translate 'layout {label} saved; apply from Settings > Input' \
+		'layout {label} saved; apply from Settings > Input' \
+		--field "label=$label")"
 	exit 1
 fi
 
 state=$(head -n 1 "$state_file" 2>/dev/null || true)
 if [ "$state" = "cpz" ]; then
-	say "layout $label saved (CPZ internal keyboard)"
+	say "$(translate 'layout {label} saved (CPZ internal keyboard)' \
+		'layout {label} saved (CPZ internal keyboard)' \
+		--field "label=$label")"
 else
-	say "layout: $label"
+	say "$(translate 'layout: {label}' 'layout: {label}' \
+		--field "label=$label")"
 fi
 if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
 	tmux refresh-client -S >/dev/null 2>&1 || true

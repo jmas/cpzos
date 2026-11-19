@@ -1,0 +1,54 @@
+#!/bin/sh
+# Start the CPZ Wi-Fi manager from Settings > Connections.
+#
+# Started through sudo because both of the steps below need root:
+#   * raspberrypi-sys-mods installs /etc/modprobe.d/rfkill_default.conf with
+#     `options rfkill default_state=0`, so the factory image boots with every
+#     radio soft-blocked. Without an explicit unblock the WLAN switch stays
+#     off no matter what the UI requests.
+#   * NetworkManager persists WirelessEnabled=false in NetworkManager.state,
+#     so the radio also has to be enabled through nmcli.
+#
+# wifitui then owns the interactive part (scan, passphrase, saved networks,
+# radio toggle). Its list is narrower than nmtui's and stays usable on the
+# 53-column panel.
+set -u
+
+unblock_wifi() {
+	if command -v rfkill >/dev/null 2>&1; then
+		rfkill unblock wifi >/dev/null 2>&1 || true
+	fi
+}
+
+unblock_wifi
+
+# NetworkManager can still be starting on the first boot; retry briefly so the
+# radio is really on before wifitui reads it.
+attempt=0
+while [ "$attempt" -lt 5 ]; do
+	nmcli radio wifi on >/dev/null 2>&1 && break
+	attempt=$((attempt + 1))
+	sleep 1
+done
+# nmcli re-applies the saved rfkill state when it changes the radio.
+unblock_wifi
+
+# Settings owns the list; --prepare only clears the root-owned blocks and
+# returns. wifitui stays available for the standalone helper and recovery.
+if [ "${1:-}" = "--prepare" ]; then
+	exit 0
+fi
+
+# ASCII icons and the CPZ terminal palette; see wifitui-theme.toml.
+WIFITUI_THEME=/usr/local/share/cpz/wifitui-theme.toml
+export WIFITUI_THEME
+
+wifitui "$@"
+status=$?
+if [ "$status" -ne 0 ]; then
+	# Keep wifitui's error visible: Settings restores curses as soon as this
+	# helper returns.
+	printf '\nWi-Fi manager failed (exit %s).\nPress Enter to return to Settings.\n' "$status"
+	read -r _
+fi
+exit "$status"

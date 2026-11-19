@@ -44,5 +44,5 @@ if [ -n "$notice" ]; then
 	exit 0
 fi
 
-tmux confirm-before -t "$client" -p "Close tab? (y/n)" \
+tmux confirm-before -t "$client" -p "$(translate 'Close tab? (y/n)')" \
 	'run-shell -b /usr/local/bin/cpz-tab-close'

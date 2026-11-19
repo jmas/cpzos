@@ -15,8 +15,11 @@ fi
 on_chroot << EOF
 if [ "${ENABLE_SSH}" == "1" ]; then
 	systemctl enable ssh
+	systemctl disable ssh.socket 2>/dev/null || true
+	systemctl unmask regenerate_ssh_host_keys.service 2>/dev/null || true
 else
-	systemctl disable ssh
+	systemctl disable ssh ssh.socket 2>/dev/null || true
+	systemctl mask regenerate_ssh_host_keys.service 2>/dev/null || true
 fi
 EOF
 

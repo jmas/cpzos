@@ -97,12 +97,54 @@ class FootConfigTest(unittest.TestCase):
         # 10 px (the old picker minimum) made foot fall back to a font without
         # Cyrillic, so Ukrainian labels rendered as dashes.
         _, config = self.run_config(settings="font_size_panel=10\n", target="panel")
-        self.assertIn("font=Terminus:pixelsize=12", config)
-        self.assertIn("font=DejaVu Sans Mono:pixelsize=12", config)
+        self.assertIn(
+            "font=Terminus:pixelsize=12, DejaVu Sans Mono:pixelsize=12",
+            config,
+        )
+        self.assertEqual(config.count("font="), 1)
 
     def test_legacy_font_size_is_the_fallback(self):
         _, config = self.run_config(settings="font_size=18\n", target="hdmi")
         self.assertIn("font=Terminus:pixelsize=18", config)
+
+    def test_every_offered_family_maps_to_an_installed_font(self):
+        # Keep this table in sync with cpz-settings FONT_FAMILY_LABELS and the
+        # font packages installed by stage3/01-session/00-packages. A wrong
+        # family name would make foot fall back silently.
+        expected = {
+            "terminus": "Terminus",
+            "dejavu": "DejaVu Sans Mono",
+            "liberation": "Liberation Mono",
+            "noto": "Noto Sans Mono",
+            "hack": "Hack",
+            "fira": "Fira Code",
+            "jetbrains": "JetBrains Mono",
+        }
+        for slug, name in expected.items():
+            with self.subTest(family=slug):
+                _, config = self.run_config(
+                    settings=f"font_family={slug}\nfont_size_panel=18\n",
+                    target="panel",
+                )
+                self.assertIn(f"font={name}:pixelsize=18", config)
+
+    def test_unknown_font_family_falls_back_to_terminus(self):
+        _, config = self.run_config(
+            settings="font_family=comic-sans\nfont_size_panel=14\n",
+            target="panel",
+        )
+        self.assertIn("font=Terminus:pixelsize=14", config)
+
+    def test_font_family_keeps_the_dejavu_fallback(self):
+        _, config = self.run_config(
+            settings="font_family=fira\nfont_size_panel=16\n",
+            target="panel",
+        )
+        self.assertIn(
+            "font=Fira Code:pixelsize=16, DejaVu Sans Mono:pixelsize=16",
+            config,
+        )
+        self.assertEqual(config.count("font="), 1)
 
     def test_renders_font_and_theme(self):
         result, config = self.run_config()

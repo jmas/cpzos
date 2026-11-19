@@ -10,9 +10,10 @@ DEPLOY_COMPRESSION="xz"
 TARGET_HOSTNAME="cpz"
 FIRST_USER_NAME="cpz"
 FIRST_USER_PASS="cpz"
-# SSH is enabled for recovery. Log in as the first user with this password;
-# sudo uses the same password (PASSWORDLESS_SUDO stays off).
-ENABLE_SSH=1
+# SSH is off by default. Enable it in Settings > System > Security when
+# recovery access is needed; password login uses the first user's password
+# (sudo uses the same password; PASSWORDLESS_SUDO stays off).
+ENABLE_SSH=0
 LOCALE_DEFAULT="en_US.UTF-8"
 KEYBOARD_KEYMAP="us"
 KEYBOARD_LAYOUT="English (US)"

@@ -25,6 +25,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from typing import Any
@@ -337,6 +338,12 @@ def tr(text: object, **values: object) -> str:
         return str(text)
 
 
+def refresh_language() -> None:
+    """Forget the cached translation language after a Settings change."""
+    global _TR_LANGUAGE
+    _TR_LANGUAGE = None
+
+
 def config_home() -> str:
     return os.environ.get("XDG_CONFIG_HOME") or os.path.join(
         os.path.expanduser("~"), ".config"
@@ -410,11 +417,36 @@ def normalize_key(value: Any) -> str:
     return ""
 
 
+def display_width(text: object) -> int:
+    total = 0
+    for char in str(text):
+        if unicodedata.combining(char):
+            continue
+        total += 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+    return total
+
+
+def display_pad(text: object, width: int) -> str:
+    value = str(text)
+    used = display_width(value)
+    if used > width:
+        out = []
+        cells = 0
+        for char in value:
+            cells += 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+            if cells > width:
+                break
+            out.append(char)
+        value = "".join(out)
+        used = display_width(value)
+    return value + " " * max(0, width - used)
+
+
 def display_key(key: str) -> str:
     """Turn ``M-t`` into ``Alt+T`` for help and Settings."""
     key = normalize_key(key)
     if not key:
-        return "unbound"
+        return tr("unbound")
     suffix = key[2:]
     if suffix.lower() == "space":
         return "Alt+Space"
@@ -585,6 +617,13 @@ def write_active_keys(keys: set[str]) -> None:
     os.replace(temp, path)
 
 
+def localized_command(command: str) -> str:
+    """Translate the prompt strings embedded in a tmux command."""
+    for source in ("Shortcuts", "Rename tab:", "Close pane? (y/n)"):
+        command = command.replace(f'"{source}"', f'"{tr(source)}"')
+    return command
+
+
 def generated_lines() -> list[str]:
     """Return tmux config lines for the effective bindings.
 
@@ -604,7 +643,7 @@ def generated_lines() -> list[str]:
         binding = bindings.get(action["id"], {})
         key = binding.get("key", "")
         if key:
-            lines.append(f"bind -n {key} {action['command']}")
+            lines.append(f"bind -n {key} {localized_command(action['command'])}")
     return lines
 
 
@@ -681,8 +720,8 @@ def shortcut_lines() -> list[str]:
             if action["section"] != section:
                 continue
             binding = bindings.get(action["id"], {})
-            display = binding.get("display", "unbound")
-            lines.append(f" {display:<14} {tr(action['label'])}")
+            display = binding.get("display") or tr("unbound")
+            lines.append(f" {display_pad(display, 14)} {tr(action['label'])}")
         lines.append("")
     copy_key = bindings.get("copy-mode", {}).get("display", "Alt+C")
     lines.extend(
@@ -702,6 +741,7 @@ def shortcut_lines() -> list[str]:
             tr(" Sym+key           punctuation or the layout's extra letters"),
             tr(" Shift+Sym+key     uppercase, or a moved ASCII symbol"),
             tr(" Fn+F/X/Z/C        arrow keys while Fn is held"),
+            tr(" Fn+I / Fn+O      panel brightness down / up"),
             "",
             tr("==== In-app keys ===="),
             tr(" In Settings       Z/X/C/F move (Fn off)"),
@@ -709,8 +749,9 @@ def shortcut_lines() -> list[str]:
             "",
             tr("==== Status bar ===="),
             tr(" 87% battery   + charging   ! low"),
-            tr(" Wi Wi-Fi      Eth Ethernet   Bt Bluetooth"),
-            tr(" V0-V4 volume  VM muted   L0-L10 brightness"),
+            tr(" Wi Wi-Fi   Wi+ connected   Bt Bluetooth"),
+            tr(" Bt+ connected   Et+ Ethernet connected"),
+            tr(" V0-V4 volume  VM muted  L0-L10 brightness"),
             tr(" US, UA, ...   active input layout"),
         ]
     )
@@ -745,7 +786,7 @@ def list_text() -> str:
                     tr(action["label"]),
                     tr(action["section"]),
                     binding.get("key", ""),
-                    binding.get("display", "unbound"),
+                    binding.get("display") or tr("unbound"),
                     action["default"],
                 )
             )

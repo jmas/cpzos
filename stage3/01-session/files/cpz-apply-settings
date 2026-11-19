@@ -122,8 +122,17 @@ touch /run/cpz-pointer/request 2>/dev/null || true
 # shells keep the locale they started with; the CPZ TUIs read the setting
 # directly and switch immediately.
 case "$(get language)" in
+	en) cpz_locale=en_US.UTF-8 ;;
 	uk) cpz_locale=uk_UA.UTF-8 ;;
+	pl) cpz_locale=pl_PL.UTF-8 ;;
 	de) cpz_locale=de_DE.UTF-8 ;;
+	fr) cpz_locale=fr_FR.UTF-8 ;;
+	es) cpz_locale=es_ES.UTF-8 ;;
+	it) cpz_locale=it_IT.UTF-8 ;;
+	pt) cpz_locale=pt_BR.UTF-8 ;;
+	tr) cpz_locale=tr_TR.UTF-8 ;;
+	ja) cpz_locale=ja_JP.UTF-8 ;;
+	zh) cpz_locale=zh_CN.UTF-8 ;;
 	*) cpz_locale=en_US.UTF-8 ;;
 esac
 tmux set-environment -g LANG "$cpz_locale" 2>/dev/null || true

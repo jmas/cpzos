@@ -83,6 +83,11 @@ land on a blank screen. Tab numbers remain the fastest way to jump directly.
 Settings → Sound; `Alt+0` toggles mute. Both paths use `wpctl`, so the
 status-bar volume token stays in sync.
 
+`Fn+I` / `Fn+O` step the panel backlight down / up by 10% (10–100) and persist
+the value in Settings → Display → Brightness. The keyboard's Fn layer reports
+the standard `KEY_BRIGHTNESSDOWN` / `KEY_BRIGHTNESSUP` codes; `cpz-media-keys`
+handles them like the headset volume rocker.
+
 ### Copy mode
 
 `Alt+C` enters copy mode. Then:

@@ -214,7 +214,7 @@ systemctl disable userconfig.service || true
 
 systemctl mask userconfig.service || true
 
-# NetworkManager is the Wi-Fi backend used by cpz-settings/nmtui.
+# NetworkManager is the Wi-Fi backend used by wifitui (Settings > Connections).
 systemctl enable NetworkManager.service 2>/dev/null || true
 
 # Boot budget: do not block or wake for network, package or man-page work.
@@ -238,9 +238,12 @@ if [ "${ENABLE_SSH}" = "1" ]; then
 	on_chroot <<'CHROOT'
 ssh-keygen -A 2>/dev/null || true
 systemctl enable ssh 2>/dev/null || true
+systemctl disable ssh.socket 2>/dev/null || true
+systemctl unmask regenerate_ssh_host_keys.service 2>/dev/null || true
 CHROOT
 else
 	on_chroot <<'CHROOT'
-systemctl disable ssh 2>/dev/null || true
+systemctl disable ssh ssh.socket 2>/dev/null || true
+systemctl mask regenerate_ssh_host_keys.service 2>/dev/null || true
 CHROOT
 fi

@@ -20,7 +20,7 @@ table for each language; `assets/app.js` applies it and keeps the choice in
 localStorage and `?lang=`. The current set is English, Ukrainian, Polish,
 German, French, Spanish, Italian, Portuguese (Brazil), Turkish, Japanese and
 Simplified Chinese. The site languages are independent of the device: the
-device UI ships in English, Ukrainian and German.
+device UI ships in the same set of languages as the site.
 
 To add a language:
 

@@ -22,7 +22,12 @@ keys() {
 }
 
 if command -v less >/dev/null 2>&1; then
-	keys | less -R -X --mouse -P 'q close'
+	prompt='q close'
+	if [ -x /usr/local/bin/cpz-i18n ]; then
+		prompt=$(/usr/local/bin/cpz-i18n get 'q close' 'q close' 2>/dev/null ||
+			printf '%s' "$prompt")
+	fi
+	keys | less -R -X --mouse -P "$prompt"
 	exit 0
 fi
 

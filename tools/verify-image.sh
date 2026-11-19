@@ -279,7 +279,11 @@ for file in usr/local/bin/cpz-first-login \
     usr/local/bin/cpz-cage-session usr/local/bin/cpz-foot-reload \
     usr/local/bin/cpz-pointer usr/local/bin/cpz-i18n \
     usr/share/cpz/i18n/en.json usr/share/cpz/i18n/uk.json \
-    usr/share/cpz/i18n/de.json \
+    usr/share/cpz/i18n/pl.json usr/share/cpz/i18n/de.json \
+    usr/share/cpz/i18n/fr.json usr/share/cpz/i18n/es.json \
+    usr/share/cpz/i18n/it.json usr/share/cpz/i18n/pt.json \
+    usr/share/cpz/i18n/tr.json usr/share/cpz/i18n/ja.json \
+    usr/share/cpz/i18n/zh.json \
     usr/local/bin/cpz-foot-config usr/local/bin/cpz-getty usr/local/bin/cpz-run \
     usr/local/bin/cpz-tmux usr/local/bin/cpz-tmux-start \
     usr/local/bin/cpz-hint usr/local/bin/cpz-help \
@@ -322,11 +326,12 @@ for file in usr/local/bin/cpz-first-login \
     etc/systemd/system/cpz-session-save.timer \
     etc/systemd/system/cpz-conn-status.service \
     etc/systemd/system/cpz-conn-status.timer \
-    usr/bin/nmtui usr/bin/bt-agent \
+    usr/bin/bt-agent \
     usr/share/fonts/opentype/terminus/terminus-normal.otb \
     etc/polkit-1/rules.d/50-cpz-networkmanager.rules \
     etc/systemd/system/cpz-bt-agent.service \
     etc/profile.d/cpz-session.sh etc/tmux.conf \
+    etc/mc/mc.ini etc/mc/skins/cpz.ini \
     etc/cpz/settings.conf etc/cpz/shadow-mtime etc/default/console-setup \
     etc/cpz/trove-index.url \
     usr/share/cpz/apt-packages.txt.gz \
@@ -365,7 +370,8 @@ if [ -z "$FIRST_HOME" ]; then
 else
     USER_HOME="${FIRST_HOME#/}"
     for dir in "$USER_HOME/.config" "$USER_HOME/.config/systemd" \
-        "$USER_HOME/.config/cpz" "$USER_HOME/.cache" "$USER_HOME/.cache/cpz"; do
+        "$USER_HOME/.config/cpz" "$USER_HOME/.config/bluetuith" \
+        "$USER_HOME/.cache" "$USER_HOME/.cache/cpz"; do
         if debugfs -R "stat /$dir" "$TMPDIR/root.ext4" 2>/dev/null |
             grep -qE 'User:[[:space:]]+1000[[:space:]]'; then
             pass "/$dir owned by uid 1000"
@@ -373,6 +379,20 @@ else
             fail "/$dir not owned by uid 1000"
         fi
     done
+    if debugfs -R "stat /$USER_HOME/.config/bluetuith/bluetuith.conf" \
+        "$TMPDIR/root.ext4" 2>/dev/null |
+        grep -qE 'User:[[:space:]]+1000[[:space:]]'; then
+        pass "bluetuith config owned by uid 1000"
+    else
+        fail "bluetuith config missing or not owned by uid 1000"
+    fi
+    if debugfs -R "cat /$USER_HOME/.config/bluetuith/bluetuith.conf" \
+        "$TMPDIR/root.ext4" 2>/dev/null |
+        grep -q 'MenuBar: transparent'; then
+        pass "bluetuith config uses a valid transparent theme colour"
+    else
+        fail "bluetuith config has an invalid theme colour"
+    fi
 fi
 
 if debugfs -R "cat etc/polkit-1/rules.d/50-cpz-networkmanager.rules" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "netdev"; then
@@ -395,16 +415,72 @@ else
     fail "cpz-settings: Mouse Speed entry MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "nmtui"; then
-    pass "cpz-settings: Wi-Fi (nmtui)"
+if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-wifi"; then
+    pass "cpz-settings: Wi-Fi manager entry"
 else
     fail "cpz-settings: Wi-Fi entry MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "bluetoothctl"; then
-    pass "cpz-settings: Bluetooth (bluetoothctl)"
+if debugfs -R "stat usr/bin/wifitui" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "Size:"; then
+    pass "wifitui installed"
+else
+    fail "usr/bin/wifitui MISSING"
+fi
+
+if debugfs -R "cat usr/local/share/cpz/wifitui-theme.toml" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "NetworkSecureIcon"; then
+    pass "wifitui ASCII theme installed"
+else
+    fail "usr/local/share/cpz/wifitui-theme.toml MISSING"
+fi
+
+if debugfs -R "cat etc/sudoers.d/50-cpz-wifi" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "cpz-wifi"; then
+    pass "cpz-wifi sudoers rule"
+else
+    fail "etc/sudoers.d/50-cpz-wifi MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "bt_action"; then
+    pass "cpz-settings: Bluetooth manager entry"
 else
     fail "cpz-settings: Bluetooth entry MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "radio_manager_screen"; then
+    pass "cpz-settings: shared Wi-Fi/Bluetooth manager"
+else
+    fail "cpz-settings: shared radio manager MISSING"
+fi
+
+if debugfs -R "cat etc/bluetooth/main.conf" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "^AutoEnable = false"; then
+    pass "Bluetooth adapter off by default (AutoEnable=false)"
+else
+    fail "etc/bluetooth/main.conf does not disable AutoEnable"
+fi
+
+if debugfs -R "cat etc/systemd/system/cpz-bt-agent.service" \
+    "$TMPDIR/root.ext4" 2>/dev/null | grep -q "rfkill unblock"; then
+    fail "cpz-bt-agent.service still unblocks Bluetooth at boot"
+else
+    pass "cpz-bt-agent.service leaves the radio blocked at boot"
+fi
+
+if debugfs -R "stat usr/local/bin/bluetuith" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "Size:"; then
+    pass "bluetuith installed"
+else
+    fail "usr/local/bin/bluetuith MISSING"
+fi
+
+if debugfs -R "cat etc/sudoers.d/50-cpz-bt" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "cpz-bt-unblock"; then
+    pass "cpz-bt sudoers rule"
+else
+    fail "etc/sudoers.d/50-cpz-bt MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Terminal Trove"; then
@@ -673,10 +749,11 @@ else
     fail "settings: show_conn MISSING"
 fi
 
-if debugfs -R "cat etc/cpz/settings.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "show_eth=0"; then
-    pass "settings: Ethernet indicator hidden by default"
+if debugfs -R "cat etc/cpz/settings.conf" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -qE "show_(eth|wifi|bt)="; then
+    fail "settings: per-radio indicator toggles should be gone"
 else
-    fail "settings: show_eth default MISSING"
+    pass "settings: one Network indicator switch"
 fi
 
 if debugfs -R "cat etc/cpz/settings.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "show_volume=0"; then
@@ -697,6 +774,12 @@ else
     fail "settings: display mode MISSING"
 fi
 
+if debugfs -R "cat etc/cpz/settings.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "font_family=terminus"; then
+    pass "settings: font family present"
+else
+    fail "settings: font family MISSING"
+fi
+
 if debugfs -R "cat etc/cpz/settings.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "font_size_panel=12"; then
     pass "settings: font size present"
 else
@@ -708,6 +791,13 @@ if debugfs -R "cat usr/local/bin/cpz-foot-config" "$TMPDIR/root.ext4" 2>/dev/nul
     pass "cpz-foot-config reads the font size setting"
 else
     fail "cpz-foot-config font size setting MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-foot-config" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "get_setting font_family"; then
+    pass "cpz-foot-config reads the font family setting"
+else
+    fail "cpz-foot-config font family setting MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-foot-config" "$TMPDIR/root.ext4" 2>/dev/null |
@@ -795,6 +885,12 @@ if debugfs -R "cat usr/share/cpz/i18n/uk.json" "$TMPDIR/root.ext4" 2>/dev/null |
     pass "Ukrainian interface catalog present"
 else
     fail "Ukrainian interface catalog MISSING"
+fi
+
+if debugfs -R "cat usr/share/cpz/i18n/ja.json" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "検索"; then
+    pass "Japanese interface catalog present"
+else
+    fail "Japanese interface catalog MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-keyboard-layout" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "ckbcomp"; then
@@ -1196,6 +1292,18 @@ else
     fail "fonts-terminus-otb MISSING"
 fi
 
+missing_font_packages=""
+for pkg in fonts-dejavu-core fonts-liberation fonts-noto-mono fonts-hack \
+    fonts-firacode fonts-jetbrains-mono; do
+    grep -q "^Package: ${pkg}$" "$TMPDIR/dpkg_status" ||
+        missing_font_packages="${missing_font_packages} ${pkg}"
+done
+if [ -z "$missing_font_packages" ]; then
+    pass "every selectable font family installed"
+else
+    fail "font packages MISSING:${missing_font_packages}"
+fi
+
 if grep -q "^Package: tmux$" "$TMPDIR/dpkg_status"; then
     pass "tmux installed"
 else
@@ -1206,6 +1314,22 @@ if grep -q "^Package: mc$" "$TMPDIR/dpkg_status"; then
     pass "mc installed"
 else
     fail "mc NOT installed"
+fi
+
+if debugfs -R "cat etc/mc/mc.ini" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "^skin=cpz$"; then
+    pass "mc uses the palette skin"
+else
+    fail "mc does not select the cpz skin"
+fi
+
+# mc <= 4.8.33 reads frame characters only from [Lines] and draws a space for
+# a missing key, so a skin without the section has no visible borders at all.
+if debugfs -R "cat etc/mc/skins/cpz.ini" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q '^\[Lines\]$'; then
+    pass "mc skin defines visible frame lines"
+else
+    fail "mc skin has no [Lines] section; panels and dialogs lose their borders"
 fi
 
 if grep -q "^Package: python3$" "$TMPDIR/dpkg_status"; then
@@ -1251,6 +1375,46 @@ for pkg in p7zip-full vim-tiny ed wireless-tools \
     fi
 done
 set -e
+
+# SSH is off by default; Settings generates host keys on first enable.
+if debugfs -R "stat etc/systemd/system/multi-user.target.wants/ssh.service" \
+    "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
+    fail "ssh.service enabled in the default image"
+else
+    pass "ssh.service disabled by default"
+fi
+if debugfs -R "stat etc/systemd/system/sockets.target.wants/ssh.socket" \
+    "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
+    fail "ssh.socket enabled in the default image"
+else
+    pass "ssh.socket disabled by default"
+fi
+if debugfs -R "stat etc/systemd/system/regenerate_ssh_host_keys.service" \
+    "$TMPDIR/root.ext4" 2>/dev/null | grep -q "/dev/null"; then
+    pass "SSH host-key regeneration masked"
+else
+    fail "regenerate_ssh_host_keys.service is not masked"
+fi
+
+# Font family and brightness keys.
+if debugfs -R "cat usr/local/bin/cpz-foot-config" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q 'font=$font_list'; then
+    pass "cpz-foot-config renders one font list"
+else
+    fail "cpz-foot-config still writes duplicate font lines"
+fi
+if debugfs -R "cat usr/local/bin/cpz-media-keys" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q '225: \[BRIGHTNESS, "up"\]'; then
+    pass "Fn+I/Fn+O brightness keys handled"
+else
+    fail "brightness media keys MISSING"
+fi
+if debugfs -R "cat usr/local/bin/cpz-brightness" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q 'up | down'; then
+    pass "cpz-brightness supports up/down steps"
+else
+    fail "cpz-brightness steps MISSING"
+fi
 
 echo ""
 echo "=========================================="

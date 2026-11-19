@@ -38,11 +38,9 @@ PERSISTED = (
     "show_volume",
     "show_brightness",
     "show_conn",
-    "show_eth",
-    "show_wifi",
-    "show_bt",
     "show_layout",
     "display",
+    "font_family",
     "font_size_panel",
     "font_size_hdmi",
     "brightness",
@@ -125,6 +123,7 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(data["theme"], "cpz-campbell")
         self.assertEqual(data["brightness"], 100)
         self.assertEqual(data["display"], "auto")
+        self.assertEqual(data["font_family"], "terminus")
         self.assertEqual(data["font_size_panel"], 12)
         self.assertEqual(data["font_size_hdmi"], 16)
         self.assertEqual(data["language"], "en")
@@ -208,6 +207,7 @@ class SettingsTUI(unittest.TestCase):
     def test_invalid_values_fall_back_to_defaults(self):
         self.write_user(
             "display=sideways\n"
+            "font_family=bogus\n"
             "font_size=999\n"
             "history_limit=7\n"
             "mode_keys=weird\n"
@@ -219,6 +219,7 @@ class SettingsTUI(unittest.TestCase):
 
         data = self.mod.load_settings()
         self.assertEqual(data["display"], "auto")
+        self.assertEqual(data["font_family"], "terminus")
         # Values are clamped, not rejected.
         self.assertEqual(data["font_size_panel"], 32)
         self.assertEqual(data["font_size_hdmi"], 32)
@@ -256,6 +257,165 @@ class SettingsTUI(unittest.TestCase):
         self.write_user("mouse_speed=99\n")
         self.assertEqual(self.mod.load_settings()["mouse_speed"], 10)
 
+    def test_wifi_action_opens_the_shared_radio_manager(self):
+        with mock.patch.object(
+            self.mod, "radio_manager_screen", return_value=None
+        ) as manager:
+            self.mod.wifi_action(None, {})
+        manager.assert_called_once_with(None, "wifi")
+
+    def test_bt_action_opens_the_shared_radio_manager(self):
+        with mock.patch.object(
+            self.mod, "radio_manager_screen", return_value=None
+        ) as manager:
+            self.mod.bt_action(None, {})
+        manager.assert_called_once_with(None, "bluetooth")
+
+    def test_wifi_networks_keep_one_row_per_ssid(self):
+        output = (
+            "*:82:WPA2:Home\n"
+            ":45:WPA2:Home\n"
+            ":67:--:Cafe\\:Guest\n"
+            ":30:: \n"
+        )
+        networks = self.mod.parse_wifi_networks(output)
+        self.assertEqual(
+            [entry["ssid"] for entry in networks], ["Home", "Cafe:Guest"]
+        )
+        self.assertTrue(networks[0]["active"])
+        self.assertEqual(networks[0]["signal"], 82)
+        self.assertEqual(networks[1]["security"], "--")
+        self.assertEqual(networks[1]["signal"], 67)
+
+    def test_wifi_networks_sort_active_then_signal(self):
+        output = (
+            ":20:WPA2:Far\n"
+            ":90:WPA2:Strong\n"
+            "*:40:WPA2:Current\n"
+        )
+        networks = self.mod.parse_wifi_networks(output)
+        self.assertEqual(
+            [entry["ssid"] for entry in networks],
+            ["Current", "Strong", "Far"],
+        )
+
+    def test_bluetooth_info_mirrors_the_wifi_status_shape(self):
+        with mock.patch.object(
+            self.mod.shutil, "which", return_value="/usr/bin/bluetoothctl"
+        ):
+            self.mod.bt_adapter = lambda: {
+                "name": "hci0",
+                "mac": "AA:BB",
+                "powered": False,
+                "error": "",
+            }
+            self.assertEqual(self.mod.bluetooth_info(), "Off")
+
+            self.mod.bt_adapter = lambda: {
+                "name": "hci0",
+                "mac": "AA:BB",
+                "powered": True,
+                "error": "",
+            }
+            self.mod.bt_devices = lambda: [
+                {
+                    "mac": "11:22",
+                    "name": "Headphones",
+                    "paired": True,
+                    "connected": True,
+                    "trusted": True,
+                }
+            ]
+            self.assertEqual(
+                self.mod.bluetooth_info(), "Headphones - connected"
+            )
+
+    def test_ssh_enable_generates_keys_and_disables_socket_activation(self):
+        with mock.patch.object(
+            self.mod, "ssh_status", return_value="inactive,disabled"
+        ), mock.patch.object(
+            self.mod, "run_privileged", return_value=0
+        ) as run:
+            self.assertIsNone(self.mod.ssh_toggle(None, {}))
+        commands = [call.args[1] for call in run.call_args_list]
+        self.assertIn(["ssh-keygen", "-A"], commands)
+        self.assertIn(["systemctl", "disable", "--now", "ssh.socket"], commands)
+        self.assertEqual(
+            commands[-1], ["systemctl", "enable", "--now", "ssh"]
+        )
+
+    def test_ssh_disable_turns_off_socket_activation(self):
+        with mock.patch.object(
+            self.mod, "ssh_status", return_value="active,enabled"
+        ), mock.patch.object(
+            self.mod, "run_privileged", return_value=0
+        ) as run:
+            self.assertIsNone(self.mod.ssh_toggle(None, {}))
+        commands = [call.args[1] for call in run.call_args_list]
+        self.assertIn(["systemctl", "disable", "--now", "ssh.socket"], commands)
+        self.assertEqual(
+            commands[-1], ["systemctl", "disable", "--now", "ssh"]
+        )
+
+    def test_wifi_connect_uses_a_saved_profile(self):
+        self.mod.wifi_saved_networks = lambda: {"Home"}
+        network = {
+            "ssid": "Home",
+            "signal": 80,
+            "security": "WPA2",
+            "active": False,
+        }
+        with mock.patch.object(
+            self.mod, "nm_run", return_value=(0, "", "")
+        ) as run:
+            self.assertEqual(self.mod.wifi_connect(None, network), "")
+        run.assert_called_once_with(
+            ["nmcli", "connection", "up", "id", "Home"], timeout=45
+        )
+
+    def test_wifi_connect_asks_for_a_new_passphrase(self):
+        self.mod.wifi_saved_networks = lambda: set()
+        network = {
+            "ssid": "Cafe",
+            "signal": 50,
+            "security": "WPA2",
+            "active": False,
+        }
+        with mock.patch.object(
+            self.mod, "text_input", return_value="secret"
+        ), mock.patch.object(
+            self.mod, "nm_run", return_value=(0, "", "")
+        ) as run:
+            self.assertEqual(self.mod.wifi_connect(None, network), "")
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "nmcli",
+                "device",
+                "wifi",
+                "connect",
+                "Cafe",
+                "password",
+                "secret",
+            ],
+        )
+
+    def test_bluetooth_pair_uses_the_non_interactive_agent(self):
+        with mock.patch.object(
+            self.mod, "bt_run", return_value=(0, "", "")
+        ) as run:
+            self.assertEqual(self.mod.bt_pair_command("11:22"), "")
+        run.assert_called_once_with(
+            [
+                "bluetoothctl",
+                "-a",
+                "NoInputNoOutput",
+                "pair",
+                "11:22",
+            ],
+            timeout=40,
+        )
+
     def test_save_and_load_round_trip(self):
         data = self.mod.load_settings()
         data.update(
@@ -263,6 +423,7 @@ class SettingsTUI(unittest.TestCase):
             show_clock=0,
             date_format="iso",
             display="hdmi",
+            font_family="hack",
             font_size_panel=18,
             font_size_hdmi=24,
             brightness=55,
@@ -364,6 +525,20 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(self.mod.nearest_font_size(10), 12)
         self.assertEqual(self.mod.nearest_font_size(64), 32)
         self.assertEqual(self.mod.FONT_SIZE_LABELS[14], "14px")
+
+    def test_display_page_offers_the_installed_font_families(self):
+        data = dict(self.mod.DEFAULTS)
+        items = {
+            item["label"]: item
+            for item in self.mod.page_items("display", data, None)
+        }
+        item = items["Font"]
+        self.assertEqual(item["kind"], "picker")
+        self.assertEqual(item["key"], "font_family")
+        self.assertEqual(tuple(item["values"]), self.mod.FONT_FAMILIES)
+        self.assertEqual(set(item["labels"]), set(item["values"]))
+        self.assertEqual(item["labels"]["jetbrains"], "JetBrains Mono")
+        self.assertEqual(data["font_family"], "terminus")
 
     def test_shortcut_filter_matches_label_or_binding(self):
         items = [
@@ -603,6 +778,10 @@ class SettingsTUI(unittest.TestCase):
         data.update(show_clock=1, show_date=1, show_conn=1)
         items = self.mod.page_items("statusbar", data, None)
         self.assertLessEqual(len(items), 11)
+        keys = {item.get("key") for item in items}
+        self.assertIn("show_conn", keys)
+        for key in ("show_eth", "show_wifi", "show_bt"):
+            self.assertNotIn(key, keys)
 
     def test_filter_rows_matches_labels_and_codes(self):
         rows = [("ua", "Ukrainian"), ("us", "English (US)")]
@@ -761,6 +940,7 @@ class SettingsTUI(unittest.TestCase):
         self.mod.package_executables = lambda package: (
             ["gh"] if package == "github-cli" else []
         )
+        self.mod.trove_apt_names = lambda: {"tmux", "lazygit", "github-cli"}
 
         payload = self.mod.list_tools_payload()
         self.assertEqual(payload["schema"], 1)
@@ -769,12 +949,144 @@ class SettingsTUI(unittest.TestCase):
         self.assertTrue(tools["tmux"]["installed"])
         self.assertFalse(tools["tmux"]["managed"])
         self.assertEqual(tools["tmux"]["apt"], "tmux")
+        self.assertTrue(tools["tmux"]["available"])
         self.assertEqual(tools["lazygit"]["command"], "")
         self.assertFalse(tools["lazygit"]["installed"])
         self.assertFalse(tools["lazygit"]["managed"])
+        self.assertTrue(tools["lazygit"]["available"])
         self.assertEqual(tools["github-cli"]["command"], "gh")
         self.assertTrue(tools["github-cli"]["installed"])
         self.assertTrue(tools["github-cli"]["managed"])
+
+    def test_apt_search_finds_plain_packages_and_skips_libraries(self):
+        self.mod.apt_metadata_many = lambda packages: {
+            package: {"summary": f"summary {package}"}
+            for package in packages
+        }
+        names = {
+            "nano",
+            "nano-tiny",
+            "libnano6",
+            "nano-doc",
+            "nano-dev",
+            "tmux",
+        }
+        tools = self.mod.apt_search_tools("nano", names, {"tmux"})
+        self.assertEqual(
+            [tool["slug"] for tool in tools],
+            ["nano", "nano-tiny"],
+        )
+        self.assertEqual(tools[0]["summary"], "summary nano")
+        self.assertEqual(tools[0]["apt"]["package"], "nano")
+        self.assertEqual(tools[0]["apt"]["command"], "apt install nano")
+        self.assertEqual(self.mod.apt_search_tools("n", names), [])
+        self.assertEqual(
+            self.mod.apt_search_tools("tmux", names, {"tmux"}), []
+        )
+
+    def test_browse_starts_with_index_and_appends_apt_only_on_search(self):
+        catalog = [
+            {
+                "slug": "tmux",
+                "name": "tmux",
+                "apt": {"package": "tmux", "command": "apt install tmux"},
+            }
+        ]
+        apt_extra = [{"slug": "nano", "name": "nano"}]
+        cache: dict = {}
+        with mock.patch.object(
+            self.mod, "filter_trove_tools", return_value=catalog
+        ) as filtered, mock.patch.object(
+            self.mod, "apt_search_tools", return_value=apt_extra
+        ) as apt_search:
+            default = self.mod.browse_trove_tools(
+                [], {"nano"}, ["nano"], "", "", "", True, cache
+            )
+            self.assertEqual([tool["slug"] for tool in default], ["tmux"])
+            apt_search.assert_not_called()
+            filtered.assert_called_with([], "", "", "", {"nano"})
+
+            found = self.mod.browse_trove_tools(
+                [], {"nano"}, ["nano"], "nano", "", "", True, cache
+            )
+            self.assertEqual(
+                [tool["slug"] for tool in found], ["tmux", "nano"]
+            )
+            apt_search.assert_called_once()
+
+    def test_gui_signals_use_section_dependencies_and_launchers(self):
+        self.mod.apt_metadata = lambda _package: {
+            "section": "gnome",
+            "depends": "libc6, libgtk-3-0",
+        }
+        self.mod.package_desktop_files = lambda _package: [
+            "/usr/share/applications/example.desktop"
+        ]
+        signals = self.mod.trove_gui_signals(
+            {"slug": "example", "categories": []},
+            {"package": "example", "status": "installed"},
+        )
+        text = "\n".join(signals)
+        self.assertIn("apt section: gnome", text)
+        self.assertIn("depends on libgtk", text)
+        self.assertIn("desktop launcher", text)
+
+    def test_trove_details_show_the_desktop_warning(self):
+        tool = {
+            "slug": "example",
+            "name": "example",
+            "summary": "an example",
+            "description": "",
+            "categories": [],
+            "platforms": ["linux"],
+            "install": {},
+            "apt": {"package": "example", "command": "apt install example"},
+        }
+        lines = self.mod.trove_details_lines(
+            tool,
+            {"package": "example", "status": "available", "version": ""},
+            None,
+            60,
+            gui_signals=["apt section: gnome"],
+        )
+        text = "\n".join(lines)
+        self.assertIn("may be a desktop app", text)
+        self.assertIn("apt section: gnome", text)
+
+    def test_find_trove_tool_falls_back_to_managed_apt_apps(self):
+        self.mod.load_trove_index = lambda: {"tools": []}
+        self.mod.read_trove_apps = lambda: {
+            "nano": {
+                "slug": "nano",
+                "name": "nano",
+                "package": "nano",
+            }
+        }
+        tool = self.mod.find_trove_tool("nano")
+        self.assertIsNotNone(tool)
+        self.assertEqual(tool["slug"], "nano")
+        self.assertEqual(tool["apt"]["package"], "nano")
+        self.assertEqual(tool["_record"]["package"], "nano")
+        self.assertIsNone(self.mod.find_trove_tool("missing"))
+
+    def test_tool_payload_includes_managed_apps_without_catalog_rows(self):
+        self.mod.load_trove_index = lambda: {"tools": []}
+        self.mod.read_trove_apps = lambda: {
+            "nano": {
+                "slug": "nano",
+                "name": "nano",
+                "package": "nano",
+            }
+        }
+        self.mod.executable_names = lambda: {"nano"}
+        self.mod.managed_trove_command = lambda _record, _available: "nano"
+        self.mod.trove_apt_names = lambda: {"nano"}
+        payload = self.mod.list_tools_payload()
+        tools = {tool["slug"]: tool for tool in payload["tools"]}
+        self.assertEqual(tools["nano"]["command"], "nano")
+        self.assertTrue(tools["nano"]["installed"])
+        self.assertTrue(tools["nano"]["managed"])
+        self.assertEqual(tools["nano"]["apt"], "nano")
 
     def test_trove_apt_support_filter(self):
         apt_names = {"tmux", "lazygit", "github-cli"}
@@ -876,6 +1188,31 @@ class SettingsTUI(unittest.TestCase):
     def test_cli_install_tool_rejects_unknown_slugs(self):
         self.assertEqual(self.mod.cli_install_tool("missing"), 2)
 
+    def test_trove_install_tool_records_the_app(self):
+        tool = {
+            "slug": "btop",
+            "name": "btop",
+            "apt": {"command": "apt install btop", "package": "btop"},
+        }
+        self.mod.resolve_trove_apt = lambda _tool, _names: {
+            "package": "btop",
+            "status": "available",
+            "version": "",
+        }
+        self.mod.trove_gui_signals = lambda _tool, _apt: []
+        self.mod.confirm = lambda *_args, **_kwargs: True
+        self.mod.run_privileged = lambda *_args, **_kwargs: 0
+        self.mod.apt_status = lambda package: {
+            "package": package,
+            "status": "installed",
+            "version": "1.4.0",
+        }
+        self.mod.trove_install_tool(mock.Mock(), tool, {"btop"})
+        apps = self.mod.read_trove_apps()
+        self.assertIn("btop", apps)
+        self.assertEqual(apps["btop"]["package"], "btop")
+        self.assertEqual(apps["btop"]["version"], "1.4.0")
+
     def test_search_tool_target_opens_the_app_details(self):
         """CPZ Search's --tool target must land on the app page, not the list."""
         tool = {"slug": "lazygit", "name": "lazygit"}
@@ -909,6 +1246,31 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(self.mod.read_trove_apps(), apps)
         path = Path(self.mod.trove_state_path())
         self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
+
+    def test_installed_tab_lists_only_manager_records(self):
+        """apt/system packages must not leak into the Installed tab."""
+        index = {
+            "tools": [
+                {"slug": "tmux", "name": "tmux", "apt": {"package": "tmux"}},
+                {"slug": "btop", "name": "btop", "apt": {"package": "btop"}},
+            ]
+        }
+        managed = {
+            "btop": {
+                "slug": "btop",
+                "name": "btop",
+                "package": "btop",
+                "version": "1.4.0",
+                "installed_at": "2026-11-19T00:00:00",
+                "install_command": "apt install btop",
+                "uninstall_command": "apt-get purge btop",
+            }
+        }
+        shown = self.mod.trove_installed_tools(index, managed)
+        self.assertEqual([tool["slug"] for tool in shown], ["btop"])
+        # tmux is in the catalog and may be installed system-wide, but it has
+        # no manager record, so it stays out of Installed.
+        self.assertNotIn("tmux", [tool["slug"] for tool in shown])
 
     def test_trove_details_show_manual_instructions(self):
         tool = {
@@ -1085,6 +1447,182 @@ class ModalChrome(unittest.TestCase):
             (2, self.mod.MODAL_TEXT_COLUMN, "Reboot now?", 0),
             popup.calls,
         )
+
+
+class RadioManager(unittest.TestCase):
+    """Drive the shared borderless manager with a fake curses screen."""
+
+    class FakeScreen:
+        def __init__(self, keys, height=14, width=53):
+            self.keys = list(keys)
+            self.height = height
+            self.width = width
+            self.rows = {}
+
+        def getmaxyx(self):
+            return self.height, self.width
+
+        def erase(self):
+            self.rows = {}
+
+        def refresh(self):
+            pass
+
+        def timeout(self, _milliseconds):
+            pass
+
+        def addstr(self, y, x, text, attr=0):
+            self.rows.setdefault(y, []).append((x, text, attr))
+
+        def getch(self):
+            return self.keys.pop(0) if self.keys else -1
+
+        def text(self, row):
+            pieces = sorted(self.rows.get(row, []), key=lambda item: item[0])
+            return "".join(piece[1] for piece in pieces)
+
+    def setUp(self):
+        self.mod = load_settings_module()
+
+    def wifi(self, keys):
+        screen = self.FakeScreen(keys)
+        networks = [
+            {
+                "ssid": "Home",
+                "signal": 82,
+                "security": "WPA2",
+                "active": True,
+            },
+            {
+                "ssid": "Cafe",
+                "signal": 40,
+                "security": "--",
+                "active": False,
+            },
+        ]
+        with mock.patch.multiple(
+            self.mod,
+            wifi_prepare=lambda _screen: "",
+            wifi_networks=lambda scan=False: (networks, ""),
+            wifi_saved_networks=lambda: {"Home"},
+            wifi_summary=lambda: "Home",
+            wifi_interface=lambda: "wlan0",
+            wifi_radio_enabled=lambda: True,
+            hint_attr=lambda: 0,
+        ):
+            self.mod.radio_manager_screen(screen, "wifi")
+        return screen
+
+    def test_wifi_screen_has_no_border_and_one_combined_footer(self):
+        screen = self.wifi([ord("q")])
+        self.assertIn("Wi-Fi", screen.text(0))
+        self.assertIn("wlan0", screen.text(0))
+        self.assertIn("[Enter] Disconnect", screen.text(1))
+        self.assertIn("[o] Turn off", screen.text(1))
+        self.assertIn("Home", screen.text(2))
+        self.assertIn("82%", screen.text(2))
+        self.assertIn("Cafe", screen.text(3))
+        self.assertIn("s scan", screen.text(13))
+        self.assertIn("q back", screen.text(13))
+        self.assertIn("Home", screen.text(13))
+
+    def test_wifi_scan_status_replaces_the_summary_in_the_footer(self):
+        screen = self.FakeScreen([ord("s"), ord("q")])
+        networks = [
+            {
+                "ssid": "Home",
+                "signal": 82,
+                "security": "WPA2",
+                "active": True,
+            }
+        ]
+        with mock.patch.multiple(
+            self.mod,
+            wifi_prepare=lambda _screen: "",
+            wifi_networks=lambda scan=False: (networks, ""),
+            wifi_saved_networks=lambda: set(),
+            wifi_summary=lambda: "Home",
+            wifi_interface=lambda: "wlan0",
+            wifi_radio_enabled=lambda: True,
+            hint_attr=lambda: 0,
+        ):
+            self.mod.radio_manager_screen(screen, "wifi")
+        self.assertIn("Scan complete", screen.text(13))
+        self.assertIn("s scan", screen.text(13))
+
+    def test_bluetooth_screen_matches_the_wifi_layout(self):
+        screen = self.FakeScreen([ord("q")])
+        devices = [
+            {
+                "mac": "11:22",
+                "name": "Headphones",
+                "paired": True,
+                "connected": True,
+                "trusted": True,
+            },
+            {
+                "mac": "33:44",
+                "name": "Keyboard",
+                "paired": False,
+                "connected": False,
+                "trusted": False,
+            },
+        ]
+        with mock.patch.multiple(
+            self.mod,
+            bt_set_radio=lambda _screen, _enabled: "",
+            bt_devices=lambda: devices,
+            bt_adapter=lambda: {
+                "name": "hci0",
+                "mac": "AA:BB",
+                "powered": True,
+                "error": "",
+            },
+            bluetooth_summary=lambda: "Headphones",
+            hint_attr=lambda: 0,
+        ):
+            self.mod.radio_manager_screen(screen, "bluetooth")
+        self.assertIn("Bluetooth", screen.text(0))
+        self.assertIn("hci0", screen.text(0))
+        self.assertIn("Headphones", screen.text(2))
+        self.assertIn("connected", screen.text(2))
+        self.assertIn("Keyboard", screen.text(3))
+        self.assertIn("new", screen.text(3))
+        self.assertIn("[Enter] Disconnect", screen.text(1))
+        self.assertIn("[o] Turn off", screen.text(1))
+        self.assertIn("s scan", screen.text(13))
+        self.assertIn("d remove", screen.text(13))
+        self.assertIn("q back", screen.text(13))
+
+    def test_bluetooth_scan_status_and_cleanup(self):
+        class Process:
+            terminated = False
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                self.terminated = True
+
+        process = Process()
+        screen = self.FakeScreen([ord("s"), -1, ord("q")])
+        with mock.patch.multiple(
+            self.mod,
+            bt_set_radio=lambda _screen, _enabled: "",
+            bt_devices=lambda: [],
+            bt_adapter=lambda: {
+                "name": "hci0",
+                "mac": "AA:BB",
+                "powered": True,
+                "error": "",
+            },
+            bluetooth_summary=lambda: "On",
+            bt_start_scan=lambda: process,
+            hint_attr=lambda: 0,
+        ):
+            self.mod.radio_manager_screen(screen, "bluetooth")
+        self.assertIn("Scanning...", screen.text(13))
+        self.assertTrue(process.terminated)
 
 
 if __name__ == "__main__":

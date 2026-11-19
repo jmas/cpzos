@@ -10,13 +10,22 @@
 # filesystem is unmounted.
 set -eu
 
+translate() {
+	if [ -x /usr/local/bin/cpz-i18n ]; then
+		/usr/local/bin/cpz-i18n get "$1" "$1" 2>/dev/null || printf '%s' "$1"
+	else
+		printf '%s' "$1"
+	fi
+}
+
 session=${1:-main}
 directory=${2:-${HOME:-/}}
-name=${3:-shell}
+default_name=$(translate shell)
+name=${3:-$default_name}
 tmux has-session -t "=$session" 2>/dev/null || exit 0
 
 [ -d "$directory" ] || directory=${HOME:-/}
-[ -n "$name" ] || name=shell
+[ -n "$name" ] || name=$default_name
 
 settings_id=$(tmux list-windows -t "=$session" -F \
 	'#{window_id} #{?@cpz_settings,1,0} #{window_name}' |

@@ -75,8 +75,13 @@ if [ -z "$settings_id" ]; then
 	# helper again and creates the tab.
 	has_client || exit 0
 	next=$(printf '%s\n' "$windows" | awk '{ if ($1 + 0 > max) max = $1 + 0 } END { print max + 1 }')
+	settings_name=settings
+	if [ -x /usr/local/bin/cpz-i18n ]; then
+		settings_name=$(/usr/local/bin/cpz-i18n get settings settings \
+			2>/dev/null || printf settings)
+	fi
 	settings_id=$(tmux new-window -d -P -F '#{window_id}' \
-		-t "=$session:$next" -n settings -c "${HOME:-/}" \
+		-t "=$session:$next" -n "$settings_name" -c "${HOME:-/}" \
 		'/usr/local/bin/cpz-settings-shell' 2>/dev/null) || exit 0
 	tmux set-option -w -t "$settings_id" @cpz_settings 1 2>/dev/null || true
 	tmux set-option -w -t "$settings_id" automatic-rename off 2>/dev/null || true

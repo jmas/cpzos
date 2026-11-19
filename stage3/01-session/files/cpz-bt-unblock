@@ -1,0 +1,36 @@
+#!/bin/sh
+# Unblock and power the Bluetooth adapter for Settings > Connections.
+#
+# This is the only privileged part of the shared radio manager, so the
+# NOPASSWD rule stays as narrow as possible. It takes one optional word:
+# "on" (default) clears the rfkill soft block and powers the adapter on,
+# "off" only powers it off. A missing adapter is not an error; the Settings
+# status and the manager list report it.
+set -u
+
+if [ "${1:-on}" = "off" ]; then
+	if command -v bluetoothctl >/dev/null 2>&1; then
+		bluetoothctl power off >/dev/null 2>&1 || true
+	fi
+	exit 0
+fi
+
+# raspberrypi-sys-mods boots with every radio soft-blocked.
+if command -v rfkill >/dev/null 2>&1; then
+	rfkill unblock bluetooth >/dev/null 2>&1 || true
+fi
+
+# BlueZ is configured with AutoEnable=false, so the adapter stays off until a
+# manager asks for it. bluetoothd may still be starting on the first boot;
+# retry briefly before giving up.
+attempt=0
+while [ "$attempt" -lt 5 ]; do
+	if command -v bluetoothctl >/dev/null 2>&1 &&
+		bluetoothctl power on >/dev/null 2>&1; then
+		exit 0
+	fi
+	attempt=$((attempt + 1))
+	sleep 1
+done
+
+exit 1

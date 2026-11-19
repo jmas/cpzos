@@ -1,0 +1,27 @@
+#!/bin/sh
+# Manual fallback Bluetooth manager.
+#
+# Settings > Connections now uses the shared, borderless radio manager in
+# cpz-settings. This helper stays available for recovery and for devices that
+# need an interactive PIN entry: it clears the rfkill block and runs bluetuith
+# as the session user, keeping the user's HOME and session D-Bus.
+#
+# The image installs a compact CPZ bluetuith.conf (no help footer, q quits,
+# palette theme). File transfer is disabled here: OBEX is the heaviest part of
+# the TUI, it is not needed to pair a keyboard or headphones, and it added the
+# extra Send/Progress screens that wifitui does not have.
+set -u
+
+if command -v sudo >/dev/null 2>&1; then
+	sudo -n /usr/local/bin/cpz-bt-unblock >/dev/null 2>&1 || true
+fi
+
+bluetuith --disable-obex-services "$@"
+status=$?
+if [ "$status" -ne 0 ]; then
+	# Keep bluetuith's error visible: Settings restores curses as soon as this
+	# helper returns.
+	printf '\nBluetooth manager failed (exit %s).\nPress Enter to return to Settings.\n' "$status"
+	read -r _
+fi
+exit "$status"

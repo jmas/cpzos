@@ -5,11 +5,13 @@ and tmux buffers.
 Started by Alt+O from /etc/tmux.conf. The popup opens like a search box with the
 apps installed through the Applications manager, the mounted USB media, one row
 per Settings page, the daily CPZ tmux actions and the power actions; typing
-anything loads the rest (catalog apps and PATH commands). A leading prefix
-switches the provider, in the same spirit as Walker in Omarchy:
+anything loads the full list. Search covers installed apps and catalog apps that
+can be installed with apt; the wider apt package search lives in Settings →
+Applications. A leading prefix switches the provider, in the same spirit as
+Walker in Omarchy:
     /      files under $HOME and the small system configuration roots
     =      calculator
-    apps   Terminal Trove apps (installed first, the rest can be installed)
+    apps   installed and apt-installable catalog apps
     $      tmux paste buffers
 
 There is no daemon, index or new package. fzf, find, file, tmux and python3 are
@@ -175,7 +177,7 @@ def i18n_module() -> Any:
 _TR_LANGUAGE: str | None = None
 
 
-def tr(text: object, **values: object) -> str:
+def tr(text: object, /, **values: object) -> str:
     global _TR_LANGUAGE
     try:
         module = i18n_module()
@@ -574,14 +576,6 @@ def home_settings_items() -> list[str]:
     ]
 
 
-def path_app_items(exclude: set[str]) -> list[str]:
-    return [
-        make_item("app", name, f"{name}  [app]", "", "installed,runnable")
-        for name in scan_apps()
-        if name not in exclude
-    ]
-
-
 def dedupe(items: list[str]) -> list[str]:
     seen = set()
     result = []
@@ -599,15 +593,21 @@ def dedupe(items: list[str]) -> list[str]:
 
 
 def default_items() -> list[str]:
+    """Search lists installed apps and catalog apps ready to install.
+
+    The manager owns the wider apt package search. Search stays on its smaller
+    scope: apps recorded by Applications, installed catalog tools and Terminal
+    Trove entries that can be installed with apt. Arbitrary PATH commands are
+    not app rows.
+    """
     managed = managed_app_items()
     catalog = trove_items()
-    installed = [item for item in catalog if "installed" in item_flags(item)]
-    remaining = [item for item in catalog if "installed" not in item_flags(item)]
-    excluded = set()
-    for line in managed + installed:
-        parsed = parse_item(line)
-        if parsed is not None and parsed[3]:
-            excluded.add(parsed[3])
+    installed = [
+        item for item in catalog if "installed" in item_flags(item)
+    ]
+    remaining = [
+        item for item in catalog if "installed" not in item_flags(item)
+    ]
     return dedupe(
         media_items()
         + managed
@@ -616,18 +616,18 @@ def default_items() -> list[str]:
         + settings_items()
         + power_items()
         + remaining
-        + path_app_items(excluded)
     )
 
 
 def home_items() -> list[str]:
-    """The fast first screen: media, tab/sound actions, Settings, Help.
+    """The fast first screen: media, tab/sound actions, apps, Settings, Help.
 
-    Priority is fixed so the most useful rows survive a narrow panel and a
-    stray Enter cannot reach an app or a power action: mounted media, New Tab,
-    Close Tab, Mute, then the first-level Settings destinations and Help.
-    Everything that needs the catalog, a PATH scan or a cpz-settings subprocess
-    is deferred to default_items() and appears as soon as the user types.
+    Priority is fixed so the most useful rows survive a narrow panel: mounted
+    media, New Tab, Close Tab, Mute, the apps recorded by Applications, then
+    the first-level Settings destinations and Help. The catalog and the apt
+    package list stay deferred to default_items() and appear as soon as the
+    user types; only the small manager state is read here so an app installed
+    through Applications is visible as soon as Search opens.
     """
     quick_actions = [
         line
@@ -637,6 +637,7 @@ def home_items() -> list[str]:
     return dedupe(
         media_items()
         + quick_actions
+        + managed_app_items()
         + home_settings_items()
         + action_rows("help")
     )
@@ -723,8 +724,13 @@ def display_sort_key(line: str) -> str:
     return parsed[2].lower() if parsed else line.lower()
 
 
-def parse_trove_payload(text: str) -> list[str]:
-    """Turn `cpz-settings --list-tools` JSON into fzf items."""
+def parse_trove_payload(text: str, available_only: bool = True) -> list[str]:
+    """Turn `cpz-settings --list-tools` JSON into fzf items.
+
+    Search only offers installed apps and catalog entries that apt can install.
+    ``available_only=False`` keeps the parser reusable for diagnostics and
+    tests, which still inspect the whole catalog.
+    """
     try:
         data = json.loads(text)
     except ValueError:
@@ -739,13 +745,18 @@ def parse_trove_payload(text: str) -> list[str]:
         slug = str(tool.get("slug", "")).strip()
         if not slug or not usable_text(slug):
             continue
+        managed = bool(tool.get("managed"))
         name = str(tool.get("name", "")).strip() or slug
         command = str(tool.get("command", "")).strip()
         if command and not usable_text(command):
             command = ""
-        managed = bool(tool.get("managed"))
         installed = bool(tool.get("installed")) or managed or bool(command)
         apt = str(tool.get("apt", "")).strip()
+        apt_available = tool.get("available", True) is not False
+        if available_only and not (
+            installed or (apt and apt_available)
+        ):
+            continue
         summary = str(tool.get("summary", "")).strip()
         categories = tool.get("categories")
         if not summary and isinstance(categories, list):
@@ -755,10 +766,10 @@ def parse_trove_payload(text: str) -> list[str]:
             state = tr("[run app]")
         elif installed:
             state = tr("[installed]")
-        elif apt:
+        elif apt and apt_available:
             state = tr("[install app]")
         else:
-            state = "[info]"
+            state = tr("[info]")
         display = f"apps {name}  {state}"
         if summary:
             display = f"{display}  {summary}"
@@ -767,7 +778,7 @@ def parse_trove_payload(text: str) -> list[str]:
             "managed" if managed else "",
             "installed" if installed else "",
             "runnable" if command else "",
-            "installable" if not installed and apt else "",
+            "installable" if not installed and apt and apt_available else "",
         ]
         items.append(make_item("tool", slug, display, command, set_flags(*flags)))
     items.sort(key=lambda line: (tool_rank(line), display_sort_key(line)))
@@ -776,21 +787,35 @@ def parse_trove_payload(text: str) -> list[str]:
 
 def trove_items() -> list[str]:
     executable = settings_path()
-    if not executable:
-        return []
-    try:
-        result = subprocess.run(
-            [executable, "--list-tools"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    if result.returncode != 0:
-        return []
-    return parse_trove_payload(result.stdout)
+    items: list[str] = []
+    if executable:
+        try:
+            result = subprocess.run(
+                [executable, "--list-tools"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            result = None
+        if result is not None and result.returncode == 0:
+            items = parse_trove_payload(result.stdout)
+    # --list-tools already appends managed apps that have no catalog row. Keep
+    # the provider useful when cpz-settings cannot be started or its catalog is
+    # missing, and make sure every recorded app still appears exactly once.
+    seen = set()
+    for line in items:
+        parsed = parse_item(line)
+        if parsed is not None:
+            seen.add(parsed[1].lower())
+    for line in managed_app_items():
+        parsed = parse_item(line)
+        if parsed is None or parsed[1].lower() in seen:
+            continue
+        seen.add(parsed[1].lower())
+        items.append(line)
+    return items
 
 
 def automount_state_dir() -> str:
@@ -904,8 +929,14 @@ def buffer_items() -> list[str]:
             )
         except (OSError, subprocess.SubprocessError):
             continue
-        preview = " ".join(content.stdout.split())[:80] or "(empty)"
-        items.append(make_item("buffer", name, f"${name}  [buf]  {preview}"))
+        preview = " ".join(content.stdout.split())[:80] or tr("(empty)")
+        items.append(
+            make_item(
+                "buffer",
+                name,
+                f"${name}  {tr('[buf]')}  {preview}",
+            )
+        )
     return items
 
 
@@ -965,12 +996,20 @@ def format_number(value: int | float) -> str:
 def calc_item(expression: str) -> str:
     raw = expression[1:].strip() if expression.startswith("=") else expression.strip()
     if not raw:
-        return make_item("calc", "", "=  type an expression  [calc]")
+        return make_item("calc", "", tr("=  type an expression  [calc]"))
     try:
         result = format_number(safe_eval(raw))
     except (ArithmeticError, SyntaxError, ValueError):
-        return make_item("calc", "", f"{expression}  [calc] invalid")
-    return make_item("calc", result, f"{expression} = {result}  [copy result]")
+        return make_item(
+            "calc",
+            "",
+            f"{expression}  {tr('[calc] invalid')}",
+        )
+    return make_item(
+        "calc",
+        result,
+        f"{expression} = {result}  {tr('[copy result]')}",
+    )
 
 
 def pane_cwd() -> str:
@@ -1028,7 +1067,7 @@ def copy_payload(payload: str) -> None:
         return
     if os.environ.get("TMUX") and shutil.which("tmux"):
         if run_hidden(["tmux", "set-buffer", "--", payload]):
-            notify(f"Copied: {payload}")
+            notify(tr("Copied: {text}", text=payload))
         else:
             notify("cpz-search: cannot set the tmux buffer")
         return
@@ -1053,7 +1092,7 @@ def unmount_media(device: str, mountpoint: str) -> None:
         notify(f"cpz-search: cannot unmount {label}: {error}")
         return
     if result.returncode == 0:
-        notify(f"Unmounted {label}")
+        notify(tr("Unmounted {label}", label=label))
     else:
         notify(f"cpz-search: cannot unmount {label}")
 
@@ -1227,7 +1266,7 @@ def run_action(action: str, cwd: str) -> None:
                 "tmux",
                 "command-prompt",
                 "-p",
-                "Rename tab:",
+                tr("Rename tab:"),
                 "rename-window -- '%%'",
             ]
         )
@@ -1255,7 +1294,13 @@ def run_action(action: str, cwd: str) -> None:
         run_hidden(["tmux", "resize-pane", "-Z"])
     elif action == "close-pane":
         run_hidden(
-            ["tmux", "confirm-before", "-p", "Close pane? (y/n)", "kill-pane"]
+            [
+                "tmux",
+                "confirm-before",
+                "-p",
+                tr("Close pane? (y/n)"),
+                "kill-pane",
+            ]
         )
     elif action == "swap-pane-prev":
         run_hidden(["tmux", "swap-pane", "-U"])
@@ -1556,7 +1601,15 @@ def check() -> int:
             errors.append("default item is malformed")
             continue
         kinds.add(parsed[0])
-    for kind in ("action", "settings", "app"):
+        if parsed[0] == "app":
+            errors.append("default list must not include arbitrary PATH apps")
+        if parsed[0] == "tool" and not (
+            {"managed", "installed", "installable"} & item_flags(line)
+        ):
+            errors.append(
+                "default list must only include installed or installable apps"
+            )
+    for kind in ("action", "settings"):
         if kind not in kinds:
             errors.append(f"missing {kind} items")
 
@@ -1570,8 +1623,14 @@ def check() -> int:
             continue
         home_kinds.add(parsed[0])
         home_payloads.append(parsed[1])
-        if parsed[0] not in ("media", "media-tab", "action", "settings"):
-            errors.append("home list must contain only media, actions or Settings")
+        if parsed[0] not in ("media", "media-tab", "action", "settings", "tool"):
+            errors.append(
+                "home list must contain only media, actions, manager apps "
+                "or Settings"
+            )
+            break
+        if parsed[0] == "tool" and "managed" not in item_flags(line):
+            errors.append("home list must only contain manager apps")
             break
     for action_id in (*HOME_ACTION_IDS, "help"):
         if action_id not in home_payloads:
@@ -1605,6 +1664,7 @@ def check() -> int:
                         "summary": "terminal multiplexer",
                         "command": "tmux",
                         "installed": True,
+                        "managed": True,
                     }
                 ]
             }
@@ -1616,7 +1676,7 @@ def check() -> int:
         "tmux",
         f"apps tmux  {tr('[run app]')}  terminal multiplexer",
         "tmux",
-        "installed,runnable",
+        "managed,installed,runnable",
     ):
         errors.append("trove provider is malformed")
 
@@ -1633,7 +1693,7 @@ def check() -> int:
         return 1
     print(
         f"cpz-search: {len(home)} home items, {len(items)} search items, "
-        "calculator and apps OK"
+        "calculator and app scopes OK"
     )
     return 0
 

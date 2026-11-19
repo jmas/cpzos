@@ -168,13 +168,24 @@ Display Output selects `auto`, `panel` or `hdmi`.
 `cpz-foot-config` renders `/run/cpz-cage/foot.ini` from the CPZ settings and
 the selected theme:
 
+- `font_family` (Settings → Display → Font) selects the primary font. The
+  stored slug is resolved by `cpz-foot-config` to the fontconfig family
+  installed for it: Terminus, DejaVu Sans Mono, Liberation Mono, Noto Sans
+  Mono, Hack, Fira Code or JetBrains Mono. Terminus stays the default because
+  its bitmap strikes give the 53x14 panel grid;
 - `font_size_panel` or `font_size_hdmi` (whichever output `cpz-cage-output`
-  selected) becomes `font=Terminus:pixelsize=N` with `dpi-aware=no` and
+  selected) becomes `font=<family>:pixelsize=N` with `dpi-aware=no` and
   `pad=0x0`, so the panel keeps the 53x14 grid at the default 12 px cell and
   HDMI uses its own, usually larger, size;
 - the theme's tmux `window-style` background/foreground become foot's
   background/foreground;
 - the 16 theme palette entries become foot's `regular0..7` and `bright0..7`.
+  `cpz-apply-settings` keeps tmux's `pane-colours` on the same entries, and
+  Midnight Commander's palette-based skin (`/etc/mc/skins/cpz.ini`) uses those
+  entries, so mc and tmux follow a theme change without per-theme files. The
+  skin carries its own `[Lines]` section because mc up to 4.8.33 (the version
+  in Debian trixie) reads frame characters only from that group and draws a
+  space for every missing key; without it panels and dialogs have no borders.
 
 `cpz-cage-output` detects a changed foot configuration, but it no longer
 restarts the compositor. `cpz-foot-reload` renders the file and sends SIGUSR1
@@ -183,9 +194,9 @@ one from the same configuration. The anchor terminal keeps cage and the DRM
 mode alive during the swap. The tmux theme is applied immediately by
 `cpz-apply-settings`; the new foot reattaches to the same tmux session.
 
-`cpz-font` (Alt+G / Alt+M) and Settings → Display → Text Size use the same
-path, so a font change takes effect in well under a second instead of waiting
-for a compositor restart. The size is stored per output
+`cpz-font` (Alt+G / Alt+M), Settings → Display → Text Size and Settings →
+Display → Font use the same path, so a font change takes effect in well under a
+second instead of waiting for a compositor restart. The size is stored per output
 (`font_size_panel` / `font_size_hdmi`): the shortcut changes the active one,
 and a display switch renders the saved size of the output that starts. A
 legacy single `font_size` is migrated into both on the first read.
@@ -207,7 +218,9 @@ child processes use the new locale. The current session and tmux environment
 switch immediately; already running third-party programs keep the old locale
 until restarted.
 
-The image generates `en_US.UTF-8`, `uk_UA.UTF-8` and `de_DE.UTF-8` in
+The image generates `en_US.UTF-8`, `uk_UA.UTF-8`, `pl_PL.UTF-8`,
+`de_DE.UTF-8`, `fr_FR.UTF-8`, `es_ES.UTF-8`, `it_IT.UTF-8`,
+`pt_BR.UTF-8`, `tr_TR.UTF-8`, `ja_JP.UTF-8` and `zh_CN.UTF-8` in
 `stage2/04-locales`. Adding a language needs a catalog in
 `stage3/01-session/files/i18n/`, an entry in `cpz-i18n`, and an entry in
 `cpz-locale-apply`.

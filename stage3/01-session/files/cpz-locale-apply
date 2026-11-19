@@ -7,23 +7,23 @@ set -u
 
 code=${1:-}
 case "$code" in
-	en)
-		target=en_US.UTF-8
-		pattern='^en_US\.(utf-?8)$'
-		;;
-	uk)
-		target=uk_UA.UTF-8
-		pattern='^uk_UA\.(utf-?8)$'
-		;;
-	de)
-		target=de_DE.UTF-8
-		pattern='^de_DE\.(utf-?8)$'
-		;;
+	en) target=en_US.UTF-8 ;;
+	uk) target=uk_UA.UTF-8 ;;
+	pl) target=pl_PL.UTF-8 ;;
+	de) target=de_DE.UTF-8 ;;
+	fr) target=fr_FR.UTF-8 ;;
+	es) target=es_ES.UTF-8 ;;
+	it) target=it_IT.UTF-8 ;;
+	pt) target=pt_BR.UTF-8 ;;
+	tr) target=tr_TR.UTF-8 ;;
+	ja) target=ja_JP.UTF-8 ;;
+	zh) target=zh_CN.UTF-8 ;;
 	*)
-		echo "usage: cpz-locale-apply en|uk|de" >&2
+		echo "usage: cpz-locale-apply en|uk|pl|de|fr|es|it|pt|tr|ja|zh" >&2
 		exit 2
 		;;
 esac
+pattern="^${target%%.*}\\.(utf-?8)$"
 
 if ! locale -a | grep -Eiq "$pattern"; then
 	echo "cpz-locale-apply: $target is not generated" >&2

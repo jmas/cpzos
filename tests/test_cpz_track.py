@@ -129,6 +129,8 @@ class TrackButtonTest(unittest.TestCase):
         self.assertIn('165: [TRACK, "prev"]', text)
         self.assertIn('114: [VOLUME, "down"]', text)
         self.assertIn('115: [VOLUME, "up"]', text)
+        self.assertIn('224: [BRIGHTNESS, "down"]', text)
+        self.assertIn('225: [BRIGHTNESS, "up"]', text)
         self.assertIn("CENTRE = 164", text)
         self.assertIn("DOUBLE_PRESS", text)
         # The rocker no longer skips tracks when held.
@@ -143,6 +145,17 @@ class TrackButtonTest(unittest.TestCase):
         module.press(115, "headset", pending, 100.0)
         module.press(114, module.KEYBOARD, pending, 100.0)
         self.assertEqual(calls, [[module.VOLUME, "up"], [module.VOLUME, "down"]])
+        self.assertEqual(pending, {})
+
+    def test_brightness_keys_step_the_backlight(self):
+        module, calls = self.load_media_keys()
+        pending = {}
+        module.press(225, module.KEYBOARD, pending, 100.0)
+        module.press(224, module.KEYBOARD, pending, 100.0)
+        self.assertEqual(
+            calls,
+            [[module.BRIGHTNESS, "up"], [module.BRIGHTNESS, "down"]],
+        )
         self.assertEqual(pending, {})
 
     def test_single_centre_press_toggles_after_the_window(self):

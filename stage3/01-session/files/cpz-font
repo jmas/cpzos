@@ -97,6 +97,27 @@ esac
 font_size=$(normalize_font_size "$font_size")
 
 old_size=$font_size
+translate() {
+	key=$1
+	shift
+	message=$key
+	if [ -x /usr/local/bin/cpz-i18n ]; then
+		message=$(/usr/local/bin/cpz-i18n get "$key" "$key" "$@" 2>/dev/null ||
+			printf '%s' "$key")
+	fi
+	while [ $# -gt 0 ]; do
+		case $1 in
+			--field) field=${2:-}; shift 2 ;;
+			*) shift; continue ;;
+		esac
+		name=${field%%=*}
+		value=${field#*=}
+		[ -n "$name" ] &&
+			message=$(printf '%s' "$message" | sed "s/{$name}/$value/g")
+	done
+	printf '%s' "$message"
+}
+
 font_size=
 if [ "$step" -gt 0 ]; then
 	for size in $font_sizes; do
@@ -115,7 +136,9 @@ fi
 # At the limit the key must not replace the terminal for no visible change.
 if [ "$font_size" = "$old_size" ]; then
 	if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-		tmux display-message -d 2000 "font: ${font_size}px" \
+		tmux display-message -d 2000 \
+			"$(translate 'font: {size}px' 'font: {size}px' \
+				--field "size=$font_size")" \
 			>/dev/null 2>&1 || true
 	fi
 	exit 0
@@ -177,5 +200,7 @@ if [ -x /usr/local/bin/cpz-foot-reload ]; then
 fi
 
 if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-	tmux display-message -d 2000 "font: ${font_size}px" >/dev/null 2>&1 || true
+	tmux display-message -d 2000 \
+		"$(translate 'font: {size}px' 'font: {size}px' \
+			--field "size=$font_size")" >/dev/null 2>&1 || true
 fi

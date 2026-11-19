@@ -1,0 +1,23 @@
+# CPZ wifitui theme.
+#
+# ASCII icons instead of the upstream emoji: the internal panel is 320x170
+# (about 53x14 cells at the default font) and Terminus has no emoji glyphs.
+# ANSI colours follow the palette of the active CPZ terminal theme. The two
+# signal colours are hex because wifitui blends them itself and needs a real
+# colour value, not a palette index.
+Primary = "3"
+Subtle = "8"
+Success = "2"
+Error = "1"
+Normal = "7"
+Disabled = "8"
+Border = "8"
+SignalHigh = "#00c853"
+SignalLow = "#ff6d00"
+Saved = "4"
+TitleIcon = ""
+NetworkSecureIcon = "* "
+NetworkOpenIcon = "o "
+NetworkUnknownIcon = "? "
+NetworkSavedIcon = "S "
+AccessPointIcon = "+"

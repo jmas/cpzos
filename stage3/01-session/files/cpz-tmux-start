@@ -20,7 +20,12 @@ tmux set-environment -g SDL_RENDER_DRIVER software 2>/dev/null || true
 tmux set -g @cpz_restoring 1 2>/dev/null || true
 
 if ! tmux has-session -t '=main' 2>/dev/null; then
-	tmux new-session -d -s main -n shell
+	shell_name=shell
+	if [ -x /usr/local/bin/cpz-i18n ]; then
+		shell_name=$(/usr/local/bin/cpz-i18n get shell shell 2>/dev/null ||
+			printf shell)
+	fi
+	tmux new-session -d -s main -n "$shell_name"
 	tmux set-option -w -t '=main:1' @cpz_main 1
 	/usr/local/bin/cpz-session-restore main || true
 fi

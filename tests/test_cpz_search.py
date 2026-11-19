@@ -75,9 +75,18 @@ class SearchItems(unittest.TestCase):
         self.assertFalse(self.mod.usable_text("a\nb"))
         self.assertTrue(self.mod.usable_text("plain text"))
 
-    def test_default_items_have_actions_settings_and_apps(self):
+    def test_default_items_include_installed_and_installable_apps(self):
         self.mod.list_settings_pages = lambda: [("network", "Network")]
         self.mod.scan_apps = lambda: ["less", "vim"]
+        self.mod.managed_app_items = lambda: [
+            self.mod.make_item(
+                "tool",
+                "fzf",
+                "fzf  [run app]",
+                "fzf",
+                "managed,installed,runnable",
+            )
+        ]
         self.mod.trove_items = lambda: [
             self.mod.make_item(
                 "tool",
@@ -88,40 +97,53 @@ class SearchItems(unittest.TestCase):
             ),
             self.mod.make_item(
                 "tool",
+                "tmux",
+                "apps tmux  [run app]",
+                "tmux",
+                "installed,runnable",
+            ),
+            self.mod.make_item(
+                "tool",
                 "lazygit",
                 "apps lazygit  [install app]",
                 "",
                 "installable",
             ),
         ]
-        self.mod.managed_app_items = lambda: [
-            self.mod.make_item(
-                "tool",
-                "fzf",
-                "fzf  [run app]",
-                "fzf",
-                "managed,installed,runnable",
-            )
-        ]
         parsed = [self.mod.parse_item(line) for line in self.mod.default_items()]
         kinds = [item[0] for item in parsed if item]
         self.assertIn("action", kinds)
         self.assertIn("settings", kinds)
-        self.assertIn("app", kinds)
+        self.assertIn("tool", kinds)
+        self.assertNotIn("app", kinds)
         self.assertIn(
             ("settings", "network", "Network  [settings]", "", "settings"),
             parsed,
         )
         self.assertIn(
-            ("app", "vim", "vim  [app]", "", "installed,runnable"), parsed
+            ("tool", "fzf", "fzf  [run app]", "fzf",
+             "managed,installed,runnable"),
+            parsed,
         )
         payloads = [item[1] for item in parsed if item]
         self.assertEqual(payloads[0], "fzf")
+        self.assertIn("tmux", payloads)
         self.assertIn("lazygit", payloads)
-        self.assertLess(payloads.index("fzf"), payloads.index("lazygit"))
-        self.assertNotIn(("tool", "fzf", "apps fzf  [run app]", "fzf", "managed,installed,runnable"), parsed)
+        self.assertNotIn("vim", payloads)
+        self.assertNotIn("less", payloads)
+        # The managed row wins over the catalog duplicate.
+        self.assertEqual(payloads.count("fzf"), 1)
+
+    def test_default_does_not_scan_path_for_generic_apps(self):
+        # Search uses the catalog and the manager state, never the whole PATH.
+        self.mod.managed_app_items = lambda: []
+        self.mod.trove_items = lambda: []
+        with mock.patch.object(self.mod, "scan_apps") as scan:
+            self.mod.default_items()
+        scan.assert_not_called()
 
     def test_home_is_the_fast_priority_menu(self):
+        self.mod.managed_app_items = lambda: []
         parsed = [
             item
             for item in (self.mod.parse_item(line) for line in self.mod.home_items())
@@ -138,34 +160,7 @@ class SearchItems(unittest.TestCase):
         self.assertNotIn("reboot", payloads)
         self.assertNotIn("poweroff", payloads)
 
-    def test_home_does_not_start_expensive_providers(self):
-        with mock.patch.multiple(
-            self.mod,
-            managed_app_items=mock.DEFAULT,
-            trove_items=mock.DEFAULT,
-            settings_items=mock.DEFAULT,
-            scan_apps=mock.DEFAULT,
-            list_settings_pages=mock.DEFAULT,
-        ) as patched:
-            self.mod.home_items()
-        for provider in patched.values():
-            provider.assert_not_called()
-
-    def test_home_ends_with_help_after_the_settings_rows(self):
-        items = self.mod.home_items()
-        parsed = [self.mod.parse_item(line) for line in items]
-        self.assertEqual(parsed[-1][0:2], ("action", "help"))
-        self.assertIn("Enter run action", self.mod.hint_line(items[-1]))
-
-    def test_home_settings_rows_carry_the_searchable_page_title(self):
-        displays = [
-            (self.mod.parse_item(line) or ("", "", ""))[2]
-            for line in self.mod.home_items()
-        ]
-        self.assertIn("Connections  [settings]", displays)
-        self.assertIn("Sound  [settings]", displays)
-
-    def test_default_loads_managed_apps_before_the_generic_list(self):
+    def test_home_lists_the_apps_installed_through_the_manager(self):
         self.mod.managed_app_items = lambda: [
             self.mod.make_item(
                 "tool",
@@ -175,11 +170,81 @@ class SearchItems(unittest.TestCase):
                 "managed,installed,runnable",
             )
         ]
-        self.mod.trove_items = lambda: []
-        self.mod.scan_apps = lambda: ["vim"]
+        parsed = [self.mod.parse_item(line) for line in self.mod.home_items()]
+        payloads = [item[1] for item in parsed if item]
+        self.assertEqual(payloads[:3], ["new-tab", "close-tab", "volume-mute"])
+        self.assertEqual(payloads[3], "btop")
+        self.assertEqual(payloads[-1], "help")
+
+    def test_home_reads_the_manager_state_but_not_the_catalog(self):
+        with mock.patch.multiple(
+            self.mod,
+            managed_app_items=mock.DEFAULT,
+            trove_items=mock.DEFAULT,
+            settings_items=mock.DEFAULT,
+            scan_apps=mock.DEFAULT,
+            list_settings_pages=mock.DEFAULT,
+        ) as patched:
+            self.mod.home_items()
+        patched["managed_app_items"].assert_called_once_with()
+        for name, provider in patched.items():
+            if name != "managed_app_items":
+                provider.assert_not_called()
+
+    def test_home_ends_with_help_after_the_settings_rows(self):
+        self.mod.managed_app_items = lambda: []
+        items = self.mod.home_items()
+        parsed = [self.mod.parse_item(line) for line in items]
+        self.assertEqual(parsed[-1][0:2], ("action", "help"))
+        self.assertIn("Enter run action", self.mod.hint_line(items[-1]))
+
+    def test_home_settings_rows_carry_the_searchable_page_title(self):
+        self.mod.managed_app_items = lambda: []
+        displays = [
+            (self.mod.parse_item(line) or ("", "", ""))[2]
+            for line in self.mod.home_items()
+        ]
+        self.assertIn("Connections  [settings]", displays)
+        self.assertIn("Sound  [settings]", displays)
+
+    def test_default_starts_with_managed_apps(self):
+        self.mod.managed_app_items = lambda: [
+            self.mod.make_item(
+                "tool",
+                "btop",
+                "btop  [run app]",
+                "btop",
+                "managed,installed,runnable",
+            )
+        ]
         parsed = [self.mod.parse_item(line) for line in self.mod.default_items()]
         self.assertEqual(parsed[0][0], "tool")
         self.assertEqual(parsed[0][1], "btop")
+
+    def test_apps_provider_keeps_managed_apps_without_a_catalog(self):
+        self.mod.settings_path = lambda: None
+        self.mod.managed_app_items = lambda: [
+            self.mod.make_item(
+                "tool",
+                "nano",
+                "nano  [run app]",
+                "nano",
+                "managed,installed,runnable",
+            )
+        ]
+        parsed = [self.mod.parse_item(line) for line in self.mod.trove_items()]
+        self.assertEqual(
+            parsed,
+            [
+                (
+                    "tool",
+                    "nano",
+                    "nano  [run app]",
+                    "nano",
+                    "managed,installed,runnable",
+                )
+            ],
+        )
 
     def test_media_items_read_the_automount_state(self):
         state = self.root / "state"
@@ -354,6 +419,23 @@ class SearchItems(unittest.TestCase):
                     "managed": True,
                 },
                 {
+                    "slug": "manual-only",
+                    "name": "manual-only",
+                    "summary": "no apt package",
+                    "command": "",
+                    "installed": False,
+                    "apt": "",
+                },
+                {
+                    "slug": "not-in-apt",
+                    "name": "not-in-apt",
+                    "summary": "missing package",
+                    "command": "",
+                    "installed": False,
+                    "apt": "missing",
+                    "available": False,
+                },
+                {
                     "slug": "bad\nslug",
                     "name": "bad name",
                     "command": "",
@@ -364,7 +446,20 @@ class SearchItems(unittest.TestCase):
             self.mod.parse_item(line)
             for line in self.mod.parse_trove_payload(json.dumps(payload))
         ]
-        self.assertEqual(items[0][1], "btop")
+        self.assertEqual(
+            {item[1] for item in items if item},
+            {"btop", "tmux", "lazygit"},
+        )
+        self.assertEqual(
+            next(item for item in items if item and item[1] == "btop")[4],
+            "managed,installed,runnable",
+        )
+        full = [
+            self.mod.parse_item(line)
+            for line in self.mod.parse_trove_payload(
+                json.dumps(payload), available_only=False
+            )
+        ]
         self.assertIn(
             (
                 "tool",
@@ -373,7 +468,7 @@ class SearchItems(unittest.TestCase):
                 "tmux",
                 "installed,runnable",
             ),
-            items,
+            full,
         )
         self.assertIn(
             (
@@ -383,9 +478,29 @@ class SearchItems(unittest.TestCase):
                 "",
                 "installable",
             ),
-            items,
+            full,
         )
-        self.assertEqual(len(items), 3)
+        self.assertIn(
+            (
+                "tool",
+                "manual-only",
+                "apps manual-only  [info]  no apt package",
+                "",
+                "",
+            ),
+            full,
+        )
+        self.assertIn(
+            (
+                "tool",
+                "not-in-apt",
+                "apps not-in-apt  [info]  missing package",
+                "",
+                "",
+            ),
+            full,
+        )
+        self.assertEqual(len(full), 5)
         self.assertEqual(self.mod.parse_trove_payload("not json"), [])
 
     def test_search_roots_uses_the_override_and_existing_directories(self):

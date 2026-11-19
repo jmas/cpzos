@@ -12,8 +12,8 @@ reacts to press events only, and runs the matching helper. It rescans
 Headset: the volume rocker only changes the PipeWire volume; the centre button
 toggles play/pause on a single press and skips to the next track on a double
 press. The keyboard's Fn layer reports the same keycodes (Fn+A/S/D volume,
-Fn+Q play/pause, Fn+W previous, Fn+E next) and acts immediately, like every
-other key.
+Fn+Q play/pause, Fn+W previous, Fn+E next, Fn+I/Fn+O brightness) and acts
+immediately, like every other key.
 """
 
 import glob
@@ -27,6 +27,7 @@ import time
 EVENT = struct.Struct("llHHi")  # struct input_event, 64-bit timeval
 EV_KEY = 0x01
 VOLUME = "/usr/local/bin/cpz-volume"
+BRIGHTNESS = "/usr/local/bin/cpz-brightness"
 TRACK = "/usr/local/bin/cpz-track"
 RESCAN = 2.0
 DOUBLE_PRESS = 0.35
@@ -38,6 +39,8 @@ ACTIONS = {
     115: [VOLUME, "up"],  # KEY_VOLUMEUP
     163: [TRACK, "next"],  # KEY_NEXTSONG
     165: [TRACK, "prev"],  # KEY_PREVIOUSSONG
+    224: [BRIGHTNESS, "down"],  # KEY_BRIGHTNESSDOWN (Fn+I)
+    225: [BRIGHTNESS, "up"],  # KEY_BRIGHTNESSUP (Fn+O)
 }
 CENTRE = 164  # KEY_PLAYPAUSE
 

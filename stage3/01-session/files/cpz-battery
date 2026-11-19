@@ -39,6 +39,27 @@ log() {
 	printf '%s\n' "$*"
 }
 
+translate() {
+	key=$1
+	shift
+	message=$key
+	if [ -x /usr/local/bin/cpz-i18n ]; then
+		message=$(/usr/local/bin/cpz-i18n get "$key" "$key" "$@" 2>/dev/null ||
+			printf '%s' "$key")
+	fi
+	while [ $# -gt 0 ]; do
+		case $1 in
+			--field) field=${2:-}; shift 2 ;;
+			*) shift; continue ;;
+		esac
+		name=${field%%=*}
+		value=${field#*=}
+		[ -n "$name" ] &&
+			message=$(printf '%s' "$message" | sed "s/{$name}/$value/g")
+	done
+	printf '%s' "$message"
+}
+
 set_percent() {
 	# $1 is a percentage; only 1..100 is accepted.
 	case "$1" in
@@ -263,7 +284,9 @@ guard() {
 
 		if is_charging; then
 			if [ "$warned" -ne 0 ]; then
-				notify "Charger connected ($(battery_summary))."
+				notify "$(translate 'Charger connected ({summary}).' \
+					'Charger connected ({summary}).' \
+					--field "summary=$(battery_summary)")"
 			fi
 			warned=0
 			clear_message
@@ -279,7 +302,11 @@ guard() {
 		fi
 
 		if ! is_charging && is_critical; then
-			notify "Battery critically low ($(battery_summary)). Connect the charger; shutting down in ${shutdown_grace}s."
+			notify "$(translate \
+				'Battery critically low ({summary}). Connect the charger; shutting down in {seconds}s.' \
+				'Battery critically low ({summary}). Connect the charger; shutting down in {seconds}s.' \
+				--field "summary=$(battery_summary)" \
+				--field "seconds=$shutdown_grace")"
 			remaining=$shutdown_grace
 			connected=0
 			while [ "$remaining" -gt 0 ]; do
@@ -292,7 +319,10 @@ guard() {
 				remaining=$((remaining - 1))
 			done
 			if [ "$connected" -eq 1 ]; then
-				notify "Charger connected ($(battery_summary)). Continuing."
+				notify "$(translate \
+					'Charger connected ({summary}). Continuing.' \
+					'Charger connected ({summary}). Continuing.' \
+					--field "summary=$(battery_summary)")"
 				warned=0
 				clear_message
 				sleep "$poll_interval"
@@ -305,7 +335,10 @@ guard() {
 				sleep "$poll_interval"
 				continue
 			fi
-			notify "Battery critically low ($(battery_summary)). Powering off now."
+			notify "$(translate \
+				'Battery critically low ({summary}). Powering off now.' \
+				'Battery critically low ({summary}). Powering off now.' \
+				--field "summary=$(battery_summary)")"
 			sleep 2
 			power_off
 			# systemd stops this unit during the poweroff. Stay asleep so a
@@ -316,7 +349,10 @@ guard() {
 
 		if at_or_below "$warn_level"; then
 			if [ "$warned" -eq 0 ]; then
-				notify "Battery low ($(battery_summary)). Connect the charger."
+				notify "$(translate \
+					'Battery low ({summary}). Connect the charger.' \
+					'Battery low ({summary}). Connect the charger.' \
+					--field "summary=$(battery_summary)")"
 				warned=1
 			fi
 		else
@@ -347,22 +383,28 @@ boot_check() {
 
 	if is_charging; then
 		clear_screen
-		printf 'CPZ: battery is very low.\n'
-		printf 'Battery: %s\n\n' "$(battery_summary)"
-		printf 'Charging - keep the charger connected.\n'
+		printf '%s\n' "$(translate 'CPZ: battery is very low.')"
+		printf '%s\n\n' "$(translate 'Battery: {summary}' \
+			'Battery: {summary}' --field "summary=$(battery_summary)")"
+		printf '%s\n' "$(translate \
+			'Charging - keep the charger connected.')"
 		sleep 3
 		return 0
 	fi
 
 	clear_screen
-	printf 'CPZ: battery is too low to start safely.\n'
-	printf 'Battery: %s\n\n' "$(battery_summary)"
-	printf 'Connect the charger now to keep the device on.\n\n'
+	printf '%s\n' "$(translate 'CPZ: battery is too low to start safely.')"
+	printf '%s\n\n' "$(translate 'Battery: {summary}' \
+		'Battery: {summary}' --field "summary=$(battery_summary)")"
+	printf '%s\n\n' "$(translate \
+		'Connect the charger now to keep the device on.')"
 
 	remaining=$shutdown_grace
 	connected=0
 	while [ "$remaining" -gt 0 ]; do
-		printf '\rShutting down in %2d s... ' "$remaining"
+		printf '\r%s' "$(translate 'Shutting down in {seconds} s... ' \
+			'Shutting down in {seconds} s... ' \
+			--field "seconds=$remaining")"
 		sleep 1
 		read_battery || true
 		if is_charging; then
@@ -372,8 +414,10 @@ boot_check() {
 		remaining=$((remaining - 1))
 	done
 	if [ "$connected" -eq 1 ]; then
-		printf '\rCharger connected (%s). Continuing boot.\n\n' \
-			"$(battery_summary)"
+		printf '\r%s\n\n' "$(translate \
+			'Charger connected ({summary}). Continuing boot.' \
+			'Charger connected ({summary}). Continuing boot.' \
+			--field "summary=$(battery_summary)")"
 		sleep 1
 		return 0
 	fi
@@ -382,19 +426,24 @@ boot_check() {
 	# recovered while the countdown was running.
 	read_battery || true
 	if is_charging; then
-		printf '\rCharger connected (%s). Continuing boot.\n\n' \
-			"$(battery_summary)"
+		printf '\r%s\n\n' "$(translate \
+			'Charger connected ({summary}). Continuing boot.' \
+			'Charger connected ({summary}). Continuing boot.' \
+			--field "summary=$(battery_summary)")"
 		sleep 1
 		return 0
 	fi
 	if ! is_boot_low; then
-		printf '\rBattery recovered (%s). Continuing boot.\n\n' \
-			"$(battery_summary)"
+		printf '\r%s\n\n' "$(translate \
+			'Battery recovered ({summary}). Continuing boot.' \
+			'Battery recovered ({summary}). Continuing boot.' \
+			--field "summary=$(battery_summary)")"
 		sleep 1
 		return 0
 	fi
 
-	printf '\rBattery is still low. Powering off.\n\n'
+	printf '\r%s\n\n' "$(translate \
+		'Battery is still low. Powering off.')"
 	power_off
 	return 1
 }

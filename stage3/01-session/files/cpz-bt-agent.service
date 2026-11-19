@@ -6,9 +6,9 @@ ConditionPathExists=/usr/bin/bt-agent
 
 [Service]
 Type=simple
-# Make sure a soft rfkill block does not prevent Settings from powering the
-# adapter on.
-ExecStartPre=-/usr/sbin/rfkill unblock bluetooth
+# The radio stays soft-blocked and powered off at boot (AutoEnable=false).
+# Settings clears both only when the Bluetooth manager is opened, so the
+# agent must not unblock the adapter here.
 # Auto-accept Just Works / numeric-comparison pairing so devices can be paired
 # from cpz-settings without a separate confirmation UI.
 ExecStart=/usr/bin/bt-agent -c NoInputNoOutput

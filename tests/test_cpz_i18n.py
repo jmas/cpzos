@@ -40,11 +40,18 @@ class CatalogTest(unittest.TestCase):
         else:
             os.environ[name] = old
 
-    def test_all_three_catalogs_are_complete(self):
+    def test_all_catalogs_are_complete(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             self.assertEqual(self.mod.check_catalogs(), 0)
-        self.assertIn("3 languages", output.getvalue())
+        self.assertIn("11 languages", output.getvalue())
+
+    def test_site_and_device_languages_match(self):
+        site = {
+            path.stem
+            for path in (ROOT / "site" / "i18n").glob("*.json")
+        }
+        self.assertEqual(set(self.mod.SUPPORTED), site)
 
     def test_translation_falls_back_to_english_then_source(self):
         self.assertEqual(self.mod.translate("Search", "uk"), "Пошук")
@@ -64,11 +71,42 @@ class CatalogTest(unittest.TestCase):
             "Suche neu belegen",
         )
 
+    def test_battery_and_tab_strings_are_translated(self):
+        self.assertEqual(self.mod.translate("Discharging", "uk"), "Розряджається")
+        self.assertEqual(self.mod.translate("Charging", "de"), "Wird geladen")
+        self.assertEqual(self.mod.translate("Discharging", "es"), "Descargando")
+        self.assertEqual(self.mod.translate("Power", "ja"), "電源")
+        self.assertEqual(self.mod.translate("Power", "zh"), "电源")
+        self.assertEqual(self.mod.translate("Settings", "fr"), "Paramètres")
+        self.assertEqual(
+            self.mod.translate("Close tab? (y/n)", "uk"),
+            "Закрити вкладку? (y/n)",
+        )
+        self.assertEqual(
+            self.mod.translate("Rename tab:", "de"),
+            "Tab umbenennen:",
+        )
+
+    def test_radio_manager_strings_are_translated(self):
+        self.assertEqual(self.mod.translate("Turn off", "uk"), "Вимкнути")
+        self.assertEqual(self.mod.translate("Turn off", "de"), "Ausschalten")
+        self.assertEqual(
+            self.mod.translate("Scan complete", "es"), "Escaneo completado"
+        )
+        self.assertEqual(
+            self.mod.translate("Forget {name}?", "fr", name="Home"),
+            "Oublier Home ?",
+        )
+
     def test_language_codes_normalize_locale_names(self):
         self.assertEqual(self.mod.normalize_language("uk_UA.UTF-8"), "uk")
         self.assertEqual(self.mod.normalize_language("de-DE"), "de")
         self.assertEqual(self.mod.normalize_language("en_US.UTF-8"), "en")
-        self.assertEqual(self.mod.normalize_language("fr_FR.UTF-8"), "")
+        self.assertEqual(self.mod.normalize_language("fr_FR.UTF-8"), "fr")
+        self.assertEqual(self.mod.normalize_language("pl_PL.UTF-8"), "pl")
+        self.assertEqual(self.mod.normalize_language("pt_BR.UTF-8"), "pt")
+        self.assertEqual(self.mod.normalize_language("zh_CN.UTF-8"), "zh")
+        self.assertEqual(self.mod.normalize_language("xx_XX.UTF-8"), "")
 
     def test_cli_reads_language_from_settings(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -122,11 +160,16 @@ class SettingsLanguageTest(unittest.TestCase):
         else:
             os.environ[name] = old
 
-    def test_system_page_offers_three_languages(self):
+    def test_system_page_offers_the_site_languages(self):
         items = self.mod.page_items("system", dict(self.mod.DEFAULTS), None)
         language = next(item for item in items if item["label"] == "Language")
-        self.assertEqual(tuple(language["values"]()), ("en", "uk", "de"))
+        self.assertEqual(
+            tuple(language["values"]()),
+            ("en", "uk", "pl", "de", "fr", "es", "it", "pt", "tr", "ja", "zh"),
+        )
         self.assertEqual(language["labels"]["uk"], "Українська")
+        self.assertEqual(language["labels"]["ja"], "日本語")
+        self.assertEqual(language["labels"]["zh"], "中文")
 
     def test_language_setting_round_trips(self):
         data = dict(self.mod.DEFAULTS)
@@ -138,7 +181,7 @@ class SettingsLanguageTest(unittest.TestCase):
 
     def test_unknown_language_falls_back_to_english(self):
         data = dict(self.mod.DEFAULTS)
-        data["language"] = "fr"
+        data["language"] = "xx"
         self.mod.save_settings(data)
         self.assertEqual(self.mod.load_settings()["language"], "en")
 

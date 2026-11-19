@@ -7,8 +7,8 @@ use ``cpz-i18n get KEY [DEFAULT]`` for the few strings that live outside the
 Python TUIs.
 
 Catalog files are JSON objects in /usr/share/cpz/i18n/<code>.json. The build
-installs en, uk and de; adding a language is one file plus one entry in
-SUPPORTED/LANGUAGE_LABELS.
+installs the languages offered on the CPZ website; adding a language is one
+file plus one entry in SUPPORTED/LANGUAGE_LABELS.
 """
 
 from __future__ import annotations
@@ -20,11 +20,31 @@ import pwd
 import re
 import sys
 
-SUPPORTED = ("en", "uk", "de")
+SUPPORTED = (
+    "en",
+    "uk",
+    "pl",
+    "de",
+    "fr",
+    "es",
+    "it",
+    "pt",
+    "tr",
+    "ja",
+    "zh",
+)
 LANGUAGE_LABELS = {
     "en": "English",
     "uk": "Українська",
+    "pl": "Polski",
     "de": "Deutsch",
+    "fr": "Français",
+    "es": "Español",
+    "it": "Italiano",
+    "pt": "Português (BR)",
+    "tr": "Türkçe",
+    "ja": "日本語",
+    "zh": "中文",
 }
 DEFAULT_LANGUAGE = "en"
 PLACEHOLDER_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")

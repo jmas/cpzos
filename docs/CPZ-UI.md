@@ -28,7 +28,7 @@ List every place that can show text:
 - `stage3/01-session/files/cpz-settings` pages, dialogs, values, footers,
   empty states and loading text;
 - `cpz-status`, `cpz-conn-status`, `tmux.conf` (status bar and tab strip);
-- `cpz-help`, `help_lines()`, `cpz-hint`, `cpz-first-login`;
+- `cpz-help`, `cpz-hint`, `cpz-first-login`;
 - `cpz-search` items, prompts and hints;
 - helper output that reaches the user (`cpz-automount`, `cpz-font`, ...).
 
@@ -205,20 +205,20 @@ tabs ─ panes ─ status bar
 2. Sentence case, no trailing colon, no "please", no "successfully".
 3. One concept, one term (see the glossary).
 4. No implementation jargon on daily surfaces: `cage`, `foot`, `tmux`, `apt`, `NTP`,
-   `EDID`, `autologin`, `PipeWire`, catalog internals. Put it in `About`,
-   `Diagnostics` or the documentation.
+   `EDID`, `autologin`, `PipeWire`, catalog internals. Put it in `About` or
+   the documentation.
 5. Units are explicit: `px`, `%`, `s`, `lines`.
 6. A value states the condition: `Never`, `Muted`, `Connected`, `Not
    available`. Do not make the user parse `On` to mean "mute is on".
 7. A message names the object and the outcome: `Removed htop`, `Time zone set
    to Europe/Kyiv`. `Done` is not a result.
 8. An error says what failed and what to do: `Install failed. Run Settings →
-   System → Terminal and retry.` Raw logs belong in Diagnostics.
+   System → Terminal and retry.` Raw logs belong in About.
 9. Do not repeat the screen title in the first line of its body.
 10. Do not use text as decoration. If a number or paragraph has no
     navigational or safety purpose, remove it.
 
-The on-device UI ships in English, Ukrainian and German; English is the
+The on-device UI ships in the same languages as the site; English is the
 fallback. The language is selected in Settings → System → Language and also
 sets the system locale for new logins. The site is available in more
 languages; it keeps on-device menu names in their canonical English form and
@@ -261,11 +261,13 @@ the keyboard. Text selection and copying belong to tmux/foot, not to the TUI.
 
 ### Status bar
 
-22. A token is shown only when it carries information. An idle adapter is not a
-    warning.
-23. Two indicators MUST NOT use the same letter. Current tokens: `Wi`,
-    `Eth`, `Bt`, `V0`–`V4`, `VM`, `L0`–`L10`, battery `%`, `+`, `!`, layout
-    code.
+22. A token is shown when it carries information. An enabled Wi-Fi or
+    Bluetooth adapter is shown as `Wi` or `Bt`; a connected link adds `+`.
+    Ethernet uses `Et+` only while a cable is connected and is hidden
+    otherwise. An idle adapter is not a warning.
+23. Two indicators MUST NOT use the same letter. Current tokens: `Wi`, `Wi+`,
+    `Bt`, `Bt+`, `Et+`, `V0`–`V4`, `VM`, `L0`–`L10`, battery `%`, `+`, `!`,
+    layout code.
 24. Colour is never the only signal: low battery also has `!`, charging has
     `+`.
 25. Every token MUST be explained in the status-bar section of `Alt+H`.
@@ -300,7 +302,7 @@ the keyboard. Text selection and copying belong to tmux/foot, not to the TUI.
 37. Meaning is not carried by colour alone.
 38. New user-visible strings on the site require all locale files and
     `site/check.py`. New TUI strings must fit 51 columns in every supported
-    layout of the panel and in every language catalog (en, uk, de).
+    layout of the panel and in every language catalog.
 39. A translation may be longer than English; leave room in labels and
     footers.
 
@@ -320,7 +322,8 @@ the keyboard. Text selection and copying belong to tmux/foot, not to the TUI.
     title.
 43. Search is a modal, not a page: it uses the same frame, one blank row and
     muted hint as the Settings dialogs. Full-page references (`Alt+H`) and
-    external tools (`nmtui`) are not modals and keep their own presentation.
+    external tools (`htop`, `passwd`) are not modals and keep their own
+    presentation.
 44. Do not draw scroll markers, counters or decoration on the frame. Overflow
     is shown by the list cursor and the footer, never by overwriting the
     border.
@@ -412,7 +415,7 @@ Use these patterns first. A new control style needs an exception (section 9).
 | **Scale** | ordered numeric range, such as brightness or text size | `Left`/`Right` step, `Enter` opens the same list | current value + unit | `Z/C change  Enter list` |
 | **Picker** | every named set, such as theme, language or text format | `Enter` opens, `Enter` applies, `q` cancels; `Left`/`Right` do nothing | current label | `Enter list` |
 | **Searchable list** | more than ~20 unrelated items | type to filter, `Esc` clears, `Enter` applies | query line | `Type to filter  Enter keep  Esc clear` |
-| **Text page** | About, Diagnostics, key reference | scroll, `q` back | — | `F/X scroll  q back` |
+| **Text page** | About, key reference | scroll, `q` back | — | `F/X scroll  q back` |
 | **Modal frame** | chrome for every confirm, result, picker, filter and Search | — | bold title in the top border, body one column in, muted hint on the last inner row | — |
 | **Confirm modal** | destructive or irreversible action | `Enter`/`y`, `n`/`Esc` | question + detail | `Enter/y yes  n/Esc cancel` |
 | **Result modal** | success that is not visible on screen | `Enter`/`Esc` | outcome | `Enter/Esc close` |
@@ -469,7 +472,7 @@ F/X move  Enter toggle  q back
 ```text
 <verb> <object>                  Removed htop
 <object> <state>                 Time zone set to Europe/Kyiv
-<what failed>. <next step>.      Install failed. Retry from System → Diagnostics.
+<what failed>. <next step>.      Install failed. Retry from System → About.
 ```
 
 ---
@@ -595,15 +598,14 @@ Rules for exceptions:
 | --- | --- | --- |
 | **Settings** | the TUI and its main page | Preferences, Control Panel |
 | **Connections** | Wi-Fi, Bluetooth, Ethernet, VPN page | Network (for the page), Connectivity |
-| **Display** | theme, brightness, screen output, text size, status bar | Display & Brightness |
-| **Text Size** | foot font size, 12–32 px (Terminus OTB strikes) | Font Size |
+| **Display** | theme, brightness, screen output, font, text size, status bar | Display & Brightness |
+| **Font** | foot typeface for the whole terminal interface | Font Family, Typeface |
+| **Text Size** | foot font size, 12–32 px | Font Size |
 | **Keys** | key reference | Key Bindings, Key reference |
 | **pane** | a tmux split | split, window |
 | **tab** | a tmux window | window (in user text) |
-| **Suspend** | sleep action | Sleep |
 | **System Monitor** | `htop` | Resources |
-| **Diagnostics** | kernel, load, EDID, autologin details | About |
-| **About** | version, uptime, memory, battery, network, storage | Resources |
+| **About** | version, uptime, memory, battery, network, storage and diagnostics | Resources |
 | **Clock Sync** | automatic NTP time | Set Automatically |
 | **Status Refresh** | status bar refresh interval | Refresh Rate |
 | **Not available** | a capability is missing | unavailable, n/a (in user text) |
@@ -627,7 +629,7 @@ The review that produced these rules used the same sequence:
    dead info rows, footers that promised Enter, and lists without filters.
 5. Applied the glossary: `Network` → `Connections`, `Display & Brightness` →
    `Display`, `Resources` → `System Monitor`, `Set Automatically` → `Clock
-   Sync`, `sleep` → `Suspend`.
+   Sync`.
 6. Replaced hidden/no-op feedback: removed the refresh action and its toast,
    removed "Cancelled", "Reloaded" and "Not connected", made info rows stop
    advertising `Enter`.

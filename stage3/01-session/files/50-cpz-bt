@@ -1,0 +1,4 @@
+# Allow members of the sudo group to power the Bluetooth adapter for the
+# shared Wi-Fi/Bluetooth manager and clear its rfkill soft block. The helper
+# accepts only the optional word "on" or "off" and runs no caller command.
+%sudo ALL=(root) NOPASSWD: /usr/local/bin/cpz-bt-unblock

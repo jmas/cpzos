@@ -20,8 +20,49 @@ percent=$(get brightness)
 case "$percent" in
 	'' | *[!0-9]*) percent=100 ;;
 esac
-[ "$percent" -ge 1 ] || percent=1
+[ "$percent" -ge 10 ] || percent=10
 [ "$percent" -le 100 ] || percent=100
+
+action=${1:-apply}
+case "$action" in
+	up | down)
+		previous=$percent
+		if [ "$action" = up ]; then
+			percent=$((percent + 10))
+		else
+			percent=$((percent - 10))
+		fi
+		[ "$percent" -ge 10 ] || percent=10
+		[ "$percent" -le 100 ] || percent=100
+		# Keep the stored level in step with the key, even when HDMI is the
+		# active output and the panel is currently dark.
+		if [ "$percent" != "$previous" ]; then
+			mkdir -p "$(dirname "$user_settings")" 2>/dev/null || true
+			tmp="${user_settings}.tmp.$$"
+			if [ -r "$user_settings" ]; then
+				awk -v level="$percent" '
+					/^brightness=/ {
+						if (!done) print "brightness=" level
+						done = 1
+						next
+					}
+					{ print }
+					END { if (!done) print "brightness=" level }
+				' "$user_settings" >"$tmp" || { rm -f "$tmp"; exit 1; }
+			else
+				printf '# CPZ user settings. Written by cpz-settings.\n' >"$tmp" || exit 1
+				printf 'brightness=%s\n' "$percent" >>"$tmp" || exit 1
+			fi
+			chmod 0644 "$tmp" 2>/dev/null || true
+			mv "$tmp" "$user_settings" 2>/dev/null || { rm -f "$tmp"; exit 1; }
+		fi
+		;;
+	apply) ;;
+	*)
+		printf 'usage: %s [up|down]\n' "${0##*/}" >&2
+		exit 2
+		;;
+esac
 
 # While HDMI is the active output the panel is dark and its brightness is
 # stored in the settings only; cpz-cage-output restores it when the session

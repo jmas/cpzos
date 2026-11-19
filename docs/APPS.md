@@ -52,6 +52,14 @@ it a fresh image would know only its installed packages. The catalog's
 Debian/Ubuntu package is preferred; only when Terminal Trove publishes no apt
 command are the tool slug and display name checked.
 
+Typing in Browse also searches ordinary apt package names that are not in the
+catalog. A plain listing stays on the catalog index (apt-filtered by default);
+while searching, index matches stay first and ordinary apt matches are appended
+after them. The apt search runs locally against the package-name snapshot, so
+it works offline; metadata is read only for the short result list. This is how
+apps such as `nano` or `ncdu` become installable through the manager even
+though Terminal Trove does not list them.
+
 CPZ only installs what apt can provide:
 
 - If Terminal Trove publishes a Debian/Ubuntu `apt install` command, that
@@ -85,6 +93,25 @@ A removal is simulated first and refused if it would remove core CPZ packages
 Only apps installed through Applications are tracked. A package that was
 already installed by the image or by the user is reported as
 "installed (system)" and is not offered for removal through the manager.
+The Installed tab is built from the manager journal only, so apt and image
+packages never appear in that list.
+
+## Desktop warning
+
+The details page warns when apt metadata or an installed `.desktop` launcher
+suggests the package is a graphical application rather than a CLI/TUI one. The
+warning is advisory: CPZ can open graphical clients through `cage`, but a
+desktop application may expect a desktop session, integration services or
+window management that the device does not provide. The install confirmation
+repeats the warning; nothing is blocked.
+
+Signals are a desktop-environment apt section (`gnome`, `kde`, `x11`, ...),
+dependencies on GTK/Qt/SDL/X11/Wayland libraries, an installed
+`/usr/share/applications/*.desktop` file and a `gui`/`desktop` catalog
+category. On a fresh image the build-time snapshot has package names only, so
+metadata-backed signals for packages that are not installed appear after the
+first `apt-get update`; the warning for already installed packages works
+offline.
 
 ## State
 
@@ -126,16 +153,20 @@ manager → display command. `apt` is derived only from the Debian/Ubuntu cell:
 
 ## Search integration
 
-The same catalog powers CPZ Search (Alt+O). The search calls
-`cpz-settings --list-tools` for a compact JSON list. Installed apps are listed
-first and launch their detected command directly; apps installed through the
-manager are resolved with `dpkg -L` when the binary name differs from the
-package name. Every other app row — apt-backed (`[install app]`), installed
-without a command (`[installed]`) or missing from apt (`[info]`) — opens the
-matching page through `cpz-settings --tool <slug>`. That page shows the
-description and install instructions, and `i` installs with the same apt policy
-above. The search never fetches the catalog from the network and never starts
-an install from the result list itself.
+CPZ Search (Alt+O) covers the smaller scope: installed apps and catalog apps
+that can be installed with apt. It does not scan the whole PATH and it does not
+list every apt package; the wider apt package search belongs to
+Settings → Applications. The `apps` prefix applies the same rule.
+
+Search reads the manager state for managed apps and calls
+`cpz-settings --list-tools` for the catalog, dropping entries that are neither
+installed nor apt-installable. Apps installed through the manager are shown as
+soon as the popup opens and are resolved with `dpkg -L` when the binary name
+differs from the package name; apps installed as ordinary apt packages are
+included even when they have no catalog entry. The search never fetches the
+catalog from the network and never starts an install from the result list
+itself. Enter runs an app that has a detected command; `[installed]` and
+`[install app]` rows open their details page, where `i` installs and `e` runs.
 
 ## Updating the index
 

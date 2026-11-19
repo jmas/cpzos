@@ -1,0 +1,4 @@
+# Allow members of the sudo group to prepare the WLAN radio for the shared
+# Wi-Fi/Bluetooth manager. The helper only clears the rfkill block and enables
+# NetworkManager's Wi-Fi radio; --prepare returns before starting wifitui.
+%sudo ALL=(root) NOPASSWD: /usr/local/bin/cpz-wifi

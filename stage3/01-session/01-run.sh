@@ -46,8 +46,10 @@ install -m 0644 files/tmux.conf "${ROOTFS_DIR}/etc/tmux.conf"
 # Midnight Commander keeps the menu bar, key bar and hint bar hidden by
 # default: on the small display those three rows are more useful as file
 # listings. mc reads /etc/mc/mc.ini until the user has ~/.config/mc/ini.
-install -d -m 0755 "${ROOTFS_DIR}/etc/mc"
+# The skin is palette-based so it follows the CPZ theme selected in Settings.
+install -d -m 0755 "${ROOTFS_DIR}/etc/mc/skins"
 install -m 0644 files/mc.ini "${ROOTFS_DIR}/etc/mc/mc.ini"
+install -m 0644 files/mc-skin.ini "${ROOTFS_DIR}/etc/mc/skins/cpz.ini"
 
 # /tmp is disk-backed because tmp.mount is masked in 02-run.sh.
 install -d -m 1777 "${ROOTFS_DIR}/tmp"
@@ -58,6 +60,7 @@ install -m 0755 \
 	files/cpz-tab-close-key files/cpz-tab-mount files/cpz-tab-cycle \
 	files/cpz-settings-open \
 	files/cpz-settings files/cpz-settings-shell files/cpz-status \
+	files/cpz-wifi files/cpz-bt files/cpz-bt-unblock \
 	files/cpz-apply-settings files/cpz-help files/cpz-hint \
 	files/cpz-keys files/cpz-search \
 	files/cpz-first-login files/cpz-first-login-popup \
@@ -125,7 +128,7 @@ install -d -m 0755 "${ROOTFS_DIR}/etc/apt/preferences.d"
 install -m 0644 files/99-cpz-xkb-data.pref \
 	"${ROOTFS_DIR}/etc/apt/preferences.d/99-cpz-xkb-data.pref"
 install -d -m 0755 "${ROOTFS_DIR}/usr/share/cpz/i18n"
-install -m 0644 files/i18n/en.json files/i18n/uk.json files/i18n/de.json \
+install -m 0644 files/i18n/*.json \
 	"${ROOTFS_DIR}/usr/share/cpz/i18n/"
 install -d -m 0755 "${ROOTFS_DIR}/etc/cpz/themes"
 install -m 0644 files/settings.conf "${ROOTFS_DIR}/etc/cpz/settings.conf"
@@ -188,14 +191,66 @@ install -m 0644 files/cpz-session-save.service files/cpz-session-save.timer \
 	files/cpz-pointer-cursor.service files/cpz-media-keys.service \
 	"${ROOTFS_DIR}/etc/systemd/system/"
 
+# wifitui is the Wi-Fi manager behind Settings > Connections. It is not in
+# Debian, so install the pinned upstream arm64 package from files/:
+# https://github.com/shazow/wifitui/releases/tag/v0.13.0
+# sha256 f256030840f2d009f004dd346bf1f8eb0746c91d4cd2baed6cd156d37ff2aa96
+# The package contains a self-contained static Go binary and declares no
+# dependencies; the separate LICENSE file satisfies its MIT notice.
+install -m 0644 files/wifitui_0.13.0_arm64.deb \
+	"${ROOTFS_DIR}/tmp/wifitui_0.13.0_arm64.deb"
+on_chroot <<'CHROOT'
+dpkg -i /tmp/wifitui_0.13.0_arm64.deb
+rm -f /tmp/wifitui_0.13.0_arm64.deb
+CHROOT
+install -d -m 0755 "${ROOTFS_DIR}/usr/share/doc/wifitui"
+install -m 0644 files/wifitui.LICENSE \
+	"${ROOTFS_DIR}/usr/share/doc/wifitui/copyright"
+install -m 0644 files/wifitui-theme.toml \
+	"${ROOTFS_DIR}/usr/local/share/cpz/wifitui-theme.toml"
+
+# bluetuith is the BlueZ manager behind Settings > Connections. The upstream
+# Linux arm64 release is a self-contained static binary; extract only that
+# file from the pinned tarball and keep the MIT notice next to it.
+# https://github.com/bluetuith-org/bluetuith/releases/tag/v0.2.7
+# sha256 81ec8bdbdf18ddabff0ce5fb11f478dfa8dccbd9efc8e14583d4cbb8ef0f8d84
+install -m 0644 files/bluetuith_0.2.7_Linux_arm64.tar.gz \
+	"${ROOTFS_DIR}/tmp/bluetuith.tar.gz"
+tar -xzf "${ROOTFS_DIR}/tmp/bluetuith.tar.gz" \
+	-C "${ROOTFS_DIR}/tmp" bluetuith
+install -m 0755 "${ROOTFS_DIR}/tmp/bluetuith" \
+	"${ROOTFS_DIR}/usr/local/bin/bluetuith"
+rm -f "${ROOTFS_DIR}/tmp/bluetuith.tar.gz" "${ROOTFS_DIR}/tmp/bluetuith"
+install -d -m 0755 "${ROOTFS_DIR}/usr/share/doc/bluetuith"
+install -m 0644 files/bluetuith.LICENSE \
+	"${ROOTFS_DIR}/usr/share/doc/bluetuith/copyright"
+
 # Let the netdev user manage NetworkManager (Wi-Fi) without a polkit prompt.
 install -d -m 0755 "${ROOTFS_DIR}/etc/polkit-1/rules.d"
 install -m 0644 files/50-cpz-networkmanager.rules \
 	"${ROOTFS_DIR}/etc/polkit-1/rules.d/50-cpz-networkmanager.rules"
 
-# Bluetooth pairing agent used by cpz-settings.
+# Bluetooth pairing fallback for incoming Just Works requests. bluetuith
+# registers its own agent for pairings it starts; this service keeps headless
+# tools (bluetoothctl) usable too.
 install -m 0644 files/cpz-bt-agent.service \
 	"${ROOTFS_DIR}/etc/systemd/system/cpz-bt-agent.service"
+
+# Bluetooth is off by default, like Wi-Fi: bluetoothd runs, but BlueZ does not
+# power the adapter until Settings opens the shared radio manager. Without
+# this, AutoEnable=true brings the radio up on every boot.
+bt_conf="${ROOTFS_DIR}/etc/bluetooth/main.conf"
+if [ -f "$bt_conf" ]; then
+	sed -i -E 's/^[#[:space:]]*AutoEnable[[:space:]]*=.*/AutoEnable = false/' \
+		"$bt_conf"
+	if ! grep -q '^AutoEnable = false' "$bt_conf"; then
+		if grep -q '^\[Policy\]' "$bt_conf"; then
+			sed -i '/^\[Policy\]/a AutoEnable = false' "$bt_conf"
+		else
+			printf '\n[Policy]\nAutoEnable = false\n' >>"$bt_conf"
+		fi
+	fi
+fi
 
 # Alt+Space switches console layouts by default (rebindable in Settings >
 # Input > Shortcuts); allow only the keymap reload helper to run without a
@@ -210,6 +265,13 @@ install -m 0440 files/50-cpz-locale \
 # Settings > Display > Brightness needs the panel PWM helper without a prompt.
 install -m 0440 files/50-cpz-backlight \
 	"${ROOTFS_DIR}/etc/sudoers.d/50-cpz-backlight"
+# Settings > Connections needs root to clear the rfkill soft block and turn on
+# NetworkManager's radio before wifitui starts.
+install -m 0440 files/50-cpz-wifi \
+	"${ROOTFS_DIR}/etc/sudoers.d/50-cpz-wifi"
+# The Bluetooth manager only needs root to clear its own rfkill soft block.
+install -m 0440 files/50-cpz-bt \
+	"${ROOTFS_DIR}/etc/sudoers.d/50-cpz-bt"
 
 # The first user must own their config tree. Older stage2 code created
 # ~/.config (and ~/.config/systemd) as root via install -d on a nested path,
@@ -223,9 +285,16 @@ if [ -n "$first_home" ]; then
 	esac
 	user_config="${ROOTFS_DIR}${first_home}/.config"
 	install -d -m 0755 "$user_config" "$user_config/systemd" \
-		"$user_config/systemd/user" "$user_config/cpz"
+		"$user_config/systemd/user" "$user_config/cpz" \
+		"$user_config/bluetuith"
 	chown 1000:1000 "$user_config" "$user_config/systemd" \
-		"$user_config/systemd/user" "$user_config/cpz"
+		"$user_config/systemd/user" "$user_config/cpz" \
+		"$user_config/bluetuith"
+
+	# Compact bluetuith: no underlined help footer and q quits. bluetuith has
+	# no /etc lookup, so the config belongs to the first user.
+	install -m 0644 -o 1000 -g 1000 files/bluetuith.conf \
+		"$user_config/bluetuith/bluetuith.conf"
 
 	# Minimal media players for mc/lf: imv for images, mpv for video and
 	# cmus for music. The configs keep the viewers on the software Wayland
