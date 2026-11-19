@@ -347,6 +347,15 @@ for file in usr/local/bin/cpz-first-login \
     fi
 done
 
+# The stock login-shell Wi-Fi warning points at raspi-config and duplicates
+# what Settings already manages; it must not appear on the CPZ console.
+if debugfs -R "stat etc/profile.d/wifi-check.sh" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "Size:"; then
+    fail "etc/profile.d/wifi-check.sh still present"
+else
+    pass "stock Wi-Fi rfkill warning removed"
+fi
+
 # The first user must own ~/.config so cpz-settings can create ~/.config/cpz.
 FIRST_HOME=$(debugfs -R "cat etc/passwd" "$TMPDIR/root.ext4" 2>/dev/null |
     awk -F: '$3 == 1000 { print $6; exit }' || true)

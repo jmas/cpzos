@@ -1,5 +1,12 @@
-# CPZ graphical session (cage + foot + tmux). cage, foot and the Mesa DRI
-# drivers are installed by 00-graphics.
+# CPZ graphical session (cage + foot + tmux). These are all installed in one
+# apt transaction here instead of a separate 00-graphics install: one dpkg
+# lock, one dependency solve, one set of triggers per stage3 rebuild.
+# Xwayland is explicit because the Raspberry Pi build does not depend on it.
+cage
+foot
+libgl1-mesa-dri
+xauth
+xwayland
 tmux
 
 # Input, network and audio plumbing used by the CPZ status bar and settings.

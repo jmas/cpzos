@@ -37,4 +37,13 @@ CPZ_HDMI_VIDEO=""
 
 # Terminal Trove catalog index used by Settings -> Applications. Leave empty
 # for the hosted default, or point at a local/alternate JSON or JSON.gz file.
+# Set to "none" to skip the build-time download; Settings can fetch it later.
 CPZ_TROVE_INDEX_URL=""
+
+# Skip every build-time network download (currently the Trove catalog). Useful
+# for offline or reproducible local builds.
+CPZ_OFFLINE=0
+
+# Export-image runs a full apt dist-upgrade so a release ships the current
+# archive state. Set to 0 for fast local builds that already have it.
+CPZ_EXPORT_DIST_UPGRADE=1

@@ -8,13 +8,20 @@ install -m 0755 files/cpz-cage files/cpz-cage-output files/cpz-cage-session \
 	files/cpz-media-keys files/cpz-track \
 	files/cpz-panel-backlight \
 	files/cpz-foot-config files/cpz-foot-reload \
-	files/cpz-getty files/cpz-run files/cpz-tmux files/cpz-tmux-start \
+	files/cpz-getty files/cpz-getty-prepare files/cpz-run \
+	files/cpz-tmux files/cpz-tmux-start \
 	files/cpz-pointer files/cpz-i18n \
 	"${ROOTFS_DIR}/usr/local/bin/"
 
 install -d -m 0755 "${ROOTFS_DIR}/etc/profile.d"
 install -m 0644 files/cpz-session.sh files/10-cpz-locale.sh \
 	"${ROOTFS_DIR}/etc/profile.d/"
+
+# Wi-Fi is intentionally soft-blocked in the factory image and is enabled
+# from Settings. The stock login-shell check then prints "Wi-Fi is currently
+# blocked by rfkill" and points at raspi-config, which is not part of the CPZ
+# UI. Remove the warning instead of showing it on every login.
+rm -f "${ROOTFS_DIR}/etc/profile.d/wifi-check.sh"
 
 # SSH recovery: the first user can log in with FIRST_USER_PASS. The drop-in
 # wins over the main sshd_config because Debian includes this directory first.
@@ -44,7 +51,7 @@ install -m 0755 \
 	files/cpz-settings files/cpz-settings-shell files/cpz-status \
 	files/cpz-apply-settings files/cpz-help files/cpz-hint \
 	files/cpz-keys files/cpz-search \
-	files/cpz-first-login \
+	files/cpz-first-login files/cpz-first-login-popup \
 	files/cpz-session-save files/cpz-session-restore \
 	files/cpz-session-save-as-user files/cpz-conn-status \
 	files/cpz-brightness files/cpz-font files/cpz-volume \
@@ -128,10 +135,26 @@ install -m 0644 files/themes/*.conf files/themes/*.palette \
 # Terminal Trove catalog snapshot. Applications reads this local index, so
 # discovery works without the network. Settings can refresh it later. The
 # index is built by the separate terminal-trove-index project.
-trove_url="${CPZ_TROVE_INDEX_URL:-https://raw.githubusercontent.com/jmas/terminal-trove-index/main/index/trove.json.gz}"
+#
+# Builds must stay usable offline: CPZ_OFFLINE=1 (or an explicit
+# CPZ_TROVE_INDEX_URL=none) skips the download instead of waiting for the
+# 120 s timeout. Settings can fetch the catalog later on the device.
+trove_default="https://raw.githubusercontent.com/jmas/terminal-trove-index/main/index/trove.json.gz"
+trove_url="${CPZ_TROVE_INDEX_URL:-$trove_default}"
+trove_download=1
+case "$trove_url" in
+	none | off | 0 | '')
+		# Keep the hosted URL in the image so Settings can refresh later.
+		trove_url=$trove_default
+		trove_download=0
+		;;
+esac
+case "${CPZ_OFFLINE:-0}" in
+	1 | yes | on | true) trove_download=0 ;;
+esac
 install -d -m 0755 "${ROOTFS_DIR}/etc/cpz" "${ROOTFS_DIR}/usr/share/cpz"
 printf '%s\n' "$trove_url" >"${ROOTFS_DIR}/etc/cpz/trove-index.url"
-if [ -n "$trove_url" ]; then
+if [ "$trove_download" = 1 ]; then
 	trove_tmp="$(mktemp)"
 	if curl --fail --location --silent --show-error --retry 3 --max-time 120 \
 		--max-filesize 20971520 "$trove_url" -o "$trove_tmp"; then
@@ -296,6 +319,16 @@ if command -v apt-cache >/dev/null 2>&1; then
 		dpkg-query -W -f='${Package}\n' 2>/dev/null || true
 	} | LC_ALL=C sort -u | gzip -9 > /usr/share/cpz/apt-packages.txt.gz
 	chmod 0644 /usr/share/cpz/apt-packages.txt.gz
+fi
+
+# Generate the tmux key cache at build time. tmux.conf sources it, and the
+# conditional cpz-keys fallback is a Python start on the boot path; the file
+# is user-specific because tmux reads ~/.cache/cpz/tmux-keys.conf.
+first_home=$(getent passwd 1000 | cut -d: -f6 || true)
+if [ -n "$first_home" ] && [ -x /usr/local/bin/cpz-keys ]; then
+	install -d -m 0755 -o 1000 -g 1000 "$first_home/.cache/cpz"
+	HOME="$first_home" /usr/local/bin/cpz-keys write >/dev/null 2>&1 || true
+	chown -R 1000:1000 "$first_home/.cache/cpz" 2>/dev/null || true
 fi
 
 systemctl daemon-reload || true

@@ -143,9 +143,27 @@ for package in $installed; do
 	fi
 done
 
-[ -n "$purge" ] || exit 0
+if [ -n "$purge" ]; then
+	echo "cpz-cleanup: purging$purge"
+	apt-get purge -y $purge
+	apt-get autoremove --purge -y
+fi
 
-echo "cpz-cleanup: purging$purge"
-apt-get purge -y $purge
-apt-get autoremove --purge -y
+# The kernel headers (and kbuild) are installed from the pinned kernel
+# manifest so stage2 can compile the out-of-tree panel/keyboard modules. The
+# compiler, make and device-tree-compiler are removed above, so keeping the
+# headers only wastes tens of megabytes on the SD card. They are held by
+# stage0/02-firmware, hence the explicit unhold. A user who wants to build
+# modules on-device also needs the toolchain, which this image no longer has.
+headers=$(dpkg-query -W -f='${Package}\n' \
+	'linux-headers-*' 'linux-kbuild-*' 2>/dev/null || true)
+if [ -n "$headers" ]; then
+	echo "cpz-cleanup: removing kernel headers"
+	apt-mark unhold $headers >/dev/null 2>&1 || true
+	if apt-get purge -y --allow-change-held-packages $headers; then
+		apt-get autoremove --purge -y
+	else
+		echo "cpz-cleanup: keeping kernel headers (purge failed)" >&2
+	fi
+fi
 CHROOT

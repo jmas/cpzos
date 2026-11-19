@@ -203,6 +203,7 @@ for file in \
 	stage3/01-session/01-run.sh \
 	stage3/01-session/02-run.sh \
 	stage3/01-session/files/cpz-first-login \
+	stage3/01-session/files/cpz-first-login-popup \
 	stage3/01-session/files/cpz-cage \
 	stage3/01-session/files/cpz-cage-output \
 	stage3/01-session/files/cpz-cage-session \
@@ -235,6 +236,7 @@ for file in \
 	stage3/01-session/files/cpz-foot-config \
 	stage3/01-session/files/cpz-foot-reload \
 	stage3/01-session/files/cpz-getty \
+	stage3/01-session/files/cpz-getty-prepare \
 	stage3/01-session/files/cpz-run \
 	stage3/01-session/files/cpz-session.sh \
 	stage3/01-session/files/getty@tty1.service.d/10-cpz.conf \
@@ -338,6 +340,7 @@ for script in \
 	stage3/01-session/01-run.sh \
 	stage3/01-session/02-run.sh \
 	stage3/01-session/files/cpz-first-login \
+	stage3/01-session/files/cpz-first-login-popup \
 	stage3/01-session/files/cpz-cage \
 	stage3/01-session/files/cpz-cage-output \
 	stage3/01-session/files/cpz-cage-session \
@@ -413,16 +416,23 @@ contains stage3/01-session/files/mc.ini 'keybar_visible=false'
 contains stage3/01-session/files/mc.ini 'message_visible=false'
 contains stage3/01-session/files/cpz-help 'cpz-keys help'
 contains stage3/01-session/files/cpz-hint 'cpz-keys hint'
+contains stage3/01-session/01-run.sh 'rm -f "${ROOTFS_DIR}/etc/profile.d/wifi-check.sh"'
 contains stage3/01-session/files/cpz-first-login 'passwd'
 contains stage3/01-session/files/cpz-first-login 'CPZ_PASSWORD_PROMPT_TIMEOUT'
 contains stage3/01-session/files/cpz-first-login 'timeout'
+contains stage3/01-session/files/cpz-first-login '--check'
+contains stage3/01-session/files/cpz-first-login-popup 'display-popup'
+contains stage3/01-session/files/cpz-first-login-popup 'client-attached'
+contains stage3/01-session/files/tmux.conf 'cpz-first-login-popup'
+contains stage3/01-session/files/cpz-tmux 'exec tmux attach-session'
+not_contains stage3/01-session/files/cpz-tmux '/usr/local/bin/cpz-first-login'
 contains stage3/01-session/files/cpz-conn-status.timer 'OnUnitActiveSec=30s'
 contains stage3/01-session/files/cpz-session-save.timer 'OnUnitActiveSec=5min'
 contains stage3/01-session/files/cpz-cage-output.timer 'OnUnitActiveSec=5s'
 contains stage3/01-session/files/cpz-settings 'Text Size'
 contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'cpz-getty'
 contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'StartLimitIntervalSec=0'
-contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'cpz-cage-output --prepare'
+contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'cpz-getty-prepare'
 contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'RestartMaxDelaySec=60'
 contains stage3/01-session/files/cpz-cage 'set -a'
 contains stage3/01-session/files/cpz-cage 'export WLR_DRM_DEVICES'
@@ -431,8 +441,10 @@ contains stage3/01-session/files/cpz-cage-output 'restart_gap=5'
 contains stage3/01-session/files/cpz-cage-output 'restart_gap_inactive=20'
 contains stage3/01-session/files/cpz-cage-output 'flock -n 9'
 contains stage3/01-session/files/cpz-cage-output 'logger -t cpz-cage-output --'
-contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'ExecStartPre=-+/usr/local/bin/cpz-cage-output --prepare'
+contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'ExecStartPre=-+/usr/local/bin/cpz-getty-prepare'
 contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'Type=simple'
+contains stage3/01-session/files/cpz-getty-prepare '/usr/local/bin/cpz-battery boot'
+contains stage3/01-session/files/cpz-getty-prepare '/usr/local/bin/cpz-cage-output --prepare'
 contains stage3/01-session/files/cpz-battery 'cpz-battery.boot-checked'
 contains stage3/01-session/files/cpz-keyboard-layout 'usb_device_is_pointer'
 contains stage3/01-session/files/cpz-keyboard-layout 'capabilities/rel'
@@ -475,7 +487,7 @@ contains stage3/01-session/files/cpz-music '.pl'
 contains stage3/01-session/files/cpz-music '/dev/tty'
 contains stage3/01-session/files/cpz-music '(exec 3<>/dev/tty)'
 not_contains stage3/01-session/files/cpz-music '{ exec 3<>/dev/tty; }'
-contains stage3/01-session/files/cpz-music '*/.*'
+contains stage3/01-session/files/cpz-music '/\/\./'
 contains stage3/01-session/files/cpz-music 'status playing'
 contains stage3/01-session/files/cpz-music 'add -p $queue'
 contains stage3/01-session/files/cpz-music 'win-activate'
