@@ -38,9 +38,15 @@ mode; the free IWAD is `/usr/share/games/doom/freedoom1.wad`. Pass
 `-iwad /usr/share/games/doom/freedoom1.wad` if the default WAD search does not
 find it.
 
-Crispy Doom uses the same SDL2 path and works without extra flags. If a build
-or a very old SDL2 ignores the renderer hint, set `force_software_renderer 1`
-in `crispy-doom.cfg` (Crispy's own setting) or launch it through `cpz-run`.
+Crispy Doom uses the same SDL2 path. On HDMI it still probes the V3D render
+node while SDL initialises, and the old **cma-64** reservation was too small
+for Mesa's 16 MiB binner next to cage's pixman buffers. The allocation then
+failed with `ENOMEM`, Crispy did not check it and crashed with `SIGSEGV`
+(`si_addr=NULL`) right after `I_SDL_PrecacheSounds`. The image now reserves
+**128 MiB** of CMA (`dtoverlay=vc4-kms-v3d,cma-128`), which leaves room for
+both. If a window still stays black with an older SDL2, set
+`force_software_renderer 1` in `crispy-doom.cfg` (Crispy's own setting); it
+keeps the game on the `wl_shm` path the compositor can present.
 
 ## Why accelerated rendering breaks on HDMI
 
@@ -55,6 +61,11 @@ The panel and HDMI behave differently for one concrete reason:
   the application surface never reaches the screen. The hardware cursor plane
   still works, which is exactly the “screen flickers with only a cursor”
   symptom.
+- Even the probe needs contiguous memory: Mesa/V3D reserves a 16 MiB binner
+  plus render buffers. With the old 64 MiB CMA reservation that allocation
+  failed with `ENOMEM` (visible in `dmesg` as
+  `vc4-drm: Failed to allocate from GEM DMA helper`), and an unchecked failure
+  in the client looks like an instant crash. The image reserves 128 MiB.
 
 The session therefore exports these defaults for every pane and every
 `cpz-run` launch:

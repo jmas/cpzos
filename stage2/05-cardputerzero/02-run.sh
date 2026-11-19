@@ -13,7 +13,7 @@
 #
 # gpu_mem=64 is the minimum Raspberry Pi recommends for vc4-kms-v3d. The CPZ
 # image is terminal-first inside a kiosk compositor, with no desktop/video decode, and the
-# KMS scanout buffers live in the cma-64 reservation, so the firmware only
+# KMS scanout buffers live in the cma-128 reservation, so the firmware only
 # needs room for its own heap plus the 170x320 splash frame (~106 KiB).
 # Keeping the vendor's gpu_mem=128 wasted 64 MiB of the CM0's 512 MiB.
 install -m 644 files/start.elf "${ROOTFS_DIR}/boot/firmware/start.elf"

@@ -120,9 +120,14 @@ cd /tmp/dtoverlays/modules/CardputerZero
 make KERNELDIR="$KERNELDIR" EXTRADIR="$EXTRADIR" CONFIG_CARDPUTERO_V0_5=y install
 make KERNELDIR="$KERNELDIR" EXTRADIR="$EXTRADIR" CONFIG_CARDPUTERO_V0_5=y config_setup
 
-# Reserve 64 MiB of contiguous memory for the KMS display driver.
+# Reserve 128 MiB of contiguous memory for the KMS display driver. 64 MiB is
+# enough for the pixman session, but a GL client on HDMI (Mesa/V3D allocates a
+# 16 MiB binner plus render buffers) fails with ENOMEM: SDL then reports the
+# device as a pointer-less black window, and Crispy Doom segfaults on the
+# unchecked allocation. 128 MiB keeps both the scanout buffers and an
+# accelerated probe working on the 512 MiB CM0.
 DEFAULT_CONFIG="/boot/firmware/config.txt"
-sed -i 's/^dtoverlay=vc4-kms-v3d$/dtoverlay=vc4-kms-v3d,cma-64/' "$DEFAULT_CONFIG"
+sed -i 's/^dtoverlay=vc4-kms-v3d$/dtoverlay=vc4-kms-v3d,cma-128/' "$DEFAULT_CONFIG"
 
 # Update module dependencies
 depmod -a "${KVER}"
