@@ -947,6 +947,10 @@ if grep -qx 'mc' "$ROOT/stage3/01-session/00-packages"; then
 else
 	bad "stage3/01-session/00-packages does not install mc"
 fi
+# mc creates ~/.cache/mc on first start; install -d only chowns the final
+# component, so ~/.cache itself has to be created with the user's ownership.
+contains stage3/01-session/01-run.sh \
+	'install -d -m 0755 -o 1000 -g 1000 "$first_home/.cache"'
 not_contains stage3/01-session/00-packages 'xdg-utils'
 not_contains stage3/01-session/00-packages 'alsa-utils'
 contains stage3/01-session/files/cpz-settings 'devices Connected'

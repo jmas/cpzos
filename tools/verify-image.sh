@@ -356,14 +356,16 @@ else
     pass "stock Wi-Fi rfkill warning removed"
 fi
 
-# The first user must own ~/.config so cpz-settings can create ~/.config/cpz.
+# The first user must own ~/.config and ~/.cache so cpz-settings can create
+# ~/.config/cpz and mc can create its ~/.cache/mc on first start.
 FIRST_HOME=$(debugfs -R "cat etc/passwd" "$TMPDIR/root.ext4" 2>/dev/null |
     awk -F: '$3 == 1000 { print $6; exit }' || true)
 if [ -z "$FIRST_HOME" ]; then
     fail "first user (uid 1000) missing"
 else
-    USER_CONFIG="${FIRST_HOME#/}/.config"
-    for dir in "$USER_CONFIG" "$USER_CONFIG/systemd" "$USER_CONFIG/cpz"; do
+    USER_HOME="${FIRST_HOME#/}"
+    for dir in "$USER_HOME/.config" "$USER_HOME/.config/systemd" \
+        "$USER_HOME/.config/cpz" "$USER_HOME/.cache" "$USER_HOME/.cache/cpz"; do
         if debugfs -R "stat /$dir" "$TMPDIR/root.ext4" 2>/dev/null |
             grep -qE 'User:[[:space:]]+1000[[:space:]]'; then
             pass "/$dir owned by uid 1000"

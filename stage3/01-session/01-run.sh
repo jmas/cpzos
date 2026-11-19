@@ -333,11 +333,20 @@ fi
 # Generate the tmux key cache at build time. tmux.conf sources it, and the
 # conditional cpz-keys fallback is a Python start on the boot path; the file
 # is user-specific because tmux reads ~/.cache/cpz/tmux-keys.conf.
+#
+# install -d applies -o/-g only to the final path component and never changes
+# an existing directory, so always create ~/.cache with the user's ownership
+# and chown it explicitly: otherwise it stays root-owned and every XDG cache
+# consumer fails, starting with mc ("Cannot create .../.cache/mc directory").
 first_home=$(getent passwd 1000 | cut -d: -f6 || true)
-if [ -n "$first_home" ] && [ -x /usr/local/bin/cpz-keys ]; then
-	install -d -m 0755 -o 1000 -g 1000 "$first_home/.cache/cpz"
-	HOME="$first_home" /usr/local/bin/cpz-keys write >/dev/null 2>&1 || true
-	chown -R 1000:1000 "$first_home/.cache/cpz" 2>/dev/null || true
+if [ -n "$first_home" ]; then
+	install -d -m 0755 -o 1000 -g 1000 "$first_home/.cache"
+	chown 1000:1000 "$first_home/.cache"
+	if [ -x /usr/local/bin/cpz-keys ]; then
+		install -d -m 0755 -o 1000 -g 1000 "$first_home/.cache/cpz"
+		HOME="$first_home" /usr/local/bin/cpz-keys write >/dev/null 2>&1 || true
+		chown -R 1000:1000 "$first_home/.cache" 2>/dev/null || true
+	fi
 fi
 
 systemctl daemon-reload || true
