@@ -36,7 +36,7 @@ open over the terminal and return you to the same tab when they close.
 - **Graphical apps** — X11 and Wayland programs run over the terminal through
   Xwayland.
 - **Panel and HDMI** — automatic output switching, per-output text size,
-  themes and 10–64 px text.
+  themes and 12–32 px text on the Terminus bitmap strikes.
 - **Battery aware** — low-battery warnings and a clean shutdown before the
   pack collapses.
 - **Three languages** — English, Ukrainian and German for both the UI and the
@@ -138,7 +138,7 @@ apply through a systemd path unit; changing the target card restarts the
 session. Keyboard-layout changes also restart it.
 
 The text size follows the output: **Settings → Display → Text Size** (or
-`Alt+G` / `Alt+M`) changes the active screen from 10 to 64 px, and each output
+`Alt+G` / `Alt+M`) changes the active screen from 12 to 32 px, and each output
 remembers its own size across restarts.
 
 The mouse cursor follows the device, not the compositor. It appears only when a

@@ -596,7 +596,7 @@ Rules for exceptions:
 | **Settings** | the TUI and its main page | Preferences, Control Panel |
 | **Connections** | Wi-Fi, Bluetooth, Ethernet, VPN page | Network (for the page), Connectivity |
 | **Display** | theme, brightness, screen output, text size, status bar | Display & Brightness |
-| **Text Size** | foot font size, 10–64 px | Font Size |
+| **Text Size** | foot font size, 12–32 px (Terminus OTB strikes) | Font Size |
 | **Keys** | key reference | Key Bindings, Key reference |
 | **pane** | a tmux split | split, window |
 | **tab** | a tmux window | window (in user text) |

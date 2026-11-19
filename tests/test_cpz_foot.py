@@ -92,6 +92,14 @@ class FootConfigTest(unittest.TestCase):
         _, hdmi = self.run_config(settings=settings, target="hdmi")
         self.assertIn("font=Terminus:pixelsize=20", hdmi)
 
+    def test_unsupported_size_is_normalized_to_a_terminus_strike(self):
+        # Terminus OTB only has bitmap strikes at 12/14/16/.../32. A persisted
+        # 10 px (the old picker minimum) made foot fall back to a font without
+        # Cyrillic, so Ukrainian labels rendered as dashes.
+        _, config = self.run_config(settings="font_size_panel=10\n", target="panel")
+        self.assertIn("font=Terminus:pixelsize=12", config)
+        self.assertIn("font=DejaVu Sans Mono:pixelsize=12", config)
+
     def test_legacy_font_size_is_the_fallback(self):
         _, config = self.run_config(settings="font_size=18\n", target="hdmi")
         self.assertIn("font=Terminus:pixelsize=18", config)

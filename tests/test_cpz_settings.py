@@ -219,8 +219,8 @@ class SettingsTUI(unittest.TestCase):
         data = self.mod.load_settings()
         self.assertEqual(data["display"], "auto")
         # Values are clamped, not rejected.
-        self.assertEqual(data["font_size_panel"], 64)
-        self.assertEqual(data["font_size_hdmi"], 64)
+        self.assertEqual(data["font_size_panel"], 32)
+        self.assertEqual(data["font_size_hdmi"], 32)
         self.assertEqual(data["history_limit"], 2000)
         self.assertEqual(data["mode_keys"], "vi")
         self.assertEqual(data["screen_timeout"], 0)
@@ -331,13 +331,16 @@ class SettingsTUI(unittest.TestCase):
                     os.environ["CPZ_OUTPUT_STATE"] = previous
 
     def test_font_size_choices_cover_the_key_bindings(self):
-        self.assertEqual(self.mod.FONT_SIZE_MIN, 10)
-        self.assertEqual(self.mod.FONT_SIZE_MAX, 64)
+        self.assertEqual(self.mod.FONT_SIZE_MIN, 12)
+        self.assertEqual(self.mod.FONT_SIZE_MAX, 32)
+        self.assertEqual(self.mod.FONT_SIZES, (12, 14, 16, 18, 20, 22, 24, 28, 32))
         self.assertIn(12, self.mod.FONT_SIZES)
         self.assertEqual(self.mod.DEFAULTS["font_size_panel"], 12)
         self.assertEqual(self.mod.DEFAULTS["font_size_hdmi"], 16)
         self.assertIn(16, self.mod.FONT_SIZES)
-        self.assertIn(64, self.mod.FONT_SIZES)
+        self.assertNotIn(10, self.mod.FONT_SIZES)
+        self.assertEqual(self.mod.nearest_font_size(10), 12)
+        self.assertEqual(self.mod.nearest_font_size(64), 32)
         self.assertEqual(self.mod.FONT_SIZE_LABELS[14], "14px")
 
     def test_shortcut_filter_matches_label_or_binding(self):
