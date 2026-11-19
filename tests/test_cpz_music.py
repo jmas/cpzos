@@ -76,7 +76,7 @@ class MusicWrapperTest(unittest.TestCase):
                 "album/track-c.OGG": "d",
             },
         )
-        self.assertIn("player-play", calls[-1])
+        self.assertEqual(calls[-1], "-C player-play")
         self.assertEqual(entries[0], str(root / "music" / "track-b.wav"))
         self.assertEqual(entries[1:], [
             str(root / "music" / "album" / "track-c.OGG"),
@@ -108,9 +108,23 @@ class MusicWrapperTest(unittest.TestCase):
         _, calls, _, root = self.run_music("only.mp3", {"only.mp3": "x"})
         self.assertEqual(calls[0], "-C status")
         self.assertEqual(calls[1], "-C clear -q")
-        self.assertTrue(calls[2].startswith("-C add -q "))
-        self.assertEqual(calls[3], "-C player-play")
+        self.assertTrue(calls[2].startswith("-C add -l "), calls[2])
+        self.assertTrue(calls[3].startswith("-C add -q "), calls[3])
+        self.assertEqual(calls[4], "-C player-play")
         self.assertEqual(list(root.glob("cpz-music-*.pl")), [])
+
+    def test_folder_order_is_rotated_to_the_opened_track(self):
+        # 04, 05, ... 13, 01, 02, 03: the album keeps its order and wraps
+        # instead of playing the clicked track and then starting from 01.
+        _, _, entries, root = self.run_music(
+            "b.mp3", {"a.mp3": "a", "b.mp3": "b", "c.mp3": "c", "d.mp3": "d"}
+        )
+        self.assertEqual(entries, [
+            str(root / "music" / "b.mp3"),
+            str(root / "music" / "c.mp3"),
+            str(root / "music" / "d.mp3"),
+            str(root / "music" / "a.mp3"),
+        ])
 
     def test_a_single_file_queue_still_starts_playing(self):
         _, calls, entries, root = self.run_music("only.mp3", {"only.mp3": "x"})

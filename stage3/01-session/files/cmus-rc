@@ -5,3 +5,9 @@
 # same way other viewers do.
 bind -f common q quit
 bind -f common Q quit
+
+# A folder opened from mc/lf is played from the queue and imported into the
+# library. Without this, cmus resumes the library after the queue drains and
+# replays the album from the clicked track; with it, playback ends with the
+# folder.
+set play_library=false

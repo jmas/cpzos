@@ -2,11 +2,12 @@
 # Open a folder in the cmus TUI and start with the selected track.
 #
 # cmus has no file argument and its command lexer is awkward with spaces, so
-# the wrapper describes the folder in a temporary cmus playlist (.pl) and adds
-# that to the play queue: the selected track first, then the other audio files
-# of the same folder. The queue is copied when it is added, so the file is
-# removed immediately. The remote helper runs in the background while cmus
-# owns the terminal; q returns to mc/lf.
+# the wrapper describes the folder in a temporary cmus playlist (.pl). The
+# playlist is added to the play queue (playback order) and to the library (so
+# the whole folder stays visible in the Library view instead of vanishing as
+# the queue drains). Order is the folder order rotated to the opened track:
+# 04, 05, ... 13, 01, 02, 03. The remote helper runs in the background while
+# cmus owns the terminal; q returns to mc/lf.
 set -eu
 
 [ "$#" -ge 1 ] || exit 1
@@ -30,14 +31,14 @@ fi
 
 # cmus recognises a playlist by its .pl extension, not its content.
 queue=${TMPDIR:-/tmp}/cpz-music-$$.pl
-trap 'rm -f -- "$queue"' EXIT HUP INT TERM
+list=${TMPDIR:-/tmp}/cpz-music-$$.list
+trap 'rm -f -- "$queue" "$list"' EXIT HUP INT TERM
 
-{
-	printf '%s\n' "$file"
-	find "$dir" -type f ! -name '*.cue' -print | sort | while IFS= read -r f; do
-		[ "$f" = "$file" ] && continue
-		# Hidden entries are metadata, not music: macOS writes an AppleDouble
-		# "._track.mp3" next to every file and those sort first.
+# Every audio file of the folder (recursively), in name order. Hidden entries
+# are metadata, not music: macOS writes an AppleDouble "._track.mp3" next to
+# every file and those sort first.
+find "$dir" -type f ! -name '*.cue' -print | LC_ALL=C sort |
+	while IFS= read -r f; do
 		case "$f" in
 			*/.*) continue ;;
 		esac
@@ -53,8 +54,19 @@ trap 'rm -f -- "$queue"' EXIT HUP INT TERM
 			*) continue ;;
 		esac
 		printf '%s\n' "$f"
-	done
-} >"$queue"
+	done >"$list"
+
+# Rotate the list at the opened track so the album keeps its order.
+: >"$queue"
+found=
+while IFS= read -r f; do
+	[ "$f" = "$file" ] && found=1
+	[ -n "$found" ] && printf '%s\n' "$f"
+done <"$list" >"$queue"
+while IFS= read -r f; do
+	[ "$f" = "$file" ] && break
+	printf '%s\n' "$f"
+done <"$list" >>"$queue"
 
 (
 	tries=0
@@ -64,6 +76,7 @@ trap 'rm -f -- "$queue"' EXIT HUP INT TERM
 		tries=$((tries + 1))
 	done
 	cmus-remote -C "clear -q" >/dev/null 2>&1 || true
+	cmus-remote -C "add -l $queue" >/dev/null 2>&1 || true
 	cmus-remote -C "add -q $queue" >/dev/null 2>&1 || true
 	# A large folder is still being scanned when add returns; player-play would
 	# run against an empty queue and the player would stay stopped. Retry until
@@ -77,7 +90,7 @@ trap 'rm -f -- "$queue"' EXIT HUP INT TERM
 		sleep 0.25
 		tries=$((tries + 1))
 	done
-	rm -f -- "$queue"
+	rm -f -- "$queue" "$list"
 ) &
 
 exec cmus
