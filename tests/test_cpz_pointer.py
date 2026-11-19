@@ -120,13 +120,16 @@ class PointerPolicyTest(unittest.TestCase):
             key=FULL_KEYBOARD,
         )
         result = self.run_pointer(["--udev", "event0"], settings="mouse=1\n")
-        self.assertIn("ID_INPUT_MOUSE=0", result.stdout)
+        # The pointer tags are removed by the udev rule (an IMPORT value cannot
+        # delete a property); the hook marks the device instead.
+        self.assertIn("CPZ_NO_POINTER=1", result.stdout)
+        self.assertIn("ID_INPUT_KEYBOARD=1", result.stdout)
         self.assertNotIn("LIBINPUT_IGNORE_DEVICE=1", result.stdout)
 
     def test_real_mouse_is_stripped_while_mouse_support_is_off(self):
         self.add_device("event1", rel=REL_XY, key=BTN_LEFT)
         result = self.run_pointer(["--udev", "event1"], settings="mouse=0\n")
-        self.assertIn("ID_INPUT_MOUSE=0", result.stdout)
+        self.assertIn("CPZ_NO_POINTER=1", result.stdout)
         self.assertIn("LIBINPUT_IGNORE_DEVICE=1", result.stdout)
         self.assertIn("ID_SEAT=seat-cpz-no-pointer", result.stdout)
         self.assertIn("CPZ_REAL_POINTER=1", result.stdout)
@@ -150,7 +153,7 @@ class PointerPolicyTest(unittest.TestCase):
             key=FULL_KEYBOARD,
         )
         result = self.run_pointer(["--udev", "event2"], settings="mouse=1\n")
-        self.assertIn("ID_INPUT_MOUSE=0", result.stdout)
+        self.assertIn("CPZ_NO_POINTER=1", result.stdout)
         self.assertNotIn("LIBINPUT_IGNORE_DEVICE=1", result.stdout)
 
     def test_usb_keyboard_with_pointer_bits_is_not_a_mouse(self):
@@ -319,7 +322,8 @@ class PointerPolicyTest(unittest.TestCase):
         )
         self.assertIn("MatchName=cardputer-zero-internal", quirks)
         self.assertIn("MatchName=vc4-hdmi*", quirks)
-        self.assertIn("AttrEventCode=-EV_REL;-EV_ABS;", quirks)
+        self.assertIn("AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;", quirks)
+        self.assertIn("MatchName=gpio_ir_recv", quirks)
         run = (ROOT / "stage3" / "01-session" / "01-run.sh").read_text(
             encoding="utf-8"
         )
@@ -358,6 +362,11 @@ class PointerPolicyTest(unittest.TestCase):
         )
         self.assertIn("CPZ_REAL_POINTER}", rule)
         self.assertIn("cpz-pointer-cursor.service", rule)
+        # libinput checks whether an ID_INPUT_* property exists, so the pointer
+        # tags must be deleted, not set to 0.
+        self.assertIn("CPZ_NO_POINTER}", rule)
+        self.assertIn("ENV{ID_INPUT_MOUSE}=\"\"", rule)
+        self.assertIn('RUN+="/bin/systemctl --no-block start', rule)
 
     def test_path_unit_applies_mouse_setting_changes(self):
         path = (FILES / "cpz-pointer.path").read_text(encoding="utf-8")
