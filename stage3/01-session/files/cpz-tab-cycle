@@ -1,12 +1,12 @@
 #!/bin/sh
-# Switch to the next or previous terminal tab.
+# Switch to the next or previous tab.
 #
 #   cpz-tab-cycle [SESSION] [next|prev]
 #
-# Plain `tmux next-window` also visits the Settings tab and any window whose
-# pane died, so cycling could land on a black, non-terminal screen. This helper
-# walks only live terminal tabs, wraps at the ends, and leaves Settings to the
-# dedicated Alt+S shortcut. With a single terminal tab it does nothing.
+# Plain `tmux next-window` also visits a window whose pane died, so cycling
+# could land on a black, non-terminal screen. This helper walks live tabs only,
+# wraps at the ends and includes the Settings tab. With a single tab it does
+# nothing.
 set -eu
 
 session=${1:-main}
@@ -29,13 +29,15 @@ if command -v flock >/dev/null 2>&1; then
 	flock -w 2 9 || exit 0
 fi
 
-# The window name is last so read() keeps spaces in user-renamed tabs.
+# The window name is deliberately not read here: cycling follows the tmux
+# window order, not a user-renamed label.
 windows=$(tmux list-windows -t "=$session" -F \
-	'#{window_id} #{window_index} #{window_active} #{?@cpz_settings,1,0} #{pane_dead} #{window_name}')
+	'#{window_id} #{window_index} #{window_active} #{pane_dead}')
 
-# Terminal tabs only: no Settings flag, no legacy "settings" name, live pane.
-ids=$(printf '%s\n' "$windows" | awk \
-	'$4 != 1 && $5 != 1 && $6 != "settings" { print $1 }')
+# Live tabs only, including Settings. Dead panes are skipped: with
+# remain-on-exit off the window normally disappears, but a race can still
+# expose an exited pane and cycling must not land on a blank screen.
+ids=$(printf '%s\n' "$windows" | awk '$4 != 1 { print $1 }')
 [ -n "$ids" ] || exit 0
 
 count=$(printf '%s\n' "$ids" | wc -l | tr -d ' ')
@@ -46,8 +48,8 @@ position=$(printf '%s\n' "$ids" | awk -v current="$current" \
 	'$0 == current { print NR; exit }')
 
 if [ -z "$position" ]; then
-	# Settings (or another excluded window) is active: start at the matching
-	# end of the terminal list.
+	# The active window is not a live tab (for example an exited pane):
+	# start at the matching end.
 	if [ "$direction" = next ]; then
 		position=1
 	else

@@ -143,56 +143,68 @@ class TabSessionTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_tab_cycle_moves_between_live_terminal_tabs(self):
+    def test_tab_cycle_moves_between_live_tabs(self):
         windows = (
-            "@1 1 1 0 0 shell\n"
-            "@2 2 0 0 0 one\n"
-            "@3 3 0 0 0 two\n"
-            "@4 4 0 1 0 settings"
+            "@1 1 1 0 shell\n"
+            "@2 2 0 0 one\n"
+            "@3 3 0 0 two\n"
+            "@4 4 0 0 settings"
         )
         self.run_helper("cpz-tab-cycle", "main", "next", FAKE_WINDOWS=windows)
         self.assertIn("switch-client -c client -t @2", self.commands())
 
-    def test_tab_cycle_wraps_and_skips_settings(self):
+    def test_tab_cycle_includes_settings_and_wraps(self):
         windows = (
-            "@1 1 0 0 0 shell\n"
-            "@2 2 0 0 0 one\n"
-            "@3 3 1 0 0 two\n"
-            "@4 4 0 1 0 settings"
+            "@1 1 0 0 shell\n"
+            "@2 2 0 0 one\n"
+            "@3 3 1 0 two\n"
+            "@4 4 0 0 settings"
         )
         self.run_helper("cpz-tab-cycle", "main", "next", FAKE_WINDOWS=windows)
+        self.assertIn("switch-client -c client -t @4", self.commands())
+
+        # From Settings, Tab continues at the start of the list, and
+        # Alt+Shift+Tab goes back to the previous tab.
+        settings_active = (
+            "@1 1 0 0 shell\n"
+            "@2 2 0 0 one\n"
+            "@3 3 0 0 two\n"
+            "@4 4 1 0 settings"
+        )
+        self.log.write_text("", encoding="utf-8")
+        self.run_helper(
+            "cpz-tab-cycle", "main", "next", FAKE_WINDOWS=settings_active
+        )
         self.assertIn("switch-client -c client -t @1", self.commands())
-        self.assertNotIn("switch-client -c client -t @4", self.commands())
 
         self.log.write_text("", encoding="utf-8")
-        self.run_helper("cpz-tab-cycle", "main", "prev", FAKE_WINDOWS=windows)
-        self.assertIn("switch-client -c client -t @2", self.commands())
-
-    def test_tab_cycle_from_settings_starts_at_the_matching_end(self):
-        windows = (
-            "@1 1 0 0 0 shell\n"
-            "@2 2 0 0 0 one\n"
-            "@3 3 0 1 0 settings"
+        self.run_helper(
+            "cpz-tab-cycle", "main", "prev", FAKE_WINDOWS=settings_active
         )
-        self.run_helper("cpz-tab-cycle", "main", "next", FAKE_WINDOWS=windows)
-        self.assertIn("switch-client -c client -t @1", self.commands())
-
-        self.log.write_text("", encoding="utf-8")
-        self.run_helper("cpz-tab-cycle", "main", "prev", FAKE_WINDOWS=windows)
-        self.assertIn("switch-client -c client -t @2", self.commands())
+        self.assertIn("switch-client -c client -t @3", self.commands())
 
     def test_tab_cycle_skips_dead_panes(self):
         windows = (
-            "@1 1 1 0 0 shell\n"
-            "@2 2 0 0 1 one\n"
-            "@3 3 0 0 0 two\n"
-            "@4 4 0 1 0 settings"
+            "@1 1 1 0 shell\n"
+            "@2 2 0 1 one\n"
+            "@3 3 0 0 two\n"
+            "@4 4 0 0 settings"
         )
         self.run_helper("cpz-tab-cycle", "main", "next", FAKE_WINDOWS=windows)
         self.assertIn("switch-client -c client -t @3", self.commands())
 
-    def test_tab_cycle_is_a_no_op_with_one_terminal_tab(self):
-        windows = "@1 1 1 0 0 shell\n@2 2 0 1 0 settings"
+    def test_tab_cycle_toggles_between_one_tab_and_settings(self):
+        windows = "@1 1 1 0 shell\n@2 2 0 0 settings"
+        self.run_helper("cpz-tab-cycle", "main", "next", FAKE_WINDOWS=windows)
+        self.assertIn("switch-client -c client -t @2", self.commands())
+
+        self.log.write_text("", encoding="utf-8")
+        windows = "@1 1 0 0 shell\n@2 2 1 0 settings"
+        self.run_helper("cpz-tab-cycle", "main", "prev", FAKE_WINDOWS=windows)
+        self.assertIn("switch-client -c client -t @1", self.commands())
+
+    def test_tab_cycle_is_a_no_op_with_one_tab(self):
+        windows = "@1 1 1 0 shell"
         self.run_helper("cpz-tab-cycle", "main", "next", FAKE_WINDOWS=windows)
         self.assertFalse(
             any(command.startswith("switch-client") for command in self.commands())
