@@ -96,7 +96,7 @@ class OpenTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("cpz-music ", calls)
         self.assertIn("song.mp3", calls)
-        self.assertNotIn("mpv", calls)
+        self.assertNotIn("mpv --", calls)
 
     def test_apple_double_sidecar_opens_the_real_file(self):
         # macOS leaves "._song.mp3" next to "song.mp3"; it sorts first in mc
@@ -156,6 +156,86 @@ class OpenTest(unittest.TestCase):
         result, calls = self.run_open("notes.txt")
         self.assertEqual(result.returncode, 1)
         self.assertEqual(calls, "")
+
+    def _run_gallery(self, extra_files, viewer_status=0):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            log = root / "calls.log"
+
+            file_shim = bin_dir / "file"
+            file_shim.write_text(
+                "#!/bin/sh\n"
+                'for last in "$@"; do :; done\n'
+                'case "$last" in\n'
+                '  */._*) echo "application/octet-stream" ;;\n'
+                '  *.png) echo "image/png" ;;\n'
+                "esac\n",
+                encoding="utf-8",
+            )
+            viewer = bin_dir / "imv-wayland"
+            viewer.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            runner = bin_dir / "cpz-run"
+            runner.write_text(
+                '#!/bin/sh\nprintf "%s\\n" "$*" >>"$CPZ_TEST_LOG"\n'
+                "exit \"${CPZ_TEST_VIEWER_STATUS:-0}\"\n",
+                encoding="utf-8",
+            )
+            for shim in (file_shim, viewer, runner):
+                shim.chmod(0o755)
+
+            script = root / "cpz-open"
+            script.write_text(
+                OPEN.read_text(encoding="utf-8").replace(
+                    "/usr/local/bin/cpz-run", str(runner)
+                ),
+                encoding="utf-8",
+            )
+            script.chmod(0o755)
+
+            gallery = root / "gallery"
+            gallery.mkdir()
+            for name in ("1.png", "2.png", "3.png", *extra_files):
+                (gallery / name).write_text("x", encoding="utf-8")
+
+            env = os.environ.copy()
+            env["PATH"] = str(bin_dir) + ":/usr/bin:/bin"
+            env["CPZ_TEST_LOG"] = str(log)
+            env["CPZ_TEST_VIEWER_STATUS"] = str(viewer_status)
+            result = subprocess.run(
+                [str(script), str(gallery / "2.png")],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=15,
+            )
+            calls = log.read_text(encoding="utf-8") if log.exists() else ""
+            return result, calls
+
+    def test_images_open_as_a_gallery_of_the_directory(self):
+        result, calls = self._run_gallery(["._2.png"])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(calls.startswith("imv-wayland "), calls)
+        # The opened file comes first, then its siblings in name order and no
+        # macOS sidecars.
+        gallery = Path(calls.split()[1]).parent
+        self.assertEqual(
+            calls.split(),
+            [
+                "imv-wayland",
+                str(gallery / "2.png"),
+                str(gallery / "1.png"),
+                str(gallery / "3.png"),
+            ],
+        )
+
+    def test_an_interrupted_viewer_does_not_restart_the_file(self):
+        # mc runs ${MC_XDG_OPEN} ... || do_open_action; a non-zero status after
+        # Ctrl+C starts a second player. The dispatcher must report success.
+        result, _ = self._run_gallery([], viewer_status=130)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_lf_uses_the_dispatcher(self):
         lfrc = (FILES / "lfrc").read_text(encoding="utf-8")

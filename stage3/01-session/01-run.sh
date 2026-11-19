@@ -5,6 +5,7 @@
 install -d -m 0755 "${ROOTFS_DIR}/usr/local/bin"
 install -m 0755 files/cpz-cage files/cpz-cage-output files/cpz-cage-session \
 	files/cpz-session-supervise files/cpz-open files/cpz-music \
+	files/cpz-media-keys \
 	files/cpz-panel-backlight \
 	files/cpz-foot-config files/cpz-foot-reload \
 	files/cpz-getty files/cpz-run files/cpz-tmux files/cpz-tmux-start \
@@ -146,7 +147,7 @@ fi
 install -m 0644 files/cpz-session-save.service files/cpz-session-save.timer \
 	files/cpz-conn-status.service files/cpz-conn-status.timer \
 	files/cpz-pointer.service files/cpz-pointer.path \
-	files/cpz-pointer-cursor.service \
+	files/cpz-pointer-cursor.service files/cpz-media-keys.service \
 	"${ROOTFS_DIR}/etc/systemd/system/"
 
 # Let the netdev user manage NetworkManager (Wi-Fi) without a polkit prompt.

@@ -182,6 +182,9 @@ else
 	systemctl enable getty@tty1.service
 	systemctl enable cpz-tmux.service
 	systemctl enable cpz-pointer.service cpz-pointer.path
+	# Headphone volume buttons are plain evdev keys that cage never
+	# forwards to foot; a small user daemon turns them into wpctl calls.
+	systemctl enable cpz-media-keys.service
 	systemctl unmask getty@tty2.service getty@tty3.service || true
 	systemctl enable getty@tty2.service getty@tty3.service
 	# tty2/tty3 are not drawn while fbcon=map:off, and foot renders with

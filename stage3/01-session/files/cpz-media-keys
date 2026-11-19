@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+"""Volume buttons on a USB headset.
+
+cage delivers key presses to the focused Wayland client, and foot has no
+terminal sequence for KEY_VOLUMEUP/DOWN. The buttons on a USB headset therefore
+never reached cpz-volume, even though the Settings page and the keyboard
+shortcut changed the PipeWire sink correctly.
+
+This daemon reads the evdev devices (the CPZ user is in the input group), reacts
+to press events only, and runs the same helper the keyboard shortcut uses. It
+rescans /dev/input so a headset plugged in later starts working without a
+restart.
+"""
+
+import glob
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+
+EVENT = struct.Struct("llHHi")  # struct input_event, 64-bit timeval
+EV_KEY = 0x01
+ACTIONS = {113: "mute", 114: "down", 115: "up"}
+RESCAN = 2.0
+HELPER = "/usr/local/bin/cpz-volume"
+
+
+def log(message):
+    print(f"cpz-media-keys: {message}", file=sys.stderr, flush=True)
+
+
+def rescan(open_fds):
+    for path in sorted(glob.glob("/dev/input/event*")):
+        if path in open_fds:
+            continue
+        try:
+            open_fds[path] = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            continue
+
+
+def close_all(open_fds):
+    for handle in open_fds.values():
+        try:
+            os.close(handle)
+        except OSError:
+            pass
+    open_fds.clear()
+
+
+def consume(handle, open_fds):
+    try:
+        data = os.read(handle, EVENT.size * 64)
+    except OSError:
+        data = b""
+    if not data:
+        # Device unplugged or unreadable: drop it and wait for the rescan.
+        for path, fd in list(open_fds.items()):
+            if fd == handle:
+                del open_fds[path]
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                break
+        return
+    for offset in range(0, len(data) - EVENT.size + 1, EVENT.size):
+        _, _, etype, code, value = EVENT.unpack_from(data, offset)
+        # value 1 is a press; 0 is release and 2 is autorepeat.
+        if etype == EV_KEY and value == 1 and code in ACTIONS:
+            subprocess.run([HELPER, ACTIONS[code]], check=False)
+
+
+def main():
+    fds = {}
+    log("watching volume keys")
+    while True:
+        rescan(fds)
+        if not fds:
+            time.sleep(RESCAN)
+            continue
+        try:
+            ready, _, _ = select.select(list(fds.values()), [], [], RESCAN)
+        except OSError:
+            # A device vanished between the scan and select(); start over.
+            close_all(fds)
+            time.sleep(0.2)
+            continue
+        for handle in ready:
+            consume(handle, fds)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

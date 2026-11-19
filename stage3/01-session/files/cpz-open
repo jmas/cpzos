@@ -1,9 +1,10 @@
 #!/bin/sh
-# Open an image or a video with the CPZ viewer.
+# Open an image, a video or a track with the CPZ media players.
 #
 # Midnight Commander calls this through MC_XDG_OPEN (set in the tmux
-# environment) and lf through its `open` command. Only the two GUI viewers the
-# image ships are handled; anything else exits 1 so the caller keeps its own
+# environment) and lf through its `open` command. Images and videos open as a
+# gallery/playlist of the whole directory the file lives in, starting with the
+# file that was opened. Anything unknown exits 1 so the caller keeps its own
 # text handling.
 #
 # The viewers must not use the GPU: cage renders with pixman and cannot import
@@ -32,21 +33,82 @@ esac
 
 mime=$(file -b --mime-type -- "$1" 2>/dev/null || true)
 case "$mime" in
-	image/*)
+	image/*) kind=image ;;
+	video/*) kind=video ;;
+	audio/*) kind=audio ;;
+	*) exit 1 ;;
+esac
+
+file=$1
+dir=$(dirname -- "$file")
+
+# Images and video start with the opened file, then the rest of its directory
+# in name order: imv treats its arguments as a gallery, mpv as a playlist.
+# Hidden entries are metadata (macOS ._ sidecars, .Trashes, ...), not media.
+media_of_kind() {
+	ext=$(printf '%s' "${1##*.}" | tr 'A-Z' 'a-z')
+	case "$kind:$ext" in
+		image:jpg | image:jpeg | image:jpe | image:png | image:gif | \
+			image:bmp | image:tif | image:tiff | image:webp | \
+			image:svg | image:svgz | image:heic | image:heif | \
+			image:avif) ;;
+		video:mp4 | video:m4v | video:mkv | video:webm | video:avi | \
+			video:mov | video:mpg | video:mpeg | video:m2ts | video:mts | \
+			video:ts | video:wmv | video:flv | video:ogv | video:3gp | \
+			video:vob) ;;
+		*) return 1 ;;
+	esac
+}
+
+if [ "$kind" != audio ]; then
+	queue=$(mktemp "${TMPDIR:-/tmp}/cpz-open.XXXXXX") || exit 1
+	trap 'rm -f -- "$queue"' EXIT HUP INT TERM
+	{
+		printf '%s\n' "$file"
+		find "$dir" -maxdepth 1 -type f ! -name '.*' -print |
+			LC_ALL=C sort |
+			while IFS= read -r f; do
+				[ "$f" = "$file" ] && continue
+				media_of_kind "$f" || continue
+				printf '%s\n' "$f"
+			done
+	} >"$queue"
+	set --
+	while IFS= read -r f; do
+		[ -n "$f" ] || continue
+		set -- "$@" "$f"
+	done <"$queue"
+	rm -f -- "$queue"
+	trap - EXIT HUP INT TERM
+fi
+[ "$#" -ge 1 ] || set -- "$file"
+
+# mc runs the open command as ${MC_XDG_OPEN} ... || do_open_action, so a
+# non-zero exit starts a second viewer (mpv --really-quiet, mplayer, ...).
+# Ctrl+C lands in the whole foreground group: keep the shell alive so the
+# viewer's status is swallowed and the caller gets success.
+case "$kind" in
+	image)
 		if command -v imv-wayland >/dev/null 2>&1; then
-			exec /usr/local/bin/cpz-run imv-wayland "$@"
+			trap ':' INT TERM
+			/usr/local/bin/cpz-run imv-wayland "$@" || true
+			exit 0
 		fi
 		;;
-	video/*)
+	video)
 		if command -v mpv >/dev/null 2>&1; then
-			exec /usr/local/bin/cpz-run mpv --vo=wlshm --hwdec=no "$@"
+			trap ':' INT TERM
+			/usr/local/bin/cpz-run mpv --vo=wlshm --hwdec=no "$@" || true
+			exit 0
 		fi
 		;;
-	audio/*)
+	audio)
 		# A TUI player runs in the current pane, not in a Wayland window; it
 		# queues the whole directory so the folder keeps playing.
 		if command -v cmus >/dev/null 2>&1; then
-			exec /usr/local/bin/cpz-music "$@"
+			trap ':' INT TERM
+			/usr/local/bin/cpz-music "$file" || true
+			exit 0
 		fi
 		;;
 esac

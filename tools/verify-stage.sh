@@ -217,6 +217,8 @@ for file in \
 	stage3/01-session/files/cpz-cage.tmpfiles \
 	stage3/01-session/files/cpz-open \
 	stage3/01-session/files/cpz-music \
+	stage3/01-session/files/cpz-media-keys \
+	stage3/01-session/files/cpz-media-keys.service \
 	stage3/01-session/files/lfrc \
 	stage3/01-session/files/mpv.conf \
 	stage3/01-session/files/imv-config \
@@ -460,6 +462,8 @@ contains stage3/01-session/files/cpz-open 'imv-wayland'
 contains stage3/01-session/files/cpz-open '--vo=wlshm'
 contains stage3/01-session/files/cpz-open 'cpz-music'
 contains stage3/01-session/files/cpz-open '._*'
+contains stage3/01-session/files/cpz-open "trap ':' INT TERM"
+contains stage3/01-session/files/cpz-open 'maxdepth 1'
 contains stage3/01-session/files/lfrc 'audio/*'
 contains stage3/01-session/files/cpz-music 'add -q $queue'
 contains stage3/01-session/files/cpz-music '.pl'
@@ -470,6 +474,10 @@ contains stage3/01-session/files/cmus-rc 'bind -f common q quit'
 contains stage3/01-session/01-run.sh 'files/cmus-rc'
 contains stage3/01-session/files/lfrc '/usr/local/bin/cpz-open'
 contains stage3/01-session/files/mpv.conf 'vo=wlshm'
+contains stage3/01-session/files/mpv.conf 'sub-auto=fuzzy'
+contains stage3/01-session/files/cpz-volume 'LC_ALL=C awk'
+contains stage3/01-session/01-run.sh 'cpz-media-keys'
+contains stage3/01-session/02-run.sh 'enable cpz-media-keys.service'
 contains stage3/01-session/01-run.sh "user_config/lf/lfrc"
 not_contains stage3/01-session/files/cpz-settings 'Panel Text Size'
 not_contains stage3/01-session/files/cpz-settings 'HDMI Text Size'

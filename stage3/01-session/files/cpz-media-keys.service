@@ -1,0 +1,20 @@
+[Unit]
+Description=CPZ headphone volume keys
+# The volume buttons on a USB headset emit KEY_VOLUMEUP/DOWN as plain evdev
+# keys. cage forwards them to the focused client and foot cannot translate
+# them to a terminal sequence, so nobody handled them. The daemon needs the
+# user's PipeWire runtime directory for wpctl.
+Requires=user-runtime-dir@1000.service
+After=multi-user.target user-runtime-dir@1000.service cpz-tmux.service
+
+[Service]
+User=1000
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/local/bin/cpz-media-keys
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

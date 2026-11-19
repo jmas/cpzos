@@ -24,14 +24,14 @@ percent=$(cat "$state.percent")
 muted=$(cat "$state.muted")
 case "$1" in
   get-volume)
-    awk -v p="$percent" -v m="$muted" 'BEGIN {
+    LC_ALL=C awk -v p="$percent" -v m="$muted" 'BEGIN {
       printf "Volume: %.2f", p / 100
       if (m == 1) printf " [MUTED]"
       printf "\\n"
     }'
     ;;
   set-volume)
-    awk -v v="$3" 'BEGIN { printf "%d\\n", (v * 100) + 0.5 }' \
+    LC_ALL=C awk -v v="$3" 'BEGIN { printf "%d\\n", (v * 100) + 0.5 }' \
       >"$state.percent"
     ;;
   set-mute)
@@ -120,6 +120,13 @@ class VolumeHelper(unittest.TestCase):
         result = self.run_volume("up", path=str(missing))
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stderr, "")
+
+    def test_awk_ignores_the_user_locale(self):
+        # wpctl only accepts a dot: in a comma locale awk printed "0,05" and
+        # every volume change failed silently (headphone buttons included).
+        for line in VOLUME.read_text(encoding="utf-8").splitlines():
+            if "awk " in line:
+                self.assertIn("LC_ALL=C", line, line)
 
     def test_registry_has_sound_actions(self):
         loader = SourceFileLoader(

@@ -37,7 +37,10 @@ status=$(wpctl get-volume "$target" 2>/dev/null) || status=
 	exit 1
 }
 
-percent=$(printf '%s\n' "$status" | awk '{ printf "%d", ($2 * 100) + 0.5 }')
+# wpctl only accepts a dot as the decimal separator, so never let the user's
+# locale turn "0.05" into "0,05" (a comma locale used to make every change
+# fail silently, including the headphone volume buttons).
+percent=$(printf '%s\n' "$status" | LC_ALL=C awk '{ printf "%d", ($2 * 100) + 0.5 }')
 case "$percent" in
 	'' | *[!0-9]*) percent=0 ;;
 esac
@@ -49,13 +52,13 @@ case "$action" in
 	up)
 		percent=$((percent + step))
 		[ "$percent" -le 100 ] || percent=100
-		volume=$(awk -v p="$percent" 'BEGIN { printf "%.2f", p / 100 }')
+		volume=$(LC_ALL=C awk -v p="$percent" 'BEGIN { printf "%.2f", p / 100 }')
 		wpctl set-volume "$target" "$volume" >/dev/null 2>&1 || exit 1
 		;;
 	down)
 		percent=$((percent - step))
 		[ "$percent" -ge 0 ] || percent=0
-		volume=$(awk -v p="$percent" 'BEGIN { printf "%.2f", p / 100 }')
+		volume=$(LC_ALL=C awk -v p="$percent" 'BEGIN { printf "%.2f", p / 100 }')
 		wpctl set-volume "$target" "$volume" >/dev/null 2>&1 || exit 1
 		;;
 esac
@@ -65,7 +68,7 @@ case "$status" in
 	*MUTED*) say "volume: muted" ;;
 	*)
 		percent=$(printf '%s\n' "$status" |
-			awk '{ printf "%d", ($2 * 100) + 0.5 }')
+			LC_ALL=C awk '{ printf "%d", ($2 * 100) + 0.5 }')
 		say "volume: ${percent}%"
 		;;
 esac

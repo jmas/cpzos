@@ -35,7 +35,10 @@ persisted across restarts. Daily tmux
 actions are direct two-key `Alt+letter` bindings (`Alt+V` / `Alt+B` split,
 `Alt+N` / `Alt+P` switch pane, `Alt+Z` zoom and so on), so no tmux prefix is
 needed on the small CPZ keyboard. Volume is `Alt+U` / `Alt+I` and mute is
-`Alt+0` (5% steps through the same `wpctl` sink as Settings → Sound). Every
+`Alt+0` (5% steps through the same `wpctl` sink as Settings → Sound). The
+volume buttons on a USB headset work too: `cpz-media-keys` watches the evdev
+devices in the background and calls the same helper, because cage never
+forwards those keys to foot. Every
 binding can be reassigned in Settings → Input → Shortcuts; see
 [docs/CPZ-KEYS.md](docs/CPZ-KEYS.md) for the complete default list and the
 shortcut rules.
@@ -315,11 +318,14 @@ removed with one confirmation; the manager records its state in
 
 Three minimal media players are installed for the terminal file managers:
 
-- `imv-wayland` shows images (PNG, JPEG, GIF, WebP, BMP, SVG) and browses a
-  directory with the arrow keys;
-- `mpv` plays video. It is configured with `vo=wlshm` and `hwdec=no`, because
-  cage renders with pixman and cannot import the dmabuf/GL window a normal GPU
-  video output would create;
+- `imv-wayland` shows images (PNG, JPEG, GIF, WebP, BMP, SVG) as a gallery of
+  the whole directory: the opened file comes first, the arrows walk the rest;
+- `mpv` plays video, with the directory queued as a playlist. It is configured
+  with `vo=wlshm` and `hwdec=no`, because cage renders with pixman and cannot
+  import the dmabuf/GL window a normal GPU video output would create.
+  Subtitles next to the film load automatically (`film.srt`, `film.en.srt`,
+  `film.2020.srt`, or a `Subs/`/`subtitles/` folder); Ukrainian is preferred,
+  then English;
 - `cmus` is the TUI music player. Opening an audio file starts that track and
   queues the rest of the directory (recursively, audio only), so the folder
   continues in order. `q` quits back to the file manager. Drives written on
