@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 import subprocess
-from importlib.machinery import SourceFileLoader
-from importlib.util import module_from_spec, spec_from_loader
 import tempfile
 import unittest
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +18,11 @@ MEDIA_KEYS = FILES / "cpz-media-keys"
 
 class TrackButtonTest(unittest.TestCase):
     def run_track(
-        self, action: str | None, cmus_running: bool = True, position: int = 0
+        self,
+        action: str | None,
+        cmus_running: bool = True,
+        position: int = 0,
+        at_end: bool = False,
     ):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -32,13 +36,19 @@ class TrackButtonTest(unittest.TestCase):
             f"#!/bin/sh\nexit {0 if cmus_running else 1}\n", encoding="utf-8"
         )
         remote = bin_dir / "cmus-remote"
+        state = root / "now_playing"
+        state.write_text("first", encoding="utf-8")
         remote.write_text(
             "#!/bin/sh\n"
             'if [ "$1" = "-Q" ]; then\n'
-            '  printf "status playing\\nposition %s\\n" "$CPZ_TEST_POSITION"\n'
+            '  printf "status playing\\nfile %s\\nposition %s\\n" \\\n'
+            '    "$(cat "$CPZ_TEST_STATE")" "$CPZ_TEST_POSITION"\n'
             "  exit 0\n"
             "fi\n"
             'printf "%s\\n" "$*" >>"$CPZ_TEST_LOG"\n'
+            'if [ "$2" = "player-next" ] && [ "${CPZ_TEST_AT_END:-0}" != 1 ]; then\n'
+            '  echo second >"$CPZ_TEST_STATE"\n'
+            "fi\n"
             "exit 0\n",
             encoding="utf-8",
         )
@@ -49,6 +59,8 @@ class TrackButtonTest(unittest.TestCase):
         env["PATH"] = str(bin_dir) + ":/usr/bin:/bin"
         env["CPZ_TEST_LOG"] = str(calls)
         env["CPZ_TEST_POSITION"] = str(position)
+        env["CPZ_TEST_STATE"] = str(state)
+        env["CPZ_TEST_AT_END"] = "1" if at_end else "0"
         args = [str(TRACK)] if action is None else [str(TRACK), action]
         result = subprocess.run(
             args, env=env, text=True, capture_output=True, timeout=10
@@ -60,6 +72,16 @@ class TrackButtonTest(unittest.TestCase):
         result, calls = self.run_track("next")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(calls.strip(), "-C player-next")
+
+    def test_next_at_the_last_track_wraps_to_the_first(self):
+        # cmus keeps the last track at the end of the playlist; the helper
+        # activates the top of the playlist instead.
+        result, calls = self.run_track("next", at_end=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            calls.splitlines(),
+            ["-C player-next", "-C view 3", "-C win-top", "-C win-activate"],
+        )
 
     def test_prev_goes_back(self):
         result, calls = self.run_track("prev", position=0)
@@ -89,42 +111,71 @@ class TrackButtonTest(unittest.TestCase):
         result, _ = self.run_track("stop")
         self.assertEqual(result.returncode, 2)
 
-    def test_media_keys_map_to_track_actions(self):
-        # The centre button toggles play/pause; the volume rocker changes the
-        # volume on a tap and skips tracks when held.
-        text = MEDIA_KEYS.read_text(encoding="utf-8")
-        self.assertIn('164: [TRACK, "toggle"]', text)
-        self.assertIn('163: [TRACK, "next"]', text)
-        self.assertIn('165: [TRACK, "prev"]', text)
-        self.assertIn('115: [TRACK, "next"]', text)
-        self.assertIn('114: [TRACK, "prev"]', text)
-        self.assertIn('115: [VOLUME, "up"]', text)
-        # The device's own volume keys must not gain the hold behaviour.
-        self.assertIn('KEYBOARD = "tca8418c"', text)
-        self.assertIn("if device == KEYBOARD:", text)
-
-    def test_a_held_volume_key_skips_only_after_the_threshold(self):
+    def load_media_keys(self):
         loader = SourceFileLoader("cpz_media_keys", str(MEDIA_KEYS))
         spec = spec_from_loader("cpz_media_keys", loader)
         assert spec is not None
         module = module_from_spec(spec)
         loader.exec_module(module)
-
         calls: list[list[str]] = []
         module.run = calls.append
-        held = {("headset", 115): (100.0, False)}
+        return module, calls
 
-        # Still inside the threshold: nothing happens and the loop waits.
-        wait = module.fire_long_presses(held, 100.3)
+    def test_media_keys_map_to_track_actions(self):
+        # The centre button toggles play/pause, the rocker changes the volume
+        # on every press and the side buttons step through the playlist.
+        text = MEDIA_KEYS.read_text(encoding="utf-8")
+        self.assertIn('163: [TRACK, "next"]', text)
+        self.assertIn('165: [TRACK, "prev"]', text)
+        self.assertIn('114: [VOLUME, "down"]', text)
+        self.assertIn('115: [VOLUME, "up"]', text)
+        self.assertIn("CENTRE = 164", text)
+        self.assertIn("DOUBLE_PRESS", text)
+        # The rocker no longer skips tracks when held.
+        self.assertNotIn("LONG_PRESS", text)
+        # The device's own keys must not gain the double press behaviour.
+        self.assertIn('KEYBOARD = "tca8418c"', text)
+        self.assertIn("if device == KEYBOARD:", text)
+
+    def test_volume_press_acts_immediately(self):
+        module, calls = self.load_media_keys()
+        pending = {}
+        module.press(115, "headset", pending, 100.0)
+        module.press(114, module.KEYBOARD, pending, 100.0)
+        self.assertEqual(calls, [[module.VOLUME, "up"], [module.VOLUME, "down"]])
+        self.assertEqual(pending, {})
+
+    def test_single_centre_press_toggles_after_the_window(self):
+        module, calls = self.load_media_keys()
+        pending = {}
+        module.press(module.CENTRE, "headset", pending, 100.0)
         self.assertEqual(calls, [])
-        self.assertAlmostEqual(wait, 0.3, places=3)
+        wait = module.fire_pending(pending, 100.0 + module.DOUBLE_PRESS / 2)
+        self.assertEqual(calls, [])
+        self.assertAlmostEqual(wait, module.DOUBLE_PRESS / 2, places=3)
+        module.fire_pending(pending, 100.0 + module.DOUBLE_PRESS)
+        self.assertEqual(calls, [[module.TRACK, "toggle"]])
+        self.assertEqual(pending, {})
 
-        # Past the threshold the track changes once, then the key is spent.
-        module.fire_long_presses(held, 100.7)
+    def test_double_centre_press_skips_forward_instead_of_pausing(self):
+        module, calls = self.load_media_keys()
+        pending = {}
+        module.press(module.CENTRE, "headset", pending, 100.0)
+        module.press(module.CENTRE, "headset", pending, 100.2)
         self.assertEqual(calls, [[module.TRACK, "next"]])
-        self.assertTrue(held[("headset", 115)][1])
-        module.fire_long_presses(held, 101.0)
+        module.fire_pending(pending, 101.0)
         self.assertEqual(calls, [[module.TRACK, "next"]])
+        self.assertEqual(pending, {})
+
+    def test_keyboard_centre_press_stays_plain_play_pause(self):
+        module, calls = self.load_media_keys()
+        pending = {}
+        module.press(module.CENTRE, module.KEYBOARD, pending, 100.0)
+        module.press(module.CENTRE, module.KEYBOARD, pending, 100.1)
+        self.assertEqual(
+            calls, [[module.TRACK, "toggle"], [module.TRACK, "toggle"]]
+        )
+        self.assertEqual(pending, {})
 
 
 if __name__ == "__main__":

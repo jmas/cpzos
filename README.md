@@ -38,13 +38,14 @@ needed on the small CPZ keyboard. Volume is `Alt+U` / `Alt+I` and mute is
 `Alt+0` (5% steps through the same `wpctl` sink as Settings → Sound). The
 volume buttons on a USB headset work too: `cpz-media-keys` watches the evdev
 devices in the background and calls the same helper, because cage never
-forwards those keys to foot. A short press on the headset rocker changes the
-volume, holding it for half a second skips to the previous/next track, and the
-centre button toggles play/pause. The same service wires the keyboard's Fn
-layer: `Fn+W` previous, `Fn+E` next and `Fn+Q` play/pause (the TCA8418 keymap
-already reports them as the standard media keycodes); `Fn+A`/`Fn+S`/`Fn+D` stay
-plain mute/volume-down/volume-up keys, the hold behaviour is headset-only. Every
-binding can be reassigned in Settings → Input → Shortcuts; see
+forwards those keys to foot. The headset rocker changes the volume on every
+press, its side buttons skip to the previous/next track, and the centre button
+toggles play/pause on a press and skips to the next track on a double press.
+The same service wires the keyboard's Fn layer: `Fn+W` previous, `Fn+E` next
+and `Fn+Q` play/pause (the TCA8418 keymap already reports them as the standard
+media keycodes); `Fn+A`/`Fn+S`/`Fn+D` stay plain mute/volume-down/volume-up
+keys, and the double press is headset-only. Every binding can be reassigned in
+Settings → Input → Shortcuts; see
 [docs/CPZ-KEYS.md](docs/CPZ-KEYS.md) for the complete default list and the
 shortcut rules.
 
@@ -336,7 +337,7 @@ Three minimal media players are installed for the terminal file managers:
   directory (recursively, audio only) into the playlist view, so every track
   stays visible, and plays it in folder order rotated to the opened track:
   `04, 05, ... 13, 01, 02, 03`. The playlist does not shrink while it plays,
-  and the headset's next/previous buttons (the centre one skips forward) move
+  and the headset's side buttons (or a double press on the centre one) move
   inside it. Playback ends with the folder. `q` quits back to the file
   manager. Drives written on macOS work too: the hidden `._` sidecars are
   skipped, and opening one opens the real file next to it.
