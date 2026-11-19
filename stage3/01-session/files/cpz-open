@@ -16,6 +16,20 @@ case "$1" in
 	-*) exit 1 ;;
 esac
 
+# A card written on macOS carries AppleDouble sidecars ("._track.mp3", 4 KiB,
+# application/octet-stream) next to every real file, and they sort first in mc.
+# Opening one should open the file it describes instead of doing nothing.
+case "${1##*/}" in
+	._*)
+		dir=$(dirname -- "$1")
+		real="$dir/$(printf '%s' "${1##*/}" | cut -c3-)"
+		if [ -e "$real" ]; then
+			shift
+			set -- "$real" "$@"
+		fi
+		;;
+esac
+
 mime=$(file -b --mime-type -- "$1" 2>/dev/null || true)
 case "$mime" in
 	image/*)

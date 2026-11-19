@@ -28,6 +28,7 @@ class MusicWrapperTest(unittest.TestCase):
         remote = bin_dir / "cmus-remote"
         remote.write_text(
             "#!/bin/sh\n"
+            'if [ "$1" = "-Q" ]; then printf "status playing\\n"; exit 0; fi\n'
             'printf "%s\\n" "$*" >>"$CPZ_TEST_LOG"\n'
             'case "$2" in\n'
             '  add\\ *) set -- $2; cp "$3" "$CPZ_TEST_PLAYLIST" ;;\n'
@@ -84,6 +85,24 @@ class MusicWrapperTest(unittest.TestCase):
         ])
         self.assertNotIn("notes.txt", "\n".join(entries))
         self.assertNotIn("cover.cue", "\n".join(entries))
+
+    def test_hidden_metadata_is_not_queued(self):
+        # macOS writes ._track.mp3 sidecars and .Trashes/.Spotlight folders;
+        # they sort first and would stop the play queue on an unreadable file.
+        _, _, entries, root = self.run_music(
+            "track.mp3",
+            {
+                "track.mp3": "x",
+                "._track.mp3": "apple double",
+                "._notes.txt": "apple double",
+                ".Trashes/track.mp3": "hidden",
+                "second.mp3": "y",
+            },
+        )
+        self.assertEqual(entries, [
+            str(root / "music" / "track.mp3"),
+            str(root / "music" / "second.mp3"),
+        ])
 
     def test_queue_is_replaced_and_the_playlist_is_cleaned_up(self):
         _, calls, _, root = self.run_music("only.mp3", {"only.mp3": "x"})

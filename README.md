@@ -322,7 +322,9 @@ Three minimal media players are installed for the terminal file managers:
   video output would create;
 - `cmus` is the TUI music player. Opening an audio file starts that track and
   queues the rest of the directory (recursively, audio only), so the folder
-  continues in order. `q` quits back to the file manager.
+  continues in order. `q` quits back to the file manager. Drives written on
+  macOS work too: the hidden `._` sidecars are skipped, and opening one opens
+  the real file next to it.
 
 Pressing `Enter` on a media file opens the right player from both file
 managers. Midnight Commander is redirected with `MC_XDG_OPEN`, which its

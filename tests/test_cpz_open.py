@@ -98,6 +98,60 @@ class OpenTest(unittest.TestCase):
         self.assertIn("song.mp3", calls)
         self.assertNotIn("mpv", calls)
 
+    def test_apple_double_sidecar_opens_the_real_file(self):
+        # macOS leaves "._song.mp3" next to "song.mp3"; it sorts first in mc
+        # and is application/octet-stream, so the dispatcher maps it back.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            log = root / "calls.log"
+
+            file_shim = bin_dir / "file"
+            file_shim.write_text(
+                "#!/bin/sh\n"
+                'for last in "$@"; do :; done\n'
+                'case "$last" in\n'
+                '  */._*) echo "application/octet-stream" ;;\n'
+                '  *.mp3) echo "audio/mpeg" ;;\n'
+                "esac\n",
+                encoding="utf-8",
+            )
+            music = bin_dir / "cpz-music"
+            music.write_text(
+                '#!/bin/sh\nprintf "cpz-music %s\\n" "$*" >>"$CPZ_TEST_LOG"\n',
+                encoding="utf-8",
+            )
+            cmus = bin_dir / "cmus"
+            cmus.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            for shim in (file_shim, music, cmus):
+                shim.chmod(0o755)
+
+            script = root / "cpz-open"
+            script.write_text(
+                OPEN.read_text(encoding="utf-8").replace(
+                    "/usr/local/bin/cpz-music", str(music)
+                ),
+                encoding="utf-8",
+            )
+            script.chmod(0o755)
+            (root / "song.mp3").write_text("audio", encoding="utf-8")
+            (root / "._song.mp3").write_text("sidecar", encoding="utf-8")
+
+            env = os.environ.copy()
+            env["PATH"] = str(bin_dir) + ":/usr/bin:/bin"
+            env["CPZ_TEST_LOG"] = str(log)
+            result = subprocess.run(
+                [str(script), str(root / "._song.mp3")],
+                cwd=root,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("cpz-music ", log.read_text(encoding="utf-8"))
+
     def test_other_files_are_left_to_the_caller(self):
         result, calls = self.run_open("notes.txt")
         self.assertEqual(result.returncode, 1)

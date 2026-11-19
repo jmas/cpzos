@@ -36,6 +36,11 @@ trap 'rm -f -- "$queue"' EXIT HUP INT TERM
 	printf '%s\n' "$file"
 	find "$dir" -type f ! -name '*.cue' -print | sort | while IFS= read -r f; do
 		[ "$f" = "$file" ] && continue
+		# Hidden entries are metadata, not music: macOS writes an AppleDouble
+		# "._track.mp3" next to every file and those sort first.
+		case "$f" in
+			*/.*) continue ;;
+		esac
 		case "${f##*.}" in
 			[0-9A-Za-z]*) ;;
 			*) continue ;;
@@ -60,7 +65,18 @@ trap 'rm -f -- "$queue"' EXIT HUP INT TERM
 	done
 	cmus-remote -C "clear -q" >/dev/null 2>&1 || true
 	cmus-remote -C "add -q $queue" >/dev/null 2>&1 || true
-	cmus-remote -C "player-play" >/dev/null 2>&1 || true
+	# A large folder is still being scanned when add returns; player-play would
+	# run against an empty queue and the player would stay stopped. Retry until
+	# the status flips (up to ten seconds).
+	tries=0
+	while [ "$tries" -lt 40 ]; do
+		cmus-remote -C "player-play" >/dev/null 2>&1 || true
+		case "$(cmus-remote -Q 2>/dev/null || true)" in
+			*"status playing"*) break ;;
+		esac
+		sleep 0.25
+		tries=$((tries + 1))
+	done
 	rm -f -- "$queue"
 ) &
 
