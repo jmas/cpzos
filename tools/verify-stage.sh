@@ -216,9 +216,11 @@ for file in \
 	stage3/01-session/files/cpz-cage-sleep \
 	stage3/01-session/files/cpz-cage.tmpfiles \
 	stage3/01-session/files/cpz-open \
+	stage3/01-session/files/cpz-music \
 	stage3/01-session/files/lfrc \
 	stage3/01-session/files/mpv.conf \
 	stage3/01-session/files/imv-config \
+	stage3/01-session/files/cmus-rc \
 	stage3/01-session/files/cpz-pointer \
 	stage3/01-session/files/cpz-i18n \
 	stage3/01-session/files/i18n/en.json \
@@ -452,9 +454,17 @@ contains stage3/01-session/files/settings.conf 'font_size_hdmi=16'
 contains stage3/01-session/files/cpz-tmux-start 'cpz-session-ensure main'
 contains stage3/01-session/00-packages 'imv'
 contains stage3/01-session/00-packages 'mpv'
+contains stage3/01-session/00-packages 'cmus'
 contains stage3/01-session/files/cpz-tmux 'MC_XDG_OPEN /usr/local/bin/cpz-open'
 contains stage3/01-session/files/cpz-open 'imv-wayland'
 contains stage3/01-session/files/cpz-open '--vo=wlshm'
+contains stage3/01-session/files/cpz-open 'cpz-music'
+contains stage3/01-session/files/lfrc 'audio/*'
+contains stage3/01-session/files/cpz-music 'add -q $queue'
+contains stage3/01-session/files/cpz-music '.pl'
+contains stage3/01-session/files/cpz-music '/dev/tty'
+contains stage3/01-session/files/cmus-rc 'bind -f common q quit'
+contains stage3/01-session/01-run.sh 'files/cmus-rc'
 contains stage3/01-session/files/lfrc '/usr/local/bin/cpz-open'
 contains stage3/01-session/files/mpv.conf 'vo=wlshm'
 contains stage3/01-session/01-run.sh "user_config/lf/lfrc"

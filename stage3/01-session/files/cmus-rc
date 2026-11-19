@@ -1,0 +1,7 @@
+# CPZ cmus configuration.
+#
+# The default q is "quit -i", which asks for confirmation. Inside mc/lf the
+# player owns the whole terminal, so q should return to the file manager the
+# same way other viewers do.
+bind -f common q quit
+bind -f common Q quit

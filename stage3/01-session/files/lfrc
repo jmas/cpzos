@@ -8,7 +8,7 @@ cmd open ${{
     for f in $fx; do
         mime=$(file --mime-type -Lb "$f" 2>/dev/null)
         case "$mime" in
-            image/*|video/*) /usr/local/bin/cpz-open "$f" ;;
+            image/*|video/*|audio/*) /usr/local/bin/cpz-open "$f" ;;
             text/*) ${EDITOR:-nano} "$f" ;;
         esac
     done

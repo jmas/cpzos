@@ -1,0 +1,67 @@
+#!/bin/sh
+# Open a folder in the cmus TUI and start with the selected track.
+#
+# cmus has no file argument and its command lexer is awkward with spaces, so
+# the wrapper describes the folder in a temporary cmus playlist (.pl) and adds
+# that to the play queue: the selected track first, then the other audio files
+# of the same folder. The queue is copied when it is added, so the file is
+# removed immediately. The remote helper runs in the background while cmus
+# owns the terminal; q returns to mc/lf.
+set -eu
+
+[ "$#" -ge 1 ] || exit 1
+case "$1" in
+	-*) exit 1 ;;
+esac
+[ -f "$1" ] || exit 1
+
+dir=$(cd -- "$(dirname -- "$1")" 2>/dev/null && pwd) || exit 1
+file=$(cd -- "$dir" && pwd)/$(basename -- "$1")
+[ -f "$file" ] || exit 1
+
+# A TUI needs the controlling terminal even when the caller (mc's
+# ${MC_XDG_OPEN}) redirects stdout and stderr to /dev/null.
+if [ ! -t 0 ] || [ ! -t 1 ]; then
+	if { exec 3<>/dev/tty; } 2>/dev/null; then
+		exec <&3 >&3 2>&3
+		exec 3>&-
+	fi
+fi
+
+# cmus recognises a playlist by its .pl extension, not its content.
+queue=${TMPDIR:-/tmp}/cpz-music-$$.pl
+trap 'rm -f -- "$queue"' EXIT HUP INT TERM
+
+{
+	printf '%s\n' "$file"
+	find "$dir" -type f ! -name '*.cue' -print | sort | while IFS= read -r f; do
+		[ "$f" = "$file" ] && continue
+		case "${f##*.}" in
+			[0-9A-Za-z]*) ;;
+			*) continue ;;
+		esac
+		ext=$(printf '%s' "${f##*.}" | tr 'A-Z' 'a-z')
+		case "$ext" in
+			mp3 | mp2 | aac | ogg | oga | opus | flac | wav | wv | mpc | mpp | \
+				mod | s3m | xm | it | mtm | 669 | stm | ult | far | \
+				ape | spx | m4a) ;;
+			*) continue ;;
+		esac
+		printf '%s\n' "$f"
+	done
+} >"$queue"
+
+(
+	tries=0
+	while [ "$tries" -lt 50 ]; do
+		cmus-remote -C "status" >/dev/null 2>&1 && break
+		sleep 0.1
+		tries=$((tries + 1))
+	done
+	cmus-remote -C "clear -q" >/dev/null 2>&1 || true
+	cmus-remote -C "add -q $queue" >/dev/null 2>&1 || true
+	cmus-remote -C "player-play" >/dev/null 2>&1 || true
+	rm -f -- "$queue"
+) &
+
+exec cmus

@@ -35,6 +35,7 @@ chafa
 # its wlshm output, because cage (pixman) cannot import dmabuf/GL windows.
 imv
 mpv
+cmus
 rsync
 python3
 # terminfo for tmux-256color, used by the Settings TUI and other curses apps.

@@ -27,6 +27,7 @@ class OpenTest(unittest.TestCase):
                 'for last in "$@"; do :; done\n'
                 'case "$last" in\n'
                 '  *.png) echo "image/png" ;;\n'
+                '  *.mp3) echo "audio/mpeg" ;;\n'
                 '  *.mp4) echo "video/mp4" ;;\n'
                 '  *) echo "text/plain" ;;\n'
                 "esac\n",
@@ -40,14 +41,23 @@ class OpenTest(unittest.TestCase):
             for shim in (file_shim, runner):
                 shim.chmod(0o755)
             # `command -v imv-wayland` / `mpv` must succeed.
-            for viewer in ("imv-wayland", "mpv"):
+            for viewer in ("imv-wayland", "mpv", "cmus"):
                 path = bin_dir / viewer
                 path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
                 path.chmod(0o755)
 
+            music = bin_dir / "cpz-music"
+            music.write_text(
+                '#!/bin/sh\nprintf "cpz-music %s\\n" "$*" >>"$CPZ_TEST_LOG"\n',
+                encoding="utf-8",
+            )
+            music.chmod(0o755)
+
             script = root / "cpz-open"
-            text = OPEN.read_text(encoding="utf-8").replace(
-                "/usr/local/bin/cpz-run", str(runner)
+            text = (
+                OPEN.read_text(encoding="utf-8")
+                .replace("/usr/local/bin/cpz-run", str(runner))
+                .replace("/usr/local/bin/cpz-music", str(music))
             )
             script.write_text(text, encoding="utf-8")
             script.chmod(0o755)
@@ -81,6 +91,13 @@ class OpenTest(unittest.TestCase):
         self.assertIn("mpv --vo=wlshm --hwdec=no", calls)
         self.assertIn("clip.mp4", calls)
 
+    def test_audio_opens_in_the_tui_player(self):
+        result, calls = self.run_open("song.mp3")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("cpz-music ", calls)
+        self.assertIn("song.mp3", calls)
+        self.assertNotIn("mpv", calls)
+
     def test_other_files_are_left_to_the_caller(self):
         result, calls = self.run_open("notes.txt")
         self.assertEqual(result.returncode, 1)
@@ -89,7 +106,7 @@ class OpenTest(unittest.TestCase):
     def test_lf_uses_the_dispatcher(self):
         lfrc = (FILES / "lfrc").read_text(encoding="utf-8")
         self.assertIn("/usr/local/bin/cpz-open", lfrc)
-        self.assertIn("image/*|video/*", lfrc)
+        self.assertIn("image/*|video/*|audio/*", lfrc)
 
     def test_mc_redirects_xdg_open(self):
         tmux = (FILES / "cpz-tmux").read_text(encoding="utf-8")

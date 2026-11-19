@@ -4,7 +4,7 @@
 
 install -d -m 0755 "${ROOTFS_DIR}/usr/local/bin"
 install -m 0755 files/cpz-cage files/cpz-cage-output files/cpz-cage-session \
-	files/cpz-session-supervise files/cpz-open \
+	files/cpz-session-supervise files/cpz-open files/cpz-music \
 	files/cpz-panel-backlight \
 	files/cpz-foot-config files/cpz-foot-reload \
 	files/cpz-getty files/cpz-run files/cpz-tmux files/cpz-tmux-start \
@@ -188,13 +188,17 @@ if [ -n "$first_home" ]; then
 	chown 1000:1000 "$user_config" "$user_config/systemd" \
 		"$user_config/systemd/user" "$user_config/cpz"
 
-	# Minimal GUI viewers for mc/lf (imv for images, mpv for video). The
-	# configs keep them on the software Wayland path cage can scan out.
-	install -d -m 0755 "$user_config/lf" "$user_config/mpv" "$user_config/imv"
-	chown 1000:1000 "$user_config/lf" "$user_config/mpv" "$user_config/imv"
+	# Minimal media players for mc/lf: imv for images, mpv for video and
+	# cmus for music. The configs keep the viewers on the software Wayland
+	# path cage can scan out and make q leave the TUI player.
+	install -d -m 0755 "$user_config/lf" "$user_config/mpv" "$user_config/imv" \
+		"$user_config/cmus"
+	chown 1000:1000 "$user_config/lf" "$user_config/mpv" "$user_config/imv" \
+		"$user_config/cmus"
 	install -m 0644 -o 1000 -g 1000 files/lfrc "$user_config/lf/lfrc"
 	install -m 0644 -o 1000 -g 1000 files/mpv.conf "$user_config/mpv/mpv.conf"
 	install -m 0644 -o 1000 -g 1000 files/imv-config "$user_config/imv/config"
+	install -m 0644 -o 1000 -g 1000 files/cmus-rc "$user_config/cmus/rc"
 fi
 
 # tty2/tty3 keep a plain fbcon console-setup font for recovery logins. The

@@ -28,5 +28,12 @@ case "$mime" in
 			exec /usr/local/bin/cpz-run mpv --vo=wlshm --hwdec=no "$@"
 		fi
 		;;
+	audio/*)
+		# A TUI player runs in the current pane, not in a Wayland window; it
+		# queues the whole directory so the folder keeps playing.
+		if command -v cmus >/dev/null 2>&1; then
+			exec /usr/local/bin/cpz-music "$@"
+		fi
+		;;
 esac
 exit 1

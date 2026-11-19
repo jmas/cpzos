@@ -311,17 +311,20 @@ Tracked apps are listed in the Installed tab and can be run with `e` or
 removed with one confirmation; the manager records its state in
 `~/.local/state/cpz/trove-apps.json`.
 
-## Images and video
+## Images, video and music
 
-Two minimal Wayland viewers are installed for the terminal file managers:
+Three minimal media players are installed for the terminal file managers:
 
 - `imv-wayland` shows images (PNG, JPEG, GIF, WebP, BMP, SVG) and browses a
   directory with the arrow keys;
 - `mpv` plays video. It is configured with `vo=wlshm` and `hwdec=no`, because
   cage renders with pixman and cannot import the dmabuf/GL window a normal GPU
-  video output would create.
+  video output would create;
+- `cmus` is the TUI music player. Opening an audio file starts that track and
+  queues the rest of the directory (recursively, audio only), so the folder
+  continues in order. `q` quits back to the file manager.
 
-Pressing `Enter` on a media file opens the right viewer from both file
+Pressing `Enter` on a media file opens the right player from both file
 managers. Midnight Commander is redirected with `MC_XDG_OPEN`, which its
 `image.sh`/`video.sh` helpers already honour; lf gets a `cmd open` in
 `~/.config/lf/lfrc` that calls the same `/usr/local/bin/cpz-open` dispatcher.
