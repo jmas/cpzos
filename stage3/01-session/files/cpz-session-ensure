@@ -6,7 +6,13 @@
 # The last terminal tab is allowed to close. In that case only Settings
 # remains, and this helper must not recreate a shell behind the user's back.
 # A later window-linked hook adopts the next terminal tab as the shell.
-set -eu
+#
+# This is a best-effort reconciler called from tmux hooks. tmux shows the
+# "returned N" message in the status line when a hook exits non-zero, which
+# looked like a boot error on the panel. Races (a window gone between list and
+# swap, a concurrent hook, a vanished session) are normal and must stay quiet;
+# the next hook retries.
+set -u
 
 session=${1:-main}
 [ "$session" = "main" ] || exit 0
@@ -33,7 +39,7 @@ has_client() {
 	[ -n "$(tmux list-clients -F '#{client_name}' 2>/dev/null | head -n 1)" ]
 }
 
-windows=$(list_windows)
+windows=$(list_windows) || exit 0
 
 # Find the shell tab. Sessions created before @cpz_main existed fall back to
 # window 1, unless window 1 is the Settings tab (which must never be promoted
@@ -44,22 +50,22 @@ if [ -z "$main_id" ]; then
 	main_id=$(printf '%s\n' "$windows" |
 		awk '$1 == 1 && $4 != 1 && $5 != "settings" { print $2; exit }')
 	if [ -n "$main_id" ]; then
-		tmux set-option -w -t "$main_id" @cpz_main 1
+		tmux set-option -w -t "$main_id" @cpz_main 1 2>/dev/null || true
 	fi
 fi
 
 # The shell tab must be window 1. Swap instead of move so indexes stay
 # contiguous for the "1 / N" counter.
 if [ -n "$main_id" ]; then
-	windows=$(list_windows)
+	windows=$(list_windows) || exit 0
 	first_id=$(printf '%s\n' "$windows" | sort -n -k1,1 | head -n 1 | awk '{ print $2 }')
 	if [ "$main_id" != "$first_id" ]; then
-		tmux swap-window -s "$main_id" -t "$first_id"
+		tmux swap-window -s "$main_id" -t "$first_id" 2>/dev/null || true
 	fi
 fi
 
 # The Settings tab must exist and be last.
-windows=$(list_windows)
+windows=$(list_windows) || exit 0
 settings_id=$(printf '%s\n' "$windows" |
 	awk '$4 == 1 || $5 == "settings" { print $2; exit }')
 
@@ -71,14 +77,16 @@ if [ -z "$settings_id" ]; then
 	next=$(printf '%s\n' "$windows" | awk '{ if ($1 + 0 > max) max = $1 + 0 } END { print max + 1 }')
 	settings_id=$(tmux new-window -d -P -F '#{window_id}' \
 		-t "=$session:$next" -n settings -c "${HOME:-/}" \
-		'/usr/local/bin/cpz-settings-shell')
-	tmux set-option -w -t "$settings_id" @cpz_settings 1
-	tmux set-option -w -t "$settings_id" automatic-rename off
+		'/usr/local/bin/cpz-settings-shell' 2>/dev/null) || exit 0
+	tmux set-option -w -t "$settings_id" @cpz_settings 1 2>/dev/null || true
+	tmux set-option -w -t "$settings_id" automatic-rename off 2>/dev/null || true
 else
-	tmux set-option -w -t "$settings_id" @cpz_settings 1
-	tmux set-option -w -t "$settings_id" automatic-rename off
+	tmux set-option -w -t "$settings_id" @cpz_settings 1 2>/dev/null || true
+	tmux set-option -w -t "$settings_id" automatic-rename off 2>/dev/null || true
 	last_id=$(printf '%s\n' "$windows" | tail -n 1 | awk '{ print $2 }')
 	if [ "$settings_id" != "$last_id" ]; then
-		tmux swap-window -s "$settings_id" -t "$last_id"
+		tmux swap-window -s "$settings_id" -t "$last_id" 2>/dev/null || true
 	fi
 fi
+
+exit 0

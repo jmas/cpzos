@@ -50,15 +50,7 @@ tmux set-environment -g SDL_RENDER_DRIVER software 2>/dev/null || true
 # opener.
 tmux set-environment -g MC_XDG_OPEN /usr/local/bin/cpz-open 2>/dev/null || true
 
-# Keep the factory-password reminder inside the terminal session, not on the
-# compositor's bare background. A foot replacement (theme or font) must not
-# bring the prompt back; one answer per boot is enough.
-first_login_done="${XDG_RUNTIME_DIR:-/tmp}/cpz-first-login.done"
-if [ ! -e "$first_login_done" ] &&
-	[ -x /usr/local/bin/cpz-first-login ]; then
-	if /usr/local/bin/cpz-first-login; then
-		touch "$first_login_done" 2>/dev/null || true
-	fi
-fi
-
+# The factory-password reminder is a client-attached popup
+# (cpz-first-login-popup). It must not run here: this process becomes
+# `tmux attach`, and a prompt before the attach delays the first frame.
 exec tmux attach-session -t '=main'

@@ -1,0 +1,34 @@
+#!/bin/sh
+# Run the tty1 boot checks concurrently.
+#
+# The getty's ExecStartPre used to run the fuel-gauge check and the DRM/EDID
+# preparation one after the other. Each has its own bounded wait, so a slow
+# gauge or a monitor without an early EDID delayed cage by the sum of both.
+# They touch different state (/run/cpz-battery.* and /run/cpz-cage/*), so
+# starting them together is safe. The unit prefixes this helper with `-`, so
+# failures are ignored exactly as before; a low battery still powers the
+# device off from cpz-battery itself.
+set -u
+
+battery_pid=
+display_pid=
+
+if [ -x /usr/local/bin/cpz-battery ]; then
+	/usr/local/bin/cpz-battery boot &
+	battery_pid=$!
+fi
+
+if [ -x /usr/local/bin/cpz-cage-output ]; then
+	/usr/local/bin/cpz-cage-output --prepare &
+	display_pid=$!
+fi
+
+# Wait for both, but never fail the getty because one helper returned non-zero.
+if [ -n "$display_pid" ]; then
+	wait "$display_pid" 2>/dev/null || true
+fi
+if [ -n "$battery_pid" ]; then
+	wait "$battery_pid" 2>/dev/null || true
+fi
+
+exit 0

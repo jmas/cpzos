@@ -9,14 +9,34 @@
 # password change clears the reminder automatically.
 set -u
 
-stamp=/etc/cpz/shadow-mtime
-[ -r "$stamp" ] || exit 0
-[ -r /etc/shadow ] || exit 0
-command -v passwd >/dev/null 2>&1 || exit 0
+check_only=0
+case "${1:-}" in
+	'') ;;
+	--check) check_only=1 ;;
+	*)
+		printf 'usage: %s [--check]\n' "${0##*/}" >&2
+		exit 2
+		;;
+esac
 
-current=$(stat -c %Y /etc/shadow 2>/dev/null || true)
-[ -n "$current" ] || exit 0
-[ "$current" = "$(cat "$stamp" 2>/dev/null || true)" ] || exit 0
+stamp=/etc/cpz/shadow-mtime
+needed=0
+# /etc/shadow itself is not readable by the console user, but its mtime is
+# available through stat(2) and is exactly what the build recorded. Checking
+# -r here made the prompt dead code for uid 1000.
+if [ -r "$stamp" ] && command -v passwd >/dev/null 2>&1; then
+	current=$(stat -c %Y /etc/shadow 2>/dev/null || true)
+	if [ -n "$current" ] &&
+		[ "$current" = "$(cat "$stamp" 2>/dev/null || true)" ]; then
+		needed=1
+	fi
+fi
+
+if [ "$check_only" = 1 ]; then
+	[ "$needed" = 1 ]
+	exit
+fi
+[ "$needed" = 1 ] || exit 0
 
 i18n() {
 	if [ -x /usr/local/bin/cpz-i18n ]; then

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Show the factory-password reminder after the first frame.
+#
+# cpz-tmux used to run cpz-first-login before `tmux attach`, so a device still
+# using the factory password spent up to three seconds on the prompt before
+# the terminal appeared - on every boot, not only the first one. This helper
+# is called from the tmux client-attached hook and opens the same prompt in a
+# popup, so the shell is visible first and the reminder does not sit on the
+# critical path.
+set -u
+
+[ -x /usr/local/bin/cpz-first-login ] || exit 0
+client=${1:-}
+[ -n "$client" ] || exit 0
+
+marker=${XDG_RUNTIME_DIR:-/tmp}/cpz-first-login.done
+[ -e "$marker" ] && exit 0
+
+# Do not open (and immediately close) a popup when the password was changed.
+if ! /usr/local/bin/cpz-first-login --check >/dev/null 2>&1; then
+	exit 0
+fi
+
+# Mark before opening: a burst of client-attached hooks must not stack
+# popups. The Settings warning stays visible if this popup cannot open.
+: >"$marker" 2>/dev/null || true
+exec tmux display-popup -E -c "$client" -w 90% -h 60% -T "CPZ" \
+	/usr/local/bin/cpz-first-login

@@ -18,6 +18,7 @@ FILES = ROOT / "stage3" / "01-session" / "files"
 
 TMUX = """#!/bin/sh
 printf '%s\\n' "$*" >>"$FAKE_TMUX_LOG"
+if [ -n "${FAKE_FAIL:-}" ] && [ "$1" = "$FAKE_FAIL" ]; then exit 12; fi
 case "$1" in
 	has-session) exit "${FAKE_HAS_SESSION:-0}" ;;
 	show-options) printf '0\\n' ;;
@@ -121,6 +122,26 @@ class TabSessionTest(unittest.TestCase):
             any(command.startswith("new-window") for command in commands)
         )
         self.assertIn("set-option -w -t @1 @cpz_settings 1", commands)
+
+    def test_session_ensure_stays_quiet_when_tmux_commands_fail(self):
+        # tmux shows "'...' returned N" in the status bar for a non-zero hook.
+        # A window race must not look like a boot error.
+        result = self.run_helper(
+            "cpz-session-ensure",
+            "main",
+            FAKE_WINDOWS="1 @1 0 1 settings\n2 @2 1 0 shell",
+            FAKE_FAIL="swap-window",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+
+        result = self.run_helper(
+            "cpz-session-ensure",
+            "main",
+            FAKE_WINDOWS="1 @1 1 0 shell",
+            FAKE_FAIL="list-windows",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_tab_cycle_moves_between_live_terminal_tabs(self):
         windows = (
