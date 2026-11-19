@@ -244,10 +244,12 @@ translates only the explanation (see rule 34).
     value.
 18. Every list MUST have an empty state that names the next step, for example
     `No devices. Press r to scan.`
-19. Values are changed with a toggle for two states, a cycle for an ordered
-    scale or a short named set (left/right step, `Enter` opens the same list),
-    and a searchable list above ~20 unrelated names. Free-form device names and
-    time zones use a picker or searchable list, never blind cycling.
+19. Values are changed with a toggle for exactly two states, a picker modal
+    for every named set (three or more variants, or two named variants that are
+    not `On`/`Off`), and a scale for an ordered numeric range (`Left`/`Right`
+    step, `Enter` opens the same list). A named set MUST NOT change on
+    `Left`/`Right`: the picker is the only way to choose one. Free-form device
+    names and time zones use a picker or searchable list, never blind cycling.
 20. Settings depth MUST NOT exceed three levels including the main menu.
 21. Adding a top-level menu row requires removing or merging another; the
     nine-row budget is part of the design.
@@ -408,8 +410,8 @@ Use these patterns first. A new control style needs an exception (section 9).
 | **Action row** | immediate command or opening another screen | `Enter` | optional state | `Enter open` |
 | **Submenu** | another Settings page | `Enter` / `Right` | optional summary | `Enter open` |
 | **Toggle** | exactly two states | `Enter`, `Left`/`Right` | `On`/`Off` or `Muted`/`Not muted` | `Enter toggle` |
-| **Cycle** | ordered scale or a short named set | `Left`/`Right`, `Enter` opens the same list | current label | `Z/C change  Enter list` |
-| **Picker** | direct choice without stepping | `Enter` opens, `Enter` applies, `q` cancels | current label | `Enter list` |
+| **Scale** | ordered numeric range, such as brightness or text size | `Left`/`Right` step, `Enter` opens the same list | current value + unit | `Z/C change  Enter list` |
+| **Picker** | every named set, such as theme, language or text format | `Enter` opens, `Enter` applies, `q` cancels; `Left`/`Right` do nothing | current label | `Enter list` |
 | **Searchable list** | more than ~20 unrelated items | type to filter, `Esc` clears, `Enter` applies | query line | `Type to filter  Enter keep  Esc clear` |
 | **Text page** | About, Diagnostics, key reference | scroll, `q` back | — | `F/X scroll  q back` |
 | **Modal frame** | chrome for every confirm, result, picker, filter and Search | — | bold title in the top border, body one column in, muted hint on the last inner row | — |
@@ -423,12 +425,17 @@ Do not:
 
 - use a toast for an unchanged state;
 - use a modal for optional reading;
-- use a cycle for unrelated names without an `Enter` picker;
+- cycle a named set with `Left`/`Right`; open a picker instead;
+- use `picker` for a numeric range or `scale` for a named set;
 - use a submenu for a single action;
 - use an action row for a setting that could be a toggle;
 - draw a second frame inside a modal, or add `-T` when the app already draws
   the frame;
 - put scroll markers or counters on the frame.
+
+Implementation: `cpz-settings --check-pages` rejects `cycle` rows and any
+`special` row that hides `values`. A new named set MUST declare `picker`; only
+an ordered numeric range may declare `scale`.
 
 ---
 
@@ -526,6 +533,7 @@ Before merging a UI change:
 [ ] Footer keys work on this row (A6, invariant 13).
 [ ] Labels <= 16 chars; footer <= 51; main <= 9 rows.
 [ ] Long list has filter and an empty state.
+[ ] Every named set opens a picker; only numeric ranges use `Left`/`Right`.
 [ ] New/changed binding is in cpz-help and the footer.
 [ ] Destructive action confirms and defaults to no.
 [ ] Modal uses the shared frame: bold title in the border, one blank row,

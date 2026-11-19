@@ -82,14 +82,40 @@ fg=$(hex_or "$fg" "$(sed -n 's/^# palette 7=//p' "$theme_conf" 2>/dev/null |
 bg=$(hex_or "$bg" 101418)
 fg=$(hex_or "$fg" e6edf3)
 
-# font_size is a Terminus pixel height. foot uses fontconfig pixelsize, so it
-# keeps the same cell size as kmscon did instead of switching to points.
-font_size=$(get_setting font_size)
+# The panel and HDMI remember their own Terminus pixel height. foot uses
+# fontconfig pixelsize, so it keeps the same cell size as kmscon did instead of
+# switching to points. cpz-cage-output publishes the target before it restarts
+# the session, so this renders the size of the output that is starting.
+output_target() {
+	target=$(sed -n 's/^target=//p' "$run_dir/output.state" 2>/dev/null |
+		tail -n 1)
+	case "$target" in
+		hdmi) printf hdmi ;;
+		*) printf panel ;;
+	esac
+}
+case "$(output_target)" in
+	hdmi)
+		font_key=font_size_hdmi
+		font_default=16
+		;;
+	*)
+		font_key=font_size_panel
+		font_default=12
+		;;
+esac
+font_size=$(get_setting "$font_key")
+# Legacy files only have font_size (and the older 6x12/8x16 presets).
 case "$font_size" in
 	'' | *[!0-9]*)
-		case "$(get_setting font_panel)" in
-			8x16) font_size=16 ;;
-			*) font_size=12 ;;
+		font_size=$(get_setting font_size)
+		case "$font_size" in
+			'' | *[!0-9]*)
+				case "$(get_setting font_panel)" in
+					8x16) font_size=16 ;;
+					*) font_size=$font_default ;;
+				esac
+				;;
 		esac
 		;;
 esac

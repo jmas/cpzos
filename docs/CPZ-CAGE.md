@@ -168,8 +168,10 @@ Display Output selects `auto`, `panel` or `hdmi`.
 `cpz-foot-config` renders `/run/cpz-cage/foot.ini` from the CPZ settings and
 the selected theme:
 
-- `font_size` becomes `font=Terminus:pixelsize=N` with `dpi-aware=no` and
-  `pad=0x0`, so the panel keeps the 53x14 grid at the default 12 px cell;
+- `font_size_panel` or `font_size_hdmi` (whichever output `cpz-cage-output`
+  selected) becomes `font=Terminus:pixelsize=N` with `dpi-aware=no` and
+  `pad=0x0`, so the panel keeps the 53x14 grid at the default 12 px cell and
+  HDMI uses its own, usually larger, size;
 - the theme's tmux `window-style` background/foreground become foot's
   background/foreground;
 - the 16 theme palette entries become foot's `regular0..7` and `bright0..7`.
@@ -183,7 +185,10 @@ mode alive during the swap. The tmux theme is applied immediately by
 
 `cpz-font` (Alt+G / Alt+M) and Settings → Display → Text Size use the same
 path, so a font change takes effect in well under a second instead of waiting
-for a compositor restart.
+for a compositor restart. The size is stored per output
+(`font_size_panel` / `font_size_hdmi`): the shortcut changes the active one,
+and a display switch renders the saved size of the output that starts. A
+legacy single `font_size` is migrated into both on the first read.
 
 `cpz-keyboard-layout` still publishes the XKB layout through systemd-localed.
 `cpz-cage-output` watches the published layout and restarts the compositor

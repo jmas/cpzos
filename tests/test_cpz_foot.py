@@ -14,7 +14,7 @@ FOOT_CONFIG = FILES / "cpz-foot-config"
 
 
 class FootConfigTest(unittest.TestCase):
-    def run_config(self, settings="font_size=14\n", theme=None):
+    def run_config(self, settings="font_size=14\n", theme=None, target=None):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             home = root / "home" / "cpz"
@@ -49,6 +49,11 @@ class FootConfigTest(unittest.TestCase):
             (themes / "cpz-campbell.conf").write_text(theme_text, encoding="utf-8")
 
             run_dir = root / "run" / "cpz-cage"
+            if target:
+                run_dir.mkdir(parents=True, exist_ok=True)
+                (run_dir / "output.state").write_text(
+                    f"target={target}\n", encoding="utf-8"
+                )
             script = root / "cpz-foot-config"
             text = FOOT_CONFIG.read_text(encoding="utf-8")
             text = text.replace(
@@ -79,6 +84,17 @@ class FootConfigTest(unittest.TestCase):
             )
             config = (run_dir / "foot.ini").read_text(encoding="utf-8")
             return result, config
+
+    def test_font_size_is_per_output(self):
+        settings = "font_size_panel=12\nfont_size_hdmi=20\n"
+        _, panel = self.run_config(settings=settings, target="panel")
+        self.assertIn("font=Terminus:pixelsize=12", panel)
+        _, hdmi = self.run_config(settings=settings, target="hdmi")
+        self.assertIn("font=Terminus:pixelsize=20", hdmi)
+
+    def test_legacy_font_size_is_the_fallback(self):
+        _, config = self.run_config(settings="font_size=18\n", target="hdmi")
+        self.assertIn("font=Terminus:pixelsize=18", config)
 
     def test_renders_font_and_theme(self):
         result, config = self.run_config()

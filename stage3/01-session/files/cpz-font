@@ -2,11 +2,13 @@
 # Change the persisted terminal font size by one pixel.
 #
 # Bound in tmux to Alt+G / Alt+M by the cpz-keys registry (rebindable in
-# Settings > Input > Shortcuts). This helper writes the new size to the CPZ
-# settings and asks cpz-foot-reload to replace only the visible terminal. cage,
-# the DRM mode and the tmux server stay up, so the new size appears immediately
-# and the display does not blank. The value is the single source of truth for
-# Settings and for the next boot.
+# Settings > Input > Shortcuts). The internal panel and HDMI remember their own
+# size: the key that changes is the one for the active output, so a size chosen
+# for the small panel does not make the HDMI terminal unreadable (and the other
+# way round). This helper writes the new size to the CPZ settings and asks
+# cpz-foot-reload to replace only the visible terminal. cage, the DRM mode and
+# the tmux server stay up, so the new size appears immediately and the display
+# does not blank.
 set -u
 
 step=
@@ -19,12 +21,12 @@ case "${1:-}" in
 		;;
 esac
 
+run_dir=/run/cpz-cage
 home=${HOME:-/root}
 user_settings=${XDG_CONFIG_HOME:-$home/.config}/cpz/settings.conf
 system_settings=/etc/cpz/settings.conf
 font_min=10
 font_max=64
-font_default=12
 
 get() {
 	for file in "$user_settings" "$system_settings"; do
@@ -35,13 +37,43 @@ get() {
 	return 0
 }
 
-font_size=$(get font_size)
+output_target() {
+	target=$(sed -n 's/^target=//p' "$run_dir/output.state" 2>/dev/null |
+		tail -n 1)
+	case "$target" in
+		hdmi) printf hdmi ;;
+		*) printf panel ;;
+	esac
+}
+
+case "$(output_target)" in
+	hdmi)
+		font_key=font_size_hdmi
+		other_key=font_size_panel
+		font_default=16
+		other_default=12
+		;;
+	*)
+		font_key=font_size_panel
+		other_key=font_size_hdmi
+		font_default=12
+		other_default=16
+		;;
+esac
+
+font_size=$(get "$font_key")
 case "$font_size" in
 	'' | *[!0-9]*)
-		# Older user files only had the two cell-size presets.
-		case "$(get font_panel)" in
-			8x16) font_size=16 ;;
-			*) font_size=$font_default ;;
+		# Legacy files have a single font_size; the 6x12/8x16 presets are older
+		# still.
+		font_size=$(get font_size)
+		case "$font_size" in
+			'' | *[!0-9]*)
+				case "$(get font_panel)" in
+					8x16) font_size=16 ;;
+					*) font_size=$font_default ;;
+				esac
+				;;
 		esac
 		;;
 esac
@@ -62,26 +94,54 @@ if [ "$font_size" = "$old_size" ]; then
 	exit 0
 fi
 
-# Update only font_size, preserving every other setting. Drop the obsolete
-# font_panel/font_hdmi keys so an old value can never be parsed after the new
-# font_size.
+# Seed the other output's size too, so both outputs have a remembered value
+# from the first change and the legacy font_size/font_panel keys can go away.
+other_size=$(get "$other_key")
+case "$other_size" in
+	'' | *[!0-9]*)
+		other_size=$(get font_size)
+		case "$other_size" in
+			'' | *[!0-9]*) other_size=$other_default ;;
+		esac
+		;;
+esac
+[ "$other_size" -ge "$font_min" ] || other_size=$font_min
+[ "$other_size" -le "$font_max" ] || other_size=$font_max
+
+if [ "$font_key" = font_size_hdmi ]; then
+	panel_size=$other_size
+	hdmi_size=$font_size
+else
+	panel_size=$font_size
+	hdmi_size=$other_size
+fi
+
 mkdir -p "$(dirname "$user_settings")" 2>/dev/null || true
 tmp="${user_settings}.tmp.$$"
 if [ -r "$user_settings" ]; then
-	awk -v size="$font_size" '
-		BEGIN { done = 0 }
+	awk -v panel="$panel_size" -v hdmi="$hdmi_size" '
+		BEGIN { done_panel = 0; done_hdmi = 0 }
 		/^font_panel=/ { next }
 		/^font_hdmi=/ { next }
-		/^font_size=/ {
-			if (!done) { print "font_size=" size; done = 1 }
+		/^font_size=/ { next }
+		/^font_size_panel=/ {
+			if (!done_panel) { print "font_size_panel=" panel; done_panel = 1 }
+			next
+		}
+		/^font_size_hdmi=/ {
+			if (!done_hdmi) { print "font_size_hdmi=" hdmi; done_hdmi = 1 }
 			next
 		}
 		{ print }
-		END { if (!done) print "font_size=" size }
+		END {
+			if (!done_panel) print "font_size_panel=" panel
+			if (!done_hdmi) print "font_size_hdmi=" hdmi
+		}
 	' "$user_settings" >"$tmp" || { rm -f "$tmp"; exit 1; }
 else
-	printf '# CPZ user settings. Written by cpz-settings.\nfont_size=%s\n' \
-		"$font_size" >"$tmp" || exit 1
+	printf '# CPZ user settings. Written by cpz-settings.\n' >"$tmp" || exit 1
+	printf 'font_size_panel=%s\nfont_size_hdmi=%s\n' "$panel_size" \
+		"$hdmi_size" >>"$tmp" || { rm -f "$tmp"; exit 1; }
 fi
 chmod 0644 "$tmp" 2>/dev/null || true
 mv "$tmp" "$user_settings" 2>/dev/null || { rm -f "$tmp"; exit 1; }

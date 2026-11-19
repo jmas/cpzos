@@ -43,7 +43,8 @@ PERSISTED = (
     "show_bt",
     "show_layout",
     "display",
-    "font_size",
+    "font_size_panel",
+    "font_size_hdmi",
     "brightness",
     "screen_timeout",
     "mouse",
@@ -123,7 +124,8 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(data["theme"], "cpz-campbell")
         self.assertEqual(data["brightness"], 100)
         self.assertEqual(data["display"], "auto")
-        self.assertEqual(data["font_size"], 12)
+        self.assertEqual(data["font_size_panel"], 12)
+        self.assertEqual(data["font_size_hdmi"], 16)
         self.assertEqual(data["language"], "en")
         self.assertEqual(data["mouse"], 1)
         self.assertEqual(data["set_clipboard"], 1)
@@ -217,7 +219,8 @@ class SettingsTUI(unittest.TestCase):
         data = self.mod.load_settings()
         self.assertEqual(data["display"], "auto")
         # Values are clamped, not rejected.
-        self.assertEqual(data["font_size"], 64)
+        self.assertEqual(data["font_size_panel"], 64)
+        self.assertEqual(data["font_size_hdmi"], 64)
         self.assertEqual(data["history_limit"], 2000)
         self.assertEqual(data["mode_keys"], "vi")
         self.assertEqual(data["screen_timeout"], 0)
@@ -238,7 +241,8 @@ class SettingsTUI(unittest.TestCase):
             show_clock=0,
             date_format="iso",
             display="hdmi",
-            font_size=18,
+            font_size_panel=18,
+            font_size_hdmi=24,
             brightness=55,
             keyboard_layouts="us,de,ua",
             keyboard_layout_active="ua",
@@ -260,19 +264,78 @@ class SettingsTUI(unittest.TestCase):
             self.assertEqual(reloaded[key], data[key], key)
 
     def test_legacy_font_presets_are_migrated(self):
+        # 6x12/8x16 were the old panel presets; a single font_size seeds both
+        # outputs, and an explicit per-output key wins.
         self.write_user("font_panel=8x16\n")
-        self.assertEqual(self.mod.load_settings()["font_size"], 16)
+        data = self.mod.load_settings()
+        self.assertEqual(data["font_size_panel"], 16)
+        self.assertEqual(data["font_size_hdmi"], 16)
 
-        self.write_user("font_hdmi=20x40\n")
-        self.assertEqual(self.mod.load_settings()["font_size"], 12)
+        self.write_user("font_hdmi=8x16\n")
+        data = self.mod.load_settings()
+        self.assertEqual(data["font_size_panel"], 12)
+        self.assertEqual(data["font_size_hdmi"], 16)
 
         self.write_user("font_panel=8x16\nfont_size=22\n")
-        self.assertEqual(self.mod.load_settings()["font_size"], 22)
+        data = self.mod.load_settings()
+        self.assertEqual(data["font_size_panel"], 16)
+        self.assertEqual(data["font_size_hdmi"], 22)
+
+        self.write_user("font_size=22\n")
+        data = self.mod.load_settings()
+        self.assertEqual(data["font_size_panel"], 22)
+        self.assertEqual(data["font_size_hdmi"], 22)
+
+    def test_user_legacy_font_beats_system_defaults(self):
+        # An older image ships a legacy font_size and a newer one ships the
+        # per-output keys; a user file from either build must win.
+        self.system.write_text("font_size=12\n", encoding="utf-8")
+        self.write_user("font_size=32\n")
+        data = self.mod.load_settings()
+        self.assertEqual(data["font_size_panel"], 32)
+        self.assertEqual(data["font_size_hdmi"], 32)
+
+        self.system.write_text(
+            "font_size_panel=12\nfont_size_hdmi=16\n", encoding="utf-8"
+        )
+        data = self.mod.load_settings()
+        self.assertEqual(data["font_size_panel"], 32)
+        self.assertEqual(data["font_size_hdmi"], 32)
+
+        # An explicit per-output key in the user file still wins.
+        self.write_user("font_size=32\nfont_size_hdmi=24\n")
+        data = self.mod.load_settings()
+        self.assertEqual(data["font_size_panel"], 32)
+        self.assertEqual(data["font_size_hdmi"], 24)
+
+    def test_font_key_follows_the_active_output(self):
+        import os
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / "output.state"
+            previous = os.environ.get("CPZ_OUTPUT_STATE")
+            os.environ["CPZ_OUTPUT_STATE"] = str(state)
+            try:
+                state.write_text("target=panel\n", encoding="utf-8")
+                self.assertEqual(self.mod.font_key(), "font_size_panel")
+                state.write_text("target=hdmi\n", encoding="utf-8")
+                self.assertEqual(self.mod.font_key(), "font_size_hdmi")
+                state.unlink()
+                self.assertEqual(self.mod.font_key(), "font_size_panel")
+            finally:
+                if previous is None:
+                    os.environ.pop("CPZ_OUTPUT_STATE", None)
+                else:
+                    os.environ["CPZ_OUTPUT_STATE"] = previous
 
     def test_font_size_choices_cover_the_key_bindings(self):
         self.assertEqual(self.mod.FONT_SIZE_MIN, 10)
         self.assertEqual(self.mod.FONT_SIZE_MAX, 64)
         self.assertIn(12, self.mod.FONT_SIZES)
+        self.assertEqual(self.mod.DEFAULTS["font_size_panel"], 12)
+        self.assertEqual(self.mod.DEFAULTS["font_size_hdmi"], 16)
         self.assertIn(16, self.mod.FONT_SIZES)
         self.assertIn(64, self.mod.FONT_SIZES)
         self.assertEqual(self.mod.FONT_SIZE_LABELS[14], "14px")
@@ -371,6 +434,67 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("pages OK", output.getvalue())
         self.assertGreater(len(self.mod.PAGE_TITLES), 10)
+
+    def test_every_named_set_is_a_picker_and_never_a_blind_cycle(self):
+        data = dict(self.mod.DEFAULTS)
+        data.update(show_clock=1, show_date=1)
+        data["keyboard_layouts"] = "us,de"
+        for page in self.mod.PAGE_TITLES:
+            for item in self.mod.page_items(page, data, None):
+                if "values" not in item:
+                    continue
+                self.assertIn(
+                    item["kind"],
+                    ("picker", "scale"),
+                    f"{page}: {item['label']}",
+                )
+                if item["kind"] == "picker":
+                    self.assertTrue(
+                        item.get("key") or item.get("set"),
+                        f"{page}: {item['label']} has no way to apply a choice",
+                    )
+
+    def test_binary_settings_use_the_toggle_pattern(self):
+        data = dict(self.mod.DEFAULTS)
+        datetime_items = {
+            item["label"]: item
+            for item in self.mod.page_items("datetime", data, None)
+        }
+        self.assertEqual(datetime_items["Clock Sync"]["kind"], "toggle")
+        security_items = {
+            item["label"]: item
+            for item in self.mod.page_items("security", data, None)
+        }
+        self.assertEqual(security_items["SSH"]["kind"], "toggle")
+        sound_items = {
+            item["label"]: item
+            for item in self.mod.page_items("sound", data, None)
+        }
+        self.assertEqual(sound_items["Output Mute"]["kind"], "toggle")
+
+    def test_keyboard_and_audio_device_choices_open_pickers(self):
+        data = dict(self.mod.DEFAULTS)
+        data["keyboard_layouts"] = "us,de"
+        data["keyboard_layout_active"] = "de"
+        keyboard = {
+            item["label"]: item
+            for item in self.mod.page_items("keyboard", data, None)
+        }
+        self.assertEqual(keyboard["Keyboard Mapping"]["kind"], "picker")
+        self.assertEqual(
+            tuple(keyboard["Keyboard Mapping"]["values"]),
+            ("auto", "cpz", "standard"),
+        )
+        self.assertEqual(keyboard["Active Layout"]["kind"], "picker")
+
+        sound = {
+            item["label"]: item
+            for item in self.mod.page_items("sound", data, None)
+        }
+        self.assertEqual(sound["Output Volume"]["kind"], "scale")
+        self.assertTrue(callable(sound["Output Volume"]["set"]))
+        self.assertEqual(sound["Output Device"]["kind"], "picker")
+        self.assertTrue(callable(sound["Output Device"]["set"]))
 
     def test_menu_labels_fit_the_value_column(self):
         data = dict(self.mod.DEFAULTS)

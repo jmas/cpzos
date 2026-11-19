@@ -51,6 +51,8 @@ DISPLAY_MODES = ("auto", "panel", "hdmi")
 SCREEN_TIMEOUTS = (0, 5, 10, 30)
 MODE_KEYS = ("vi", "emacs")
 STATUS_INTERVALS = (1, 2, 5)
+VOLUME_PERCENTS = tuple(range(0, 101))
+VOLUME_LABELS = {value: f"{value}%" for value in VOLUME_PERCENTS}
 # foot/Terminus font size in pixels, shared by the internal panel and HDMI.
 # cpz-font clamps to the same range; the old 6x12/8x16 presets were 12px/16px.
 FONT_SIZE_MIN = 10
@@ -318,7 +320,9 @@ DEFAULTS: dict[str, Any] = {
     "show_bt": 1,
     "show_layout": 1,
     "display": "auto",
-    "font_size": 12,
+    # The panel and HDMI remember their own Terminus pixel height.
+    "font_size_panel": 12,
+    "font_size_hdmi": 16,
     "brightness": 100,
     "screen_timeout": 0,
     "mouse": 1,
@@ -410,6 +414,29 @@ def keys_module() -> Any:
         _KEY_MODULE = module
         return module
     raise FileNotFoundError("cpz-keys is not installed")
+
+
+def output_state_path() -> str:
+    """Path of the cage output state; overridable for tests."""
+    return os.environ.get("CPZ_OUTPUT_STATE", "/run/cpz-cage/output.state")
+
+
+def output_target() -> str:
+    """Active output from the cage output reconciler ("panel" or "hdmi")."""
+    target = ""
+    try:
+        with open(output_state_path(), "r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("target="):
+                    target = line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return "hdmi" if target == "hdmi" else "panel"
+
+
+def font_key() -> str:
+    """Settings key that holds the font size of the active output."""
+    return "font_size_hdmi" if output_target() == "hdmi" else "font_size_panel"
 
 
 def user_settings_path() -> str:
@@ -535,16 +562,16 @@ def parse_file(path: str, data: dict) -> None:
                 key, value = line.split("=", 1)
                 key = key.strip()
                 value = value.strip().strip('"')
-                if key == "font_panel":
-                    # Pre-font_size setting: 6x12/8x16 were 12px/16px.
-                    try:
-                        data["font_size"] = LEGACY_FONT_PANEL[value]
-                    except KeyError:
-                        pass
-                    continue
-                if key == "font_hdmi":
-                    # Never used on the graphics branch; ignore it so an old
-                    # HDMI-only choice cannot make the shared panel font huge.
+                if key in (
+                    "font_size",
+                    "font_size_panel",
+                    "font_size_hdmi",
+                    "font_panel",
+                    "font_hdmi",
+                ):
+                    # Handled by parse_font_file so the user file can override
+                    # the system file and a legacy single size only fills the
+                    # outputs that have no explicit value.
                     continue
                 if key not in data:
                     continue
@@ -568,6 +595,44 @@ def parse_file(path: str, data: dict) -> None:
         pass
 
 
+def parse_font_file(path: str) -> tuple[int | None, int | None, int | None]:
+    """Return (panel, hdmi, legacy) font sizes from one settings file."""
+    panel: int | None = None
+    hdmi: int | None = None
+    legacy: int | None = None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"')
+                if key == "font_panel":
+                    panel = LEGACY_FONT_PANEL.get(value)
+                elif key == "font_hdmi":
+                    hdmi = LEGACY_FONT_PANEL.get(value)
+                elif key == "font_size_panel":
+                    try:
+                        panel = int(value)
+                    except ValueError:
+                        pass
+                elif key == "font_size_hdmi":
+                    try:
+                        hdmi = int(value)
+                    except ValueError:
+                        pass
+                elif key == "font_size":
+                    try:
+                        legacy = int(value)
+                    except ValueError:
+                        pass
+    except OSError:
+        pass
+    return panel, hdmi, legacy
+
+
 def load_settings() -> dict:
     data = dict(DEFAULTS)
     parse_file(SYSTEM_SETTINGS, data)
@@ -584,11 +649,35 @@ def load_settings() -> dict:
         data["date_format"] = DEFAULTS["date_format"]
     if data["display"] not in DISPLAY_MODES:
         data["display"] = DEFAULTS["display"]
-    try:
-        font_size = int(data["font_size"])
-    except (TypeError, ValueError):
-        font_size = DEFAULTS["font_size"]
-    data["font_size"] = max(FONT_SIZE_MIN, min(FONT_SIZE_MAX, font_size))
+    # Per-output text size: a value in the user's file wins over the system
+    # default; an explicit font_size_panel/font_size_hdmi wins over the legacy
+    # single font_size in the same or a lower-priority file.
+    system_panel, system_hdmi, system_legacy = parse_font_file(SYSTEM_SETTINGS)
+    user_panel, user_hdmi, user_legacy = parse_font_file(user_settings_path())
+
+    def pick(user, system, legacy):
+        # The user's file always wins over the shipped defaults, including a
+        # legacy single font_size from an image that predates the per-output
+        # keys. Inside one file an explicit per-output key wins over legacy.
+        if user is not None:
+            return user
+        if user_legacy is not None:
+            return user_legacy
+        if system is not None:
+            return system
+        if system_legacy is not None:
+            return system_legacy
+        return legacy
+
+    for font, value in (
+        ("font_size_panel", pick(user_panel, system_panel, DEFAULTS["font_size_panel"])),
+        ("font_size_hdmi", pick(user_hdmi, system_hdmi, DEFAULTS["font_size_hdmi"])),
+    ):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            value = DEFAULTS[font]
+        data[font] = max(FONT_SIZE_MIN, min(FONT_SIZE_MAX, value))
     if data["mode_keys"] not in MODE_KEYS:
         data["mode_keys"] = DEFAULTS["mode_keys"]
     if data["keyboard_layout"] not in ("auto", "cpz", "standard"):
@@ -649,7 +738,8 @@ def save_settings(data: dict) -> None:
             "show_bt",
             "show_layout",
             "display",
-            "font_size",
+            "font_size_panel",
+            "font_size_hdmi",
             "brightness",
             "screen_timeout",
             "mouse",
@@ -848,9 +938,10 @@ def apply_live(data: dict, key: str) -> None:
         # The path unit runs cpz-cage-output immediately; the five-second
         # timer stays as a fallback for edits made outside Settings.
         request_output_apply()
-    elif key == "font_size":
+    elif key in ("font_size_panel", "font_size_hdmi"):
         # foot reads foot.ini only at startup. The session supervisor replaces
-        # just the visible terminal, so there is no compositor restart.
+        # just the visible terminal, so there is no compositor restart. Each
+        # output keeps its own size; only the active one is rendered.
         pass
     elif key == "mode_keys":
         tmux("set", "-g", "mode-keys", data["mode_keys"])
@@ -875,7 +966,7 @@ def apply_live(data: dict, key: str) -> None:
     # Clock/battery/volume/date are read by cpz-status on the next status
     # refresh.
     refresh_clients(status_only=True)
-    if key in ("theme", "font_size"):
+    if key in ("theme", "font_size_panel", "font_size_hdmi"):
         reload_foot()
 
 
@@ -1630,8 +1721,8 @@ def value_text(
         return SCREEN_TIMEOUT_LABELS.get(data["screen_timeout"], str(data["screen_timeout"]))
     if key == "brightness":
         return f"{data['brightness']}%"
-    if key == "font_size":
-        return f"{data['font_size']}px"
+    if key in ("font_size_panel", "font_size_hdmi"):
+        return f"{data[key]}px"
     if key == "status_interval":
         return f"{data['status_interval']}s"
     if key == "mode_keys":
@@ -2143,6 +2234,28 @@ def page_row_at(
     return None
 
 
+def item_choices(item: dict) -> tuple:
+    values = item.get("values")
+    if callable(values):
+        values = values()
+    return tuple(values or ())
+
+
+def item_choice_labels(item: dict) -> dict:
+    labels = item.get("labels")
+    if callable(labels):
+        labels = labels()
+    return labels or {}
+
+
+def item_current_choice(item: dict, data: dict):
+    current = item.get("current")
+    if callable(current):
+        return current(data)
+    key = item.get("key")
+    return data.get(key) if key else None
+
+
 def item_value(item: dict, data: dict) -> str:
     getter = item.get("get")
     if getter:
@@ -2154,14 +2267,9 @@ def item_value(item: dict, data: dict) -> str:
     if not key:
         return ""
     kind = item.get("kind")
-    if kind == "cycle":
-        values = item.get("values")
-        if callable(values):
-            values = values()
-        values = tuple(values or ())
-        labels = item.get("labels") or {}
-        current = data.get(key)
-        return labels.get(current, str(current))
+    if kind in ("picker", "scale"):
+        current = item_current_choice(item, data)
+        return item_choice_labels(item).get(current, str(current))
     return value_text(data, key)
 
 
@@ -2170,15 +2278,18 @@ def item_change(item: dict, data: dict, step: int, screen) -> None:
         item["change"](data, step, screen)
         return
     key = item.get("key")
+    if item.get("kind") == "scale" and item.get("set"):
+        values = item_choices(item)
+        current = item_current_choice(item, data)
+        index = values.index(current) if current in values else 0
+        apply_choice(item, data, values[(index + step) % len(values)], screen)
+        return
     if not key:
         return
     if item.get("kind") == "toggle":
         data[key] = 0 if data[key] else 1
-    elif item.get("kind") == "cycle":
-        values = item.get("values")
-        if callable(values):
-            values = values()
-        values = tuple(values or ())
+    elif item.get("kind") == "scale":
+        values = item_choices(item)
         current = data.get(key)
         index = values.index(current) if current in values else 0
         data[key] = values[(index + step) % len(values)]
@@ -2186,7 +2297,7 @@ def item_change(item: dict, data: dict, step: int, screen) -> None:
         return
     save_settings(data)
     apply_live(data, key)
-    if key == "keyboard_layout_active":
+    if key in ("keyboard_layout", "keyboard_layout_active"):
         reload_keyboard_layout(screen)
 
 
@@ -2197,11 +2308,16 @@ def sound_volume_text(kind: str) -> str:
     return f"{percent}%"
 
 
-def sound_volume_change(kind: str, step: int) -> None:
+def sound_volume_current(kind: str) -> int | None:
     percent, _muted = wpctl_status(kind)
-    if percent is None:
-        return
-    wpctl_set_volume(kind, percent + step * 5)
+    return percent
+
+
+def sound_volume_set(kind: str):
+    def set_volume(_data: dict, value, _screen) -> None:
+        wpctl_set_volume(kind, int(value))
+
+    return set_volume
 
 
 def sound_mute_text(kind: str) -> str:
@@ -2221,17 +2337,29 @@ def sound_device_text(kind: str) -> str:
     return nodes[0][1]
 
 
-def sound_device_change(kind: str, step: int) -> None:
+def sound_device_choices(kind: str) -> tuple[str, ...]:
     nodes = wpctl_nodes(kind.capitalize())
-    if not nodes:
-        return
-    current = 0
-    for index, (_node_id, _name, default) in enumerate(nodes):
+    return tuple(str(node_id) for node_id, _name, _default in nodes)
+
+
+def sound_device_labels(kind: str) -> dict[str, str]:
+    nodes = wpctl_nodes(kind.capitalize())
+    return {str(node_id): name for node_id, name, _default in nodes}
+
+
+def sound_device_current(kind: str) -> str | None:
+    nodes = wpctl_nodes(kind.capitalize())
+    for node_id, _name, default in nodes:
         if default:
-            current = index
-            break
-    node_id = nodes[(current + step) % len(nodes)][0]
-    wpctl_set_default(kind.capitalize(), node_id)
+            return str(node_id)
+    return str(nodes[0][0]) if nodes else None
+
+
+def sound_device_set(kind: str):
+    def set_default(_data: dict, value, _screen) -> None:
+        wpctl_set_default(kind.capitalize(), value)
+
+    return set_default
 
 
 def hdmi_status_text() -> str:
@@ -2577,15 +2705,6 @@ def reload_keyboard_layout(screen) -> int:
     # The helper is allowlisted in /etc/sudoers.d/50-cpz-layout, so this is
     # normally passwordless; without the rule sudo prompts like other actions.
     return run_privileged(screen, ["/usr/local/bin/cpz-layout-apply"])
-
-
-def keyboard_layout_change(data: dict, step: int, screen) -> None:
-    values = ("auto", "cpz", "standard")
-    current = data.get("keyboard_layout", "auto")
-    index = values.index(current) if current in values else 0
-    data["keyboard_layout"] = values[(index + step) % len(values)]
-    save_settings(data)
-    reload_keyboard_layout(screen)
 
 
 def shortcut_items(data: dict) -> list[dict[str, Any]]:
@@ -4768,6 +4887,18 @@ def ntp_toggle(screen, _data) -> str | None:
     return None if rc == 0 else "Time sync change failed"
 
 
+def ssh_toggle_change(_data, _step, screen) -> None:
+    result = ssh_toggle(screen, _data)
+    if result:
+        notify(screen, result)
+
+
+def ntp_toggle_change(_data, _step, screen) -> None:
+    result = ntp_toggle(screen, _data)
+    if result:
+        notify(screen, result)
+
+
 def power_action(action: str, question: str, title: str):
     def run(screen, _data) -> None:
         danger = action in ("poweroff", "reboot")
@@ -4801,7 +4932,7 @@ def reset_settings_action(screen, data) -> str | None:
     # display would queue several terminal replacements and output runs for the
     # same reset.
     for name in data:
-        if name in ("theme", "font_size", "display"):
+        if name in ("theme", "font_size_panel", "font_size_hdmi", "display"):
             continue
         apply_live(data, name)
     apply_theme(data["theme"])
@@ -4878,9 +5009,15 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = [
             {
                 "label": "Keyboard Mapping",
-                "kind": "special",
+                "kind": "picker",
+                "key": "keyboard_layout",
+                "values": ("auto", "cpz", "standard"),
+                "labels": {
+                    "auto": "Automatic",
+                    "cpz": "Built-in keyboard",
+                    "standard": "Standard",
+                },
                 "get": lambda d: value_text(d, "keyboard_layout"),
-                "change": keyboard_layout_change,
             },
             {
                 "label": "Layouts",
@@ -4893,7 +5030,7 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
             items.append(
                 {
                     "label": "Active Layout",
-                    "kind": "cycle",
+                    "kind": "picker",
                     "key": "keyboard_layout_active",
                     "values": lambda: layout_codes(data),
                     "labels": {code: label for code, label in LAYOUTS},
@@ -4928,29 +5065,29 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
         return [
             {
                 "label": "Theme",
-                "kind": "cycle",
+                "kind": "picker",
                 "key": "theme",
                 "values": available_themes,
                 "labels": theme_labels(),
             },
             {
                 "label": "Brightness",
-                "kind": "cycle",
+                "kind": "scale",
                 "key": "brightness",
                 "values": tuple(range(10, 101, 5)),
                 "labels": {value: f"{value}%" for value in range(10, 101, 5)},
             },
             {
                 "label": "Display Output",
-                "kind": "cycle",
+                "kind": "picker",
                 "key": "display",
                 "values": DISPLAY_MODES,
                 "labels": DISPLAY_LABELS,
             },
             {
                 "label": "Text Size",
-                "kind": "cycle",
-                "key": "font_size",
+                "kind": "scale",
+                "key": font_key(),
                 "values": FONT_SIZES,
                 "labels": FONT_SIZE_LABELS,
             },
@@ -4964,7 +5101,7 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
             status_items.append(
                 {
                     "label": "Time Format",
-                    "kind": "cycle",
+                    "kind": "picker",
                     "key": "clock_24h",
                     "values": (1, 0),
                     "labels": {1: "24-hour", 0: "12-hour"},
@@ -4977,7 +5114,7 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
             status_items.append(
                 {
                     "label": "Date Format",
-                    "kind": "cycle",
+                    "kind": "picker",
                     "key": "date_format",
                     "values": DATE_FORMATS,
                     "labels": DATE_FORMAT_LABELS,
@@ -5008,7 +5145,7 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
         return [
             {
                 "label": "Scrollback",
-                "kind": "cycle",
+                "kind": "scale",
                 "key": "history_limit",
                 "values": HISTORY_CHOICES,
                 "labels": {
@@ -5018,14 +5155,14 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
             },
             {
                 "label": "Copy Mode Keys",
-                "kind": "cycle",
+                "kind": "picker",
                 "key": "mode_keys",
                 "values": MODE_KEYS,
                 "labels": {"vi": "Vi", "emacs": "Emacs"},
             },
             {
                 "label": "Status Refresh",
-                "kind": "cycle",
+                "kind": "scale",
                 "key": "status_interval",
                 "values": STATUS_INTERVALS,
                 "labels": {value: f"{value}s" for value in STATUS_INTERVALS},
@@ -5037,21 +5174,27 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
         items = [
             {
                 "label": "Output Volume",
-                "kind": "special",
+                "kind": "scale",
                 "get": lambda _d: sound_volume_text("sink"),
-                "change": lambda _d, step, _s: sound_volume_change("sink", step),
+                "values": VOLUME_PERCENTS,
+                "labels": VOLUME_LABELS,
+                "current": lambda _d: sound_volume_current("sink"),
+                "set": sound_volume_set("sink"),
             },
             {
                 "label": "Output Mute",
-                "kind": "special",
+                "kind": "toggle",
                 "get": lambda _d: sound_mute_text("sink"),
                 "change": lambda _d, _step, _s: wpctl_toggle_mute("sink"),
             },
             {
                 "label": "Output Device",
-                "kind": "special",
+                "kind": "picker",
                 "get": lambda _d: sound_device_text("sink"),
-                "change": lambda _d, step, _s: sound_device_change("sink", step),
+                "values": lambda: sound_device_choices("sink"),
+                "labels": lambda: sound_device_labels("sink"),
+                "current": lambda _d: sound_device_current("sink"),
+                "set": sound_device_set("sink"),
             },
         ]
         if sound_device_text("source") != "Not available":
@@ -5059,25 +5202,27 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 [
                     {
                         "label": "Input Volume",
-                        "kind": "special",
+                        "kind": "scale",
                         "get": lambda _d: sound_volume_text("source"),
-                        "change": lambda _d, step, _s: sound_volume_change(
-                            "source", step
-                        ),
+                        "values": VOLUME_PERCENTS,
+                        "labels": VOLUME_LABELS,
+                        "current": lambda _d: sound_volume_current("source"),
+                        "set": sound_volume_set("source"),
                     },
                     {
                         "label": "Input Mute",
-                        "kind": "special",
+                        "kind": "toggle",
                         "get": lambda _d: sound_mute_text("source"),
                         "change": lambda _d, _step, _s: wpctl_toggle_mute("source"),
                     },
                     {
                         "label": "Input Device",
-                        "kind": "special",
+                        "kind": "picker",
                         "get": lambda _d: sound_device_text("source"),
-                        "change": lambda _d, step, _s: sound_device_change(
-                            "source", step
-                        ),
+                        "values": lambda: sound_device_choices("source"),
+                        "labels": lambda: sound_device_labels("source"),
+                        "current": lambda _d: sound_device_current("source"),
+                        "set": sound_device_set("source"),
                     },
                 ]
             )
@@ -5151,9 +5296,9 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
             },
             {
                 "label": "Clock Sync",
-                "kind": "action",
+                "kind": "toggle",
                 "get": lambda _d: ntp_status(),
-                "action": ntp_toggle,
+                "change": ntp_toggle_change,
             },
         ]
     if name == "power":
@@ -5184,16 +5329,16 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
             },
             {
                 "label": "SSH",
-                "kind": "action",
+                "kind": "toggle",
                 "get": lambda _d: ssh_switch_text(),
-                "action": ssh_toggle,
+                "change": ssh_toggle_change,
             },
         ]
     if name == "system":
         return [
             {
                 "label": "Language",
-                "kind": "cycle",
+                "kind": "picker",
                 "key": "language",
                 "values": language_codes,
                 "labels": language_labels(),
@@ -5220,29 +5365,33 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
     return []
 
 
-def set_cycle_value(item: dict, data: dict, value, screen=None) -> None:
+def set_choice_value(item: dict, data: dict, value, screen=None) -> None:
     key = item.get("key")
     if not key or data.get(key) == value:
         return
     data[key] = value
     save_settings(data)
     apply_live(data, key)
-    if key == "keyboard_layout_active" and screen is not None:
+    if key in ("keyboard_layout", "keyboard_layout_active") and screen is not None:
         reload_keyboard_layout(screen)
 
 
+def apply_choice(item: dict, data: dict, value, screen) -> None:
+    setter = item.get("set")
+    if setter:
+        setter(data, value, screen)
+        return
+    set_choice_value(item, data, value, screen)
+
+
 def select_popup(screen, item: dict, data: dict):
-    key = item.get("key")
-    if not key:
+    if not item.get("key") and not item.get("values"):
         return None
-    values = item.get("values")
-    if callable(values):
-        values = values()
-    values = tuple(values or ())
+    values = item_choices(item)
     if not values:
         return None
-    labels = item.get("labels") or {}
-    current = data.get(key)
+    labels = item_choice_labels(item)
+    current = item_current_choice(item, data)
     selected = values.index(current) if current in values else 0
     title = item.get("label", "Select")
     hint = "F/X move  Enter apply  Esc cancel"
@@ -5421,7 +5570,9 @@ def draw_page(
             action = "Enter toggle"
         elif kind == "keybind":
             action = "Enter rebind"
-        elif kind == "cycle":
+        elif kind == "picker":
+            action = "Enter list"
+        elif kind == "scale":
             action = "Z/C change  Enter list"
         else:
             action = "Z/C change"
@@ -5625,16 +5776,16 @@ def run(screen, start_page: str | None = None) -> None:
                 rebind_action(screen, item)
                 dirty = True
             continue
-        if kind == "cycle":
+        if kind in ("picker", "scale"):
             if key in (10, 13, ord(" ")):
                 value = select_popup(screen, item, data)
                 if value is not None:
-                    set_cycle_value(item, data, value, screen)
+                    apply_choice(item, data, value, screen)
                     dirty = True
-            elif key in NAV_LEFT:
+            elif kind == "scale" and key in NAV_LEFT:
                 item_change(item, data, -1, screen)
                 dirty = True
-            elif key in NAV_RIGHT:
+            elif kind == "scale" and key in NAV_RIGHT:
                 item_change(item, data, 1, screen)
                 dirty = True
             continue
@@ -5674,6 +5825,23 @@ def check_pages() -> int:
             target = item.get("page")
             if target and target not in PAGE_TITLES:
                 errors.append(f"{page}: unknown submenu target {target}")
+            kind = item.get("kind")
+            label = item.get("label", "")
+            if kind == "cycle":
+                errors.append(
+                    f"{page}: {label}: named choices use picker or scale, not cycle"
+                )
+            if kind in ("picker", "scale"):
+                if item.get("values") is None:
+                    errors.append(f"{page}: {label}: {kind} has no values")
+                if kind == "picker" and not item.get("key") and not item.get("set"):
+                    errors.append(
+                        f"{page}: {label}: picker needs a key or a setter"
+                    )
+            if kind == "special" and item.get("values") is not None:
+                errors.append(
+                    f"{page}: {label}: special cannot hide a choice list"
+                )
 
     if errors:
         for message in errors:

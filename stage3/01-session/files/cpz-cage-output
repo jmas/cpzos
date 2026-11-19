@@ -902,6 +902,10 @@ fi
 
 restart_began=$(date +%s 2>/dev/null || printf 0)
 if [ "$need_restart" = 1 ]; then
+	# Publish the target before the restart: cpz-cage renders foot.ini while it
+	# starts, and cpz-foot-config picks the per-output font size from this
+	# state. Without it the first frame after a switch would use the old size.
+	write_state
 	if restart_session; then
 		hdmi_probe
 		if [ "$target" = hdmi ]; then
