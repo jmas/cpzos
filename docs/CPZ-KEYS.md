@@ -12,6 +12,24 @@ or four physical presses. The shortcuts are therefore deliberately narrow:
 renders `Alt+H`, fills the CPZ Search action list, shows the first-login hint
 and backs Settings → Input → Shortcuts.
 
+## Internal and external keyboards
+
+The internal TCA8418 keyboard needs the CPZ overlay (`cpz_us`, `cpz_ua`, ...)
+for its Sym layer. Applying that overlay to a USB/Bluetooth keyboard scrambles
+punctuation, and cage has a single keymap for the seat, so
+`cpz-keyboard-layout` switches it:
+
+- **auto** (default): an external USB/Bluetooth/PS2 keyboard selects the
+  standard layout; otherwise the CPZ overlay is used.
+- **cpz** / **standard** force one of the two.
+
+The switch is published to localed and `cpz-cage-output` restarts the
+compositor (~2 s). Keyboard interfaces that belong to a pointer are ignored: a
+gaming mouse often exposes a second HID endpoint advertising a full keyboard
+bitmap for macro keys, and treating it as a keyboard would keep the standard
+layout forever while the mouse is plugged in. A node counts as a keyboard only
+when no interface of the same USB device has relative X/Y axes.
+
 ## Rules
 
 1. **Two keys maximum.** One modifier (`Alt`) plus one key. No `Ctrl+Alt`,

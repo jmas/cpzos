@@ -398,7 +398,7 @@ class OutputPolicyTest(unittest.TestCase):
         self.assertIn("cpz-cage-output --prepare", dropin)
         profile = (FILES / "cpz-session.sh").read_text(encoding="utf-8")
         self.assertIn("/dev/tty1", profile)
-        self.assertIn("/usr/local/bin/cpz-cage", profile)
+        self.assertIn("/usr/local/bin/cpz-session-supervise", profile)
 
 
 if __name__ == "__main__":

@@ -219,9 +219,22 @@ def is_phantom(name: str, path: str) -> bool:
     return any(marker in lowered_path for marker in PHANTOM_PATH_MARKERS)
 
 
+def node_dir(node: str) -> str:
+    """Capabilities directory for an event node or its parent input node.
+
+    udev runs the hook for both: libinput merges the properties of a device
+    with its parent, so a stale ID_INPUT_POINTINGSTICK on inputN keeps the
+    event node tagged as a pointer even after the event node itself is clean.
+    """
+    base = sysfs("class", "input", node)
+    if node.startswith("event"):
+        return os.path.join(base, "device")
+    return base
+
+
 def inspect_device(event: str, env: Mapping[str, str] | None = None) -> Device:
     event_dir = sysfs("class", "input", event)
-    device_dir = os.path.join(event_dir, "device")
+    device_dir = node_dir(event)
     name = read_text(os.path.join(device_dir, "name")).strip()
     raw_bus = read_text(os.path.join(device_dir, "id", "bustype")).strip()
     try:
@@ -246,7 +259,7 @@ def inspect_device(event: str, env: Mapping[str, str] | None = None) -> Device:
         for tag in POINTER_TAGS + ("ID_INPUT_TOUCHSCREEN",)
     )
     has_motion = has_rel or has_abs or has_mt
-    path = os.path.realpath(event_dir)
+    path = os.path.realpath(device_dir)
 
     phantom = is_phantom(name, path)
     real_bus = bustype in (BUS_USB, BUS_BLUETOOTH, BUS_I8042, BUS_SERIO)
@@ -343,44 +356,45 @@ def print_status(devices: list[Device], enabled: bool) -> None:
         )
 
 
-def strip_properties(device: Device, enabled: bool) -> list[str]:
-    """Return the udev properties for a device that must not drive a cursor.
+def strip_properties(device: Device, enabled: bool) -> tuple[list[str], bool]:
+    """Return (udev properties, must not drive a cursor).
 
-    The returned properties are the complete policy for the device, not just
-    additions.  A synthetic remove/add pair therefore also clears the seat and
+    The properties are the complete policy for the device, not just additions.
+    A synthetic remove/add pair therefore also clears the seat and
     LIBINPUT_IGNORE_DEVICE values from a previous policy.
+
+    The ID_INPUT_* pointer tags cannot be cleared from here: libinput tests for
+    the *presence* of the property (ID_INPUT_MOUSE=0 still tags a mouse), and
+    an IMPORT{program} value of "" adds an empty property instead of removing
+    it.  So the hook marks the device with CPZ_NO_POINTER=1 and a later udev
+    rule removes the tags with ENV{...}="".
     """
     if not device.pointer:
         # Not a pointer, but it may still carry a stale fake seat from an
         # earlier event (for example when a keyboard was briefly classified as
         # a pointer).  Keep every keyboard on cage's seat.
-        return ["ID_SEAT=seat0"]
+        return ["ID_SEAT=seat0"], False
 
     if device.real and enabled:
-        return ["ID_SEAT=seat0", "LIBINPUT_IGNORE_DEVICE=0"]
+        return ["ID_SEAT=seat0", "LIBINPUT_IGNORE_DEVICE=0"], False
 
     if device.direct and not device.phantom:
         # A touchscreen is a direct input device. cage does not need a cursor
         # for it, and disabling it here would remove touch input entirely.
-        return ["ID_SEAT=seat0"]
+        return ["ID_SEAT=seat0"], False
 
-    tags = [f"{tag}=0" for tag in (PHANTOM_TAGS if device.phantom else POINTER_TAGS)]
     if device.keyboard:
-        # A combined device (HDMI CEC, a keyboard with stray axes) keeps its
-        # keyboard half on seat0.  Forcing ID_INPUT_KEYBOARD also overrides a
-        # stale ID_INPUT_MOUSE from an earlier udev event.
-        return ["ID_SEAT=seat0", "ID_INPUT_KEYBOARD=1", *tags]
+        # A combined device (HDMI CEC, an IR receiver, a keyboard with stray
+        # axes) keeps its keyboard half on seat0.  Forcing ID_INPUT_KEYBOARD
+        # also overrides a stale ID_INPUT_MOUSE from an earlier udev event.
+        return ["ID_SEAT=seat0", "ID_INPUT_KEYBOARD=1"], True
 
     # A pure pointer (mouse, touchpad, tablet, trackball) when the policy says
     # no cursor.  ID_SEAT is the hard guarantee: libinput drops the device
     # before device-type classification, so a restored ID_INPUT_MOUSE tag or a
     # libinput quirk cannot bring the cursor back.  LIBINPUT_IGNORE_DEVICE is
     # kept as a second, independent barrier for path-based contexts.
-    return [
-        f"ID_SEAT={NO_POINTER_SEAT}",
-        "LIBINPUT_IGNORE_DEVICE=1",
-        *tags,
-    ]
+    return [f"ID_SEAT={NO_POINTER_SEAT}", "LIBINPUT_IGNORE_DEVICE=1"], True
 
 
 def udev_hook(event: str) -> int:
@@ -395,7 +409,10 @@ def udev_hook(event: str) -> int:
         # the ghost-cursor cleanup after a physical unplug or a policy change.
         if device.real:
             print("CPZ_REAL_POINTER=1")
-        for line in strip_properties(device, mouse_enabled()):
+        properties, no_pointer = strip_properties(device, mouse_enabled())
+        if no_pointer:
+            print("CPZ_NO_POINTER=1")
+        for line in properties:
             print(line)
     except Exception:
         # A helper failure must not make an input device disappear from udev.
@@ -455,6 +472,17 @@ def trigger_device(device: Device) -> bool:
         if result.returncode != 0:
             return False
     return True
+
+
+def restart_pending() -> bool:
+    """True while the output helper is (re)starting the compositor."""
+    if os.path.exists("/run/cpz-cage/restart.request"):
+        return True
+    try:
+        stamp = os.stat("/run/cpz-cage/restart.stamp").st_mtime
+    except OSError:
+        return False
+    return time.time() - stamp < 10.0
 
 
 def request_foot_reload() -> None:
@@ -524,8 +552,11 @@ def nudge_policy(force: bool = False) -> int:
         # capability and cannot attach a cursor surface in the gap.
         time.sleep(0.2)
         # The seat update above cannot revoke a cursor surface that a client
-        # sends afterwards. Replace foot so no client cursor survives.
-        request_foot_reload()
+        # sends afterwards. Replace foot so no client cursor survives. A
+        # compositor restart that is already happening replaces foot anyway,
+        # and doing both would blink twice for one event.
+        if not restart_pending():
+            request_foot_reload()
         return 0
     return 1
 
@@ -552,6 +583,13 @@ def apply_policy(force: bool = False) -> int:
             **current
         )
     )
+    # Turning mouse support off reopens the pointer devices, but cage 0.3.1 can
+    # keep the client's last cursor image (and foot redraws it). Replace the
+    # terminal once the session is up so a settings change clears the ghost.
+    if current["cursor"] != "visible" and os.path.exists(
+        "/run/cpz-cage/cage-session.pid"
+    ):
+        nudge_policy(force=True)
     return 0
 
 

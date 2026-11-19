@@ -30,9 +30,13 @@ esac
 # against a reused pid after a crash. Both supervisors understand SIGUSR1:
 # cpz-cage-session replaces the foot under cage; the compositor itself stays up.
 if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-	cmd=$(tr '\000' '\n' <"/proc/$pid/cmdline" 2>/dev/null | head -n 1)
+	# The supervisor is a shell script, so /proc/<pid>/cmdline is
+	# "/bin/sh\n/usr/local/bin/cpz-cage-session". Match the script anywhere in
+	# the argument vector; matching argv[0] alone never succeeds and the old
+	# cursor then survives every pointer removal.
+	cmd=$(tr '\000' '\n' <"/proc/$pid/cmdline" 2>/dev/null)
 	case "$cmd" in
-		/usr/local/bin/cpz-cage-session)
+		*"/usr/local/bin/cpz-cage-session"*)
 			kill -USR1 "$pid" 2>/dev/null || exit 1
 			exit 0
 			;;

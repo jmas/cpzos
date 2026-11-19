@@ -77,6 +77,8 @@ retry_file=$run_dir/output.hdmi-retry
 hold_file=$run_dir/output.hdmi-hold
 fail_file=$run_dir/output.hdmi-fail
 request_file=$run_dir/output.request
+restart_request=$run_dir/restart.request
+supervisor_pid=$run_dir/session-supervisor.pid
 restart_stamp=$run_dir/restart.stamp
 unit=getty@tty1.service
 hdmi_debounce=2
@@ -370,13 +372,52 @@ panel_on() {
 	done
 }
 
+supervisor_up() {
+	# The login shell re-execs cage after a deliberate restart, so the
+	# compositor can be briefly absent while the session is perfectly healthy.
+	pid=$(cat "$supervisor_pid" 2>/dev/null || true)
+	case "$pid" in
+		'' | *[!0-9]*) return 1 ;;
+	esac
+	kill -0 "$pid" 2>/dev/null || return 1
+	cmd=$(tr '\000' '\n' <"/proc/$pid/cmdline" 2>/dev/null)
+	case "$cmd" in
+		*"/usr/local/bin/cpz-session-supervise"*) return 0 ;;
+	esac
+	return 1
+}
+
 session_up() {
 	# cage is the real session. The getty unit can be inactive or transient
 	# while the logind session (and cage) still runs; restarting on the unit
 	# state alone produced the endless "session inactive" loop.
 	pgrep -x cage >/dev/null 2>&1 && return 0
+	supervisor_up && return 0
 	systemctl is-active --quiet "$unit" ||
 		systemctl is-activating --quiet "$unit"
+}
+
+fast_restart() {
+	# Ask the login-session supervisor for a new cage. The session, seat,
+	# VT and login shell stay; only the compositor is replaced. Returns
+	# non-zero when the supervisor is not there, so the caller can fall back
+	# to the full getty cycle.
+	supervisor_up || return 1
+	old=$(pgrep -x cage 2>/dev/null | head -n 1)
+	[ -n "$old" ] || return 1
+	: >"$restart_request" 2>/dev/null || return 1
+	kill -TERM "$old" 2>/dev/null || true
+	tries=0
+	while [ "$tries" -lt 80 ]; do
+		new=$(pgrep -x cage 2>/dev/null | head -n 1)
+		if [ -n "$new" ] && [ "$new" != "$old" ]; then
+			return 0
+		fi
+		sleep 0.1
+		tries=$((tries + 1))
+	done
+	rm -f "$restart_request" 2>/dev/null || true
+	return 1
 }
 
 restart_session() {
@@ -385,6 +426,12 @@ restart_session() {
 	# compositor fail (or leaves two cages fighting over wayland-0/Xwayland).
 	# Stop the unit, terminate the compositor, wait for the device, start clean.
 	t0=$(date +%s 2>/dev/null || printf 0)
+	if supervisor_up && fast_restart; then
+		t1=$(date +%s 2>/dev/null || printf 0)
+		log "restart stages: in-session re-exec=$((t1 - t0))s"
+		sleep 0.2
+		return 0
+	fi
 	systemctl stop "$unit" >/dev/null 2>&1 || true
 	pkill -TERM -x cage 2>/dev/null || true
 	tries=0

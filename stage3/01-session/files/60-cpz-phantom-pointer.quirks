@@ -1,46 +1,53 @@
 # CPZ: devices that must never make cage draw a cursor.
 #
 # cage shows its cursor whenever libinput reports a pointer-capable device.
-# The TCA8418 internal keyboard and the vc4 HDMI CEC node both expose REL_X /
-# REL_Y axes even though there is no mouse behind them.  The udev policy in
-# 99-zz-cpz-input.rules strips their ID_INPUT_* pointer tags, but a later rule
-# (or a libinput version that derives the capability from evdev bits) could
-# restore it.  Disabling the relative and absolute event codes here keeps every
-# key event and removes the pointer capability at the libevdev level.
+# libinput derives that capability from evdev bits, so the udev ID_INPUT_*
+# tags alone cannot remove it. Several devices expose REL_X/REL_Y without a
+# mouse behind them:
 #
-# This file is installed as /etc/libinput/local-overrides.quirks.  A parse
-# error in that file disables every libinput quirk, so keep the syntax simple.
-# One MatchName per section: libinput does not accept repeated match keys, and
-# MatchName is a case-sensitive fnmatch pattern, hence the name variants.
+#   - the internal TCA8418 keyboard (stray axes),
+#   - the vc4 HDMI CEC node,
+#   - the gpio_ir_recv IR receiver (the IR decoder reports axes).
+#
+# AttrEventCode removes the axes at the libevdev level and keeps every key
+# event, so an IR remote or CEC remote still works while no cursor appears.
+# The values are event-code names (REL_X, ABS_X), not event types: writing
+# "-EV_REL" is a parse error, and a parse error disables the whole file.
+#
+# This file is installed as /etc/libinput/local-overrides.quirks.
 
-[CPZ CardputerZero internal keyboard is not a pointer]
+[CPZ internal keyboard is not a pointer]
 MatchName=cardputer-zero-internal
-AttrEventCode=-EV_REL;-EV_ABS;
+AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;
 
-[CPZ TCA8418 keyboard is not a pointer]
+[CPZ TCA8418 is not a pointer]
 MatchName=*TCA8418*
-AttrEventCode=-EV_REL;-EV_ABS;
+AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;
 
-[CPZ tca8418 keyboard is not a pointer]
+[CPZ tca8418 is not a pointer]
 MatchName=*tca8418*
-AttrEventCode=-EV_REL;-EV_ABS;
+AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;
 
-[CPZ M5Stack keyboard is not a pointer]
+[CPZ M5Stack is not a pointer]
 MatchName=*M5Stack*
-AttrEventCode=-EV_REL;-EV_ABS;
+AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;
 
-[CPZ m5stack keyboard is not a pointer]
+[CPZ m5stack is not a pointer]
 MatchName=*m5stack*
-AttrEventCode=-EV_REL;-EV_ABS;
+AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;
 
-[CPZ Cardputer keyboard is not a pointer]
+[CPZ Cardputer is not a pointer]
 MatchName=*Cardputer*
-AttrEventCode=-EV_REL;-EV_ABS;
+AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;
 
-[CPZ cardputer keyboard is not a pointer]
+[CPZ cardputer is not a pointer]
 MatchName=*cardputer*
-AttrEventCode=-EV_REL;-EV_ABS;
+AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;
 
 [CPZ vc4 HDMI CEC is not a pointer]
 MatchName=vc4-hdmi*
-AttrEventCode=-EV_REL;-EV_ABS;
+AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;
+
+[CPZ IR receiver is not a pointer]
+MatchName=gpio_ir_recv
+AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;

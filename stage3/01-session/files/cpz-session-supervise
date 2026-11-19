@@ -1,0 +1,35 @@
+#!/bin/sh
+# Keep cage in the same login session across deliberate compositor restarts.
+#
+# A keyboard layout change needs a new cage: wlroots builds the XKB keymap from
+# XKB_DEFAULT_* when the keyboard is configured, and the environment of a
+# running process cannot change. Going back through getty, login and PAM costs
+# about a second of black screen on top of cage's own start-up, so the output
+# helper asks this loop for an in-session re-exec instead: cage exits, this
+# loop starts a fresh one with the new environment, and the logind session,
+# seat and VT stay the same.
+#
+# A crash (cage exits without a restart request) ends the loop, so the getty
+# still restarts the session from scratch.
+set -eu
+
+run_dir=/run/cpz-cage
+request=$run_dir/restart.request
+pid_file=$run_dir/session-supervisor.pid
+
+cleanup() {
+	rm -f "$pid_file" 2>/dev/null || true
+}
+trap cleanup EXIT HUP INT TERM
+
+printf '%s\n' "$$" >"$pid_file" 2>/dev/null || true
+
+while :; do
+	/usr/local/bin/cpz-cage
+	status=$?
+	if [ -e "$request" ]; then
+		rm -f "$request" 2>/dev/null || true
+		continue
+	fi
+	exit "$status"
+done

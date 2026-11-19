@@ -67,7 +67,9 @@ applied_layout=
 
 log() {
 	[ -d "${log_file%/*}" ] || return 0
-	printf '%s %s\n' "$(date +%H:%M:%S)" "$1" >>"$log_file" 2>/dev/null || true
+	# The group redirection hides the "permission denied" message itself: a
+	# --detect run as the console user cannot append to the root-owned log.
+	{ printf '%s %s\n' "$(date +%H:%M:%S)" "$1" >>"$log_file"; } 2>/dev/null || true
 }
 
 event_sysfs() {
@@ -101,6 +103,39 @@ device_name() {
 
 device_bustype() {
 	cat "$(event_sysfs "$1")/device/id/bustype" 2>/dev/null | tr 'A-F' 'a-f'
+}
+
+# USB device (not interface) that owns an input node, e.g. "1-1.3.3.3".
+# Empty for the internal i2c keyboard and for non-USB buses.
+usb_device() {
+	path=$(device_path "$1")
+	[ -n "$path" ] || return 0
+	printf '%s' "$path" |
+		sed -n 's|.*/\([0-9][0-9.-]*\)/[0-9][0-9.-]*:[0-9][0-9.]*/.*|\1|p'
+}
+
+# Gaming mice, trackballs and combo receivers often expose a second HID
+# interface that advertises a complete keyboard bitmap (macro keys, media
+# keys). It passes the typing-keyboard test, so it would keep the standard
+# layout selected forever and the CPZ overlay would never come back while the
+# pointer is plugged in. A node counts as a keyboard for layout purposes only
+# when no interface of the same USB device has relative X/Y axes.
+usb_device_is_pointer() {
+	node=$1
+	[ -n "$node" ] || return 1
+	for other in /dev/input/event*; do
+		[ -e "$other" ] || continue
+		[ "$(usb_device "$other")" = "$node" ] || continue
+		rel=$(cat "$(event_sysfs "$other")/device/capabilities/rel" 2>/dev/null || true)
+		rel=${rel%% *}
+		case "$rel" in
+			'' | *[!0-9a-fA-F]*) continue ;;
+		esac
+		if [ $((0x$rel & 0x3)) -ne 0 ]; then
+			return 0
+		fi
+	done
+	return 1
 }
 
 # True when the event node belongs to the built-in Cardputer keyboard. Check
@@ -152,6 +187,11 @@ detect_external_keyboard() {
 		name=$(device_name "$event")
 		name_lc=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
 		if is_internal_device "$event" "$name_lc"; then
+			continue
+		fi
+		usb=$(usb_device "$event")
+		if usb_device_is_pointer "$usb"; then
+			log "ignoring keyboard endpoint of a pointer device: $event name=${name:-?} usb=$usb"
 			continue
 		fi
 		bustype=$(device_bustype "$event")
@@ -214,6 +254,30 @@ if [ "${CPZ_LAYOUT_SETTLE:-1}" = 0 ] &&
 fi
 if [ "${CPZ_LAYOUT_SETTLE:-1}" = 1 ] && command -v udevadm >/dev/null 2>&1; then
 	udevadm settle --timeout=2 >/dev/null 2>&1 || true
+fi
+
+# A USB hub reports every interface separately, and udev removal order is not
+# guaranteed: the primary keyboard node can disappear before its media
+# interface (or before the keyboard endpoint of a mouse). Deciding on such a
+# half-removed set flips the layout twice (us -> cpz_us -> us), and every flip
+# restarts the compositor. Wait until the event node list stops changing, then
+# decide once.
+if [ "${CPZ_LAYOUT_SETTLE:-1}" = 1 ]; then
+	snapshot_prev=
+	stable=0
+	tries=0
+	while [ "$tries" -lt 25 ]; do
+		snapshot=$(ls /dev/input/event* 2>/dev/null | tr '\n' ' ')
+		if [ "$snapshot" = "$snapshot_prev" ]; then
+			stable=$((stable + 1))
+			[ "$stable" -ge 2 ] && break
+		else
+			stable=0
+			snapshot_prev=$snapshot
+		fi
+		sleep 0.2
+		tries=$((tries + 1))
+	done
 fi
 
 first_home=$(getent passwd 1000 | cut -d: -f6 2>/dev/null || true)

@@ -4,11 +4,13 @@
 # The built-in TCA8418 keyboard must stay on seat0. kmscon read evdev directly,
 # but cage/libinput only sees seat0; the old ID_SEAT="seat1" made the internal
 # keyboard invisible to the compositor while an external keyboard still worked.
-ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_PATH}=="platform-3f804000.i2c", ENV{ID_SEAT}="seat0", ENV{ID_INPUT_KEYBOARD}="1", ENV{ID_INPUT_MOUSE}="0", ENV{ID_INPUT_TOUCHPAD}="0", ENV{ID_INPUT_POINTINGSTICK}="0"
+# An empty value removes the property. libinput treats ID_INPUT_MOUSE=0 as
+# "tagged as a mouse" because it only checks that the property exists.
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_PATH}=="platform-3f804000.i2c", ENV{ID_SEAT}="seat0", ENV{ID_INPUT_KEYBOARD}="1", ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_TOUCHPAD}="", ENV{ID_INPUT_POINTINGSTICK}=""
 
 # Keep the keyboard-side CEC events but never let the vc4 HDMI node create a
 # phantom pointer, even if the policy helper is temporarily unavailable.
-ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="vc4-hdmi*", ENV{ID_INPUT_MOUSE}="0", ENV{ID_INPUT_TOUCHPAD}="0", ENV{ID_INPUT_TOUCHSCREEN}="0", ENV{ID_INPUT_POINTINGSTICK}="0", ENV{ID_INPUT_TABLET}="0"
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="vc4-hdmi*", ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_TOUCHPAD}="", ENV{ID_INPUT_TOUCHSCREEN}="", ENV{ID_INPUT_POINTINGSTICK}="", ENV{ID_INPUT_TABLET}=""
 
 # Pointer policy is centralized in cpz-pointer. It keeps keyboard-only devices
 # (including the vc4 HDMI CEC node) usable, but strips pointer capabilities
@@ -16,11 +18,19 @@ ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="vc4-hdmi*"
 # Support is off. A real USB/Bluetooth mouse therefore gets the cursor only
 # when both conditions are true. --apply reopens the devices with a synthetic
 # remove/add pair, because libinput does not process udev "change" events.
-ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", IMPORT{program}="/usr/local/bin/cpz-pointer --udev %k"
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*|input[0-9]*", IMPORT{program}="/usr/local/bin/cpz-pointer --udev %k"
+
+# libinput checks whether an ID_INPUT_* property exists, not its value, so
+# ID_INPUT_MOUSE=0 still tags the device as a pointer. The hook marks devices
+# that must not drive a cursor with CPZ_NO_POINTER=1; an empty ENV value makes
+# udev remove the property, which is what actually clears the libinput tag.
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*|input[0-9]*", ENV{CPZ_NO_POINTER}=="1", ENV{ID_INPUT_MOUSE}="", ENV{ID_INPUT_POINTINGSTICK}="", ENV{ID_INPUT_TOUCHPAD}="", ENV{ID_INPUT_TOUCHSCREEN}="", ENV{ID_INPUT_TABLET}="", ENV{ID_INPUT_TABLET_PAD}="", ENV{ID_INPUT_TRACKBALL}=""
 
 # cage 0.3.1 can honour a lagging wl_pointer.set_cursor/set_shape after a
 # pointer was removed and then reattach the client's text cursor forever.
 # The helper marks real pointers before stripping capabilities; this remove
 # rule starts a delayed keyboard nudge that makes cage call
 # update_capabilities() again and unset the stale cursor image.
-ACTION=="remove", SUBSYSTEM=="input", KERNEL=="event*", ENV{CPZ_REAL_POINTER}=="1", TAG+="systemd", ENV{SYSTEMD_WANTS}+="cpz-pointer-cursor.service"
+# systemd ignores SYSTEMD_WANTS on remove events (the device unit is already
+# going away), so the unit must be queued from udev directly.
+ACTION=="remove", SUBSYSTEM=="input", KERNEL=="event*", ENV{CPZ_REAL_POINTER}=="1", RUN+="/bin/systemctl --no-block start cpz-pointer-cursor.service"

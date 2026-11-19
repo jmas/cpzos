@@ -11,4 +11,4 @@
 tty_name=$(tty 2>/dev/null || true)
 [ "$tty_name" = /dev/tty1 ] || return 0
 
-exec /usr/local/bin/cpz-cage
+exec /usr/local/bin/cpz-session-supervise

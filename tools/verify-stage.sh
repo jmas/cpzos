@@ -206,6 +206,7 @@ for file in \
 	stage3/01-session/files/cpz-cage \
 	stage3/01-session/files/cpz-cage-output \
 	stage3/01-session/files/cpz-cage-session \
+	stage3/01-session/files/cpz-session-supervise \
 	stage3/01-session/files/10-ssh.conf \
 	stage3/01-session/files/cpz-cage-output.service \
 	stage3/01-session/files/cpz-cage-output.timer \
@@ -420,6 +421,8 @@ contains stage3/01-session/files/cpz-cage-output 'logger -t cpz-cage-output --'
 contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'ExecStartPre=-+/usr/local/bin/cpz-cage-output --prepare'
 contains stage3/01-session/files/getty@tty1.service.d/10-cpz.conf 'Type=simple'
 contains stage3/01-session/files/cpz-battery 'cpz-battery.boot-checked'
+contains stage3/01-session/files/cpz-keyboard-layout 'usb_device_is_pointer'
+contains stage3/01-session/files/cpz-keyboard-layout 'capabilities/rel'
 contains stage3/01-session/files/cpz-cage-output 'user_request=1'
 contains stage3/01-session/files/cpz-cage-output 'cpz-panel-backlight off'
 contains stage3/01-session/files/cpz-cage-output 'cpz-panel-backlight on'
@@ -430,7 +433,9 @@ contains stage3/01-session/files/50-cpz-backlight 'cpz-panel-backlight'
 contains stage3/01-session/files/cpz-cage-output 'HDMI unusable, panel fallback'
 contains stage3/01-session/files/cpz-cage-output '--report)'
 contains stage3/01-session/files/cpz-session.sh '/dev/tty1'
-contains stage3/01-session/files/cpz-session.sh '/usr/local/bin/cpz-cage'
+contains stage3/01-session/files/cpz-session.sh '/usr/local/bin/cpz-session-supervise'
+contains stage3/01-session/files/cpz-cage-output 'fast_restart'
+contains stage3/01-session/files/cpz-session-supervise 'restart.request'
 contains stage3/01-session/files/10-ssh.conf 'PasswordAuthentication yes'
 contains stage3/01-session/files/cpz-tmux.service 'RemainAfterExit=yes'
 contains stage3/01-session/files/cpz-tmux.service 'Requires=user-runtime-dir@1000.service'
@@ -490,7 +495,8 @@ contains stage3/01-session/files/99-zz-cpz-input.rules 'cpz-pointer-cursor.servi
 contains stage3/01-session/files/cpz-pointer 'seat-cpz-no-pointer'
 contains stage3/01-session/files/cpz-pointer 'request_foot_reload'
 have stage3/01-session/files/60-cpz-phantom-pointer.quirks
-contains stage3/01-session/files/60-cpz-phantom-pointer.quirks 'AttrEventCode=-EV_REL;-EV_ABS;'
+contains stage3/01-session/files/60-cpz-phantom-pointer.quirks 'AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;'
+contains stage3/01-session/files/60-cpz-phantom-pointer.quirks 'MatchName=gpio_ir_recv'
 contains stage3/01-session/01-run.sh 'etc/libinput/local-overrides.quirks'
 contains stage3/01-session/files/cpz-settings 'language_codes'
 contains stage3/01-session/files/cpz-settings '"language"'
