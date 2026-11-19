@@ -672,7 +672,7 @@ else
     fail "settings: display mode MISSING"
 fi
 
-if debugfs -R "cat etc/cpz/settings.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "font_size=12"; then
+if debugfs -R "cat etc/cpz/settings.conf" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "font_size_panel=12"; then
     pass "settings: font size present"
 else
     fail "settings: font size MISSING"
@@ -760,7 +760,7 @@ else
 fi
 
 if debugfs -R "cat etc/libinput/local-overrides.quirks" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "AttrEventCode=-EV_REL;-EV_ABS;"; then
+    grep -q "AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;"; then
     pass "phantom keyboards/CEC cannot advertise pointer axes"
 else
     fail "libinput phantom pointer quirk MISSING"

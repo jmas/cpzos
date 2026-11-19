@@ -59,6 +59,9 @@ class MusicWrapperTest(unittest.TestCase):
             text=True,
             capture_output=True,
             timeout=20,
+            # CI and ssh run the wrapper without a controlling terminal; keep
+            # the test independent of the terminal the developer runs it in.
+            start_new_session=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         entries = playlist.read_text(encoding="utf-8").splitlines()

@@ -23,7 +23,11 @@ file=$(cd -- "$dir" && pwd)/$(basename -- "$1")
 # A TUI needs the controlling terminal even when the caller (mc's
 # ${MC_XDG_OPEN}) redirects stdout and stderr to /dev/null.
 if [ ! -t 0 ] || [ ! -t 1 ]; then
-	if { exec 3<>/dev/tty; } 2>/dev/null; then
+	# exec is a special builtin: in dash a failed redirection exits the whole
+	# script, so probe /dev/tty in a subshell first. CI and an SSH session
+	# without a terminal have no controlling terminal at all.
+	if (exec 3<>/dev/tty) 2>/dev/null; then
+		exec 3<>/dev/tty
 		exec <&3 >&3 2>&3
 		exec 3>&-
 	fi
@@ -46,7 +50,7 @@ find "$dir" -type f ! -name '*.cue' -print | LC_ALL=C sort |
 			[0-9A-Za-z]*) ;;
 			*) continue ;;
 		esac
-		ext=$(printf '%s' "${f##*.}" | tr 'A-Z' 'a-z')
+		ext=$(printf '%s' "${f##*.}" | LC_ALL=C tr '[:upper:]' '[:lower:]')
 		case "$ext" in
 			mp3 | mp2 | aac | ogg | oga | opus | flac | wav | wv | mpc | mpp | \
 				mod | s3m | xm | it | mtm | 669 | stm | ult | far | \

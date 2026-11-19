@@ -233,7 +233,6 @@ def node_dir(node: str) -> str:
 
 
 def inspect_device(event: str, env: Mapping[str, str] | None = None) -> Device:
-    event_dir = sysfs("class", "input", event)
     device_dir = node_dir(event)
     name = read_text(os.path.join(device_dir, "name")).strip()
     raw_bus = read_text(os.path.join(device_dir, "id", "bustype")).strip()

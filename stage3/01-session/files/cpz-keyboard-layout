@@ -267,7 +267,8 @@ if [ "${CPZ_LAYOUT_SETTLE:-1}" = 1 ]; then
 	stable=0
 	tries=0
 	while [ "$tries" -lt 25 ]; do
-		snapshot=$(ls /dev/input/event* 2>/dev/null | tr '\n' ' ')
+		snapshot=$(find /dev/input -maxdepth 1 -name 'event*' 2>/dev/null |
+			LC_ALL=C sort | tr '\n' ' ')
 		if [ "$snapshot" = "$snapshot_prev" ]; then
 			stable=$((stable + 1))
 			[ "$stable" -ge 2 ] && break
