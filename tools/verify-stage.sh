@@ -250,6 +250,7 @@ for file in \
 	stage3/01-session/files/battery.conf \
 	stage3/01-session/files/cpz-automount@.service \
 	stage3/01-session/files/tmux.conf \
+	stage3/01-session/files/mc.ini \
 	stage3/01-session/files/cpz-session-ensure \
 	stage3/01-session/files/cpz-tab-new \
 	stage3/01-session/files/cpz-tab-close \
@@ -407,6 +408,9 @@ contains stage3/01-session/files/tmux.conf 'window-size largest'
 contains stage3/01-session/files/tmux.conf 'cpz-keys write'
 contains stage3/01-session/files/tmux.conf 'tmux-keys.conf'
 not_contains stage3/01-session/files/tmux.conf 'bind -n M-'
+contains stage3/01-session/files/mc.ini 'menubar_visible=false'
+contains stage3/01-session/files/mc.ini 'keybar_visible=false'
+contains stage3/01-session/files/mc.ini 'message_visible=false'
 contains stage3/01-session/files/cpz-help 'cpz-keys help'
 contains stage3/01-session/files/cpz-hint 'cpz-keys hint'
 contains stage3/01-session/files/cpz-first-login 'passwd'
@@ -480,6 +484,7 @@ contains stage3/01-session/01-run.sh 'files/cpz-track'
 contains stage3/01-session/files/cpz-track 'position'
 contains stage3/01-session/files/cpz-track 'player-pause'
 contains stage3/01-session/files/cpz-media-keys 'LONG_PRESS'
+contains stage3/01-session/files/cpz-media-keys 'if device == KEYBOARD:'
 contains stage3/01-session/files/cmus-rc 'bind -f common q quit'
 contains stage3/01-session/01-run.sh 'files/cmus-rc'
 contains stage3/01-session/files/lfrc '/usr/local/bin/cpz-open'

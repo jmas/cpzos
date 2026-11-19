@@ -99,6 +99,9 @@ class TrackButtonTest(unittest.TestCase):
         self.assertIn('115: [TRACK, "next"]', text)
         self.assertIn('114: [TRACK, "prev"]', text)
         self.assertIn('115: [VOLUME, "up"]', text)
+        # The device's own volume keys must not gain the hold behaviour.
+        self.assertIn('KEYBOARD = "tca8418c"', text)
+        self.assertIn("if device == KEYBOARD:", text)
 
     def test_a_held_volume_key_skips_only_after_the_threshold(self):
         loader = SourceFileLoader("cpz_media_keys", str(MEDIA_KEYS))
@@ -109,7 +112,7 @@ class TrackButtonTest(unittest.TestCase):
 
         calls: list[list[str]] = []
         module.run = calls.append
-        held = {115: (100.0, False)}
+        held = {("headset", 115): (100.0, False)}
 
         # Still inside the threshold: nothing happens and the loop waits.
         wait = module.fire_long_presses(held, 100.3)
@@ -119,7 +122,7 @@ class TrackButtonTest(unittest.TestCase):
         # Past the threshold the track changes once, then the key is spent.
         module.fire_long_presses(held, 100.7)
         self.assertEqual(calls, [[module.TRACK, "next"]])
-        self.assertTrue(held[115][1])
+        self.assertTrue(held[("headset", 115)][1])
         module.fire_long_presses(held, 101.0)
         self.assertEqual(calls, [[module.TRACK, "next"]])
 

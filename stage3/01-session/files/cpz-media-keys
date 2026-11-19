@@ -9,10 +9,12 @@ This daemon reads the evdev devices (the CPZ user is in the input group),
 reacts to press events only, and runs the matching helper. It rescans
 /dev/input so a headset plugged in later starts working without a restart.
 
-The volume rocker is shared: a short press changes the PipeWire volume, a hold
-of half a second skips to the previous/next track. The centre button toggles
-play/pause. The CPZ keyboard's Fn layer reports the standard media keycodes
-(Fn+Q play/pause, Fn+W previous, Fn+E next) and they are handled here as well.
+The headset's volume rocker is shared: a short press changes the PipeWire
+volume, a hold of half a second skips to the previous/next track. Its centre
+button toggles play/pause. The CPZ keyboard's Fn layer reports the same
+keycodes (Fn+A/S/D volume, Fn+Q play/pause, Fn+W previous, Fn+E next); the
+keyboard's volume keys must stay plain volume keys, so the hold behaviour is
+applied per device.
 """
 
 import glob
@@ -29,6 +31,7 @@ VOLUME = "/usr/local/bin/cpz-volume"
 TRACK = "/usr/local/bin/cpz-track"
 RESCAN = 2.0
 LONG_PRESS = 0.6
+KEYBOARD = "tca8418c"
 
 # Keys that act on the press: mute, the dedicated media keys and the centre
 # button (KEY_PLAYPAUSE on the headset, Fn+Q on the keyboard).
@@ -62,7 +65,15 @@ def run(command):
     )
 
 
-def rescan(open_fds):
+def device_name(path):
+    try:
+        with open(f"/sys/class/input/{os.path.basename(path)}/device/name") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def rescan(open_fds, names):
     for path in sorted(glob.glob("/dev/input/event*")):
         if path in open_fds:
             continue
@@ -70,6 +81,7 @@ def rescan(open_fds):
             open_fds[path] = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
         except OSError:
             continue
+        names[path] = device_name(path)
 
 
 def close_all(open_fds):
@@ -81,7 +93,7 @@ def close_all(open_fds):
     open_fds.clear()
 
 
-def consume(handle, open_fds, held, now):
+def consume(handle, open_fds, names, held, now):
     try:
         data = os.read(handle, EVENT.size * 64)
     except OSError:
@@ -97,6 +109,8 @@ def consume(handle, open_fds, held, now):
                     pass
                 break
         return
+    path = next((p for p, fd in open_fds.items() if fd == handle), "")
+    device = names.get(path, "")
     for offset in range(0, len(data) - EVENT.size + 1, EVENT.size):
         _, _, etype, code, value = EVENT.unpack_from(data, offset)
         if etype != EV_KEY:
@@ -105,9 +119,13 @@ def consume(handle, open_fds, held, now):
         if value == 1 and code in TAP_ACTIONS:
             run(TAP_ACTIONS[code])
         elif value == 1 and code in HOLD_ACTIONS:
-            held[code] = (now, False)
-        elif value == 0 and code in held:
-            started, fired = held.pop(code)
+            if device == KEYBOARD:
+                # The device's own keys are volume-only: no hold behaviour.
+                run(HOLD_ACTIONS[code])
+            else:
+                held[(device, code)] = (now, False)
+        elif value == 0 and (device, code) in held:
+            _, fired = held.pop((device, code))
             if not fired:
                 run(HOLD_ACTIONS[code])
 
@@ -115,16 +133,16 @@ def consume(handle, open_fds, held, now):
 def fire_long_presses(held, now):
     """Run the long action for keys held past the threshold; return the wait."""
     wait = RESCAN
-    for code, (started, fired) in list(held.items()):
+    for (device, code), (started, fired) in list(held.items()):
         if fired:
             # A missed release must not keep the key armed forever.
             if now - started > 5:
-                held.pop(code, None)
+                held.pop((device, code), None)
             continue
         remaining = LONG_PRESS - (now - started)
         if remaining <= 0:
             run(LONG_ACTIONS[code])
-            held[code] = (started, True)
+            held[(device, code)] = (started, True)
         else:
             wait = min(wait, remaining)
     return wait
@@ -132,10 +150,11 @@ def fire_long_presses(held, now):
 
 def main():
     fds = {}
+    names = {}
     held = {}
     log("watching media keys")
     while True:
-        rescan(fds)
+        rescan(fds, names)
         if not fds:
             time.sleep(RESCAN)
             continue
@@ -151,7 +170,7 @@ def main():
             time.sleep(0.2)
             continue
         for handle in ready:
-            consume(handle, fds, held, time.monotonic())
+            consume(handle, fds, names, held, time.monotonic())
 
 
 if __name__ == "__main__":

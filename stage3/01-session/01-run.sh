@@ -27,6 +27,12 @@ install -m 0644 files/cpz-cage.tmpfiles \
 
 install -m 0644 files/tmux.conf "${ROOTFS_DIR}/etc/tmux.conf"
 
+# Midnight Commander keeps the menu bar, key bar and hint bar hidden by
+# default: on the small display those three rows are more useful as file
+# listings. mc reads /etc/mc/mc.ini until the user has ~/.config/mc/ini.
+install -d -m 0755 "${ROOTFS_DIR}/etc/mc"
+install -m 0644 files/mc.ini "${ROOTFS_DIR}/etc/mc/mc.ini"
+
 # /tmp is disk-backed because tmp.mount is masked in 02-run.sh.
 install -d -m 1777 "${ROOTFS_DIR}/tmp"
 

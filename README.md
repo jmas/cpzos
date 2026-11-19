@@ -42,7 +42,8 @@ forwards those keys to foot. A short press on the headset rocker changes the
 volume, holding it for half a second skips to the previous/next track, and the
 centre button toggles play/pause. The same service wires the keyboard's Fn
 layer: `Fn+W` previous, `Fn+E` next and `Fn+Q` play/pause (the TCA8418 keymap
-already reports them as the standard media keycodes). Every
+already reports them as the standard media keycodes); `Fn+A`/`Fn+S`/`Fn+D` stay
+plain mute/volume-down/volume-up keys, the hold behaviour is headset-only. Every
 binding can be reassigned in Settings → Input → Shortcuts; see
 [docs/CPZ-KEYS.md](docs/CPZ-KEYS.md) for the complete default list and the
 shortcut rules.
