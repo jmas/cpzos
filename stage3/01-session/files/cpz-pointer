@@ -44,6 +44,8 @@ RUN_DIR = os.environ.get("CPZ_POINTER_RUN_DIR", "/run/cpz-pointer")
 STATE_FILE = "state"
 LOCK_FILE = "apply.lock"
 NUDGE_STAMP = "nudge.stamp"
+# The LD_PRELOAD shim in cage reads this file on every libinput device-add.
+SPEED_FILE = "speed"
 
 # sysfs capability bits
 REL_X = 0
@@ -205,6 +207,25 @@ def mouse_enabled() -> bool:
         if value and value in FALSE_VALUES:
             return False
     return False
+
+
+def mouse_speed() -> float:
+    """Return the stored libinput acceleration speed, user settings first.
+
+    settings.conf keeps tenths in an integer so the Settings picker does not
+    depend on float parsing; -10..10 maps to libinput's -1.0..1.0 range.
+    """
+    for path in settings_paths():
+        value: int | None = None
+        for line in read_text(path).splitlines():
+            if line.startswith("mouse_speed="):
+                try:
+                    value = int(line.split("=", 1)[1].strip())
+                except ValueError:
+                    value = None
+        if value is not None:
+            return max(-10, min(10, value)) / 10.0
+    return 0.0
 
 
 def is_phantom(name: str, path: str) -> bool:
@@ -419,10 +440,11 @@ def udev_hook(event: str) -> int:
     return 0
 
 
-def state_signature(devices: list[Device], enabled: bool) -> str:
+def state_signature(devices: list[Device], enabled: bool, speed: float) -> str:
     payload = {
         "version": 1,
         "enabled": enabled,
+        "speed": round(speed, 3),
         "devices": [
             {
                 "event": device.event,
@@ -560,10 +582,31 @@ def nudge_policy(force: bool = False) -> int:
     return 1
 
 
+def write_speed(speed: float) -> None:
+    """Publish the speed for the cage LD_PRELOAD shim.
+
+    The file lives in /run and is readable by the session user. Rewriting it
+    on every apply (including the boot-time one) means a stale value can never
+    survive a reboot.
+    """
+    directory = run_dir()
+    try:
+        os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, SPEED_FILE)
+        temporary = f"{path}.tmp.{os.getpid()}"
+        with open(temporary, "w", encoding="utf-8") as fh:
+            fh.write(f"{speed:.1f}\n")
+        os.replace(temporary, path)
+    except OSError:
+        pass
+
+
 def apply_policy(force: bool = False) -> int:
     enabled = mouse_enabled()
+    speed = mouse_speed()
+    write_speed(speed)
     devices = scan_devices()
-    signature = state_signature(devices, enabled)
+    signature = state_signature(devices, enabled, speed)
     if not force and read_state() == signature:
         return 0
 

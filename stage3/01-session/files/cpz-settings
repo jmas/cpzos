@@ -375,6 +375,7 @@ DEFAULTS: dict[str, Any] = {
     "brightness": 100,
     "screen_timeout": 0,
     "mouse": 1,
+    "mouse_speed": 0,
     "history_limit": 2000,
     "mode_keys": "vi",
     "status_interval": 5,
@@ -401,6 +402,17 @@ SCREEN_TIMEOUT_LABELS = {
     10: "10 min",
     30: "30 min",
 }
+
+# libinput acceleration speed is a float in [-1.0, 1.0]. Storing tenths keeps
+# settings.conf integer-only and makes every step a stable picker index.
+MOUSE_SPEEDS = tuple(range(-10, 11))
+
+
+def mouse_speed_label(value: int) -> str:
+    if value == 0:
+        return "0.0"
+    return f"{value / 10:+.1f}"
+
 
 LANGUAGE_LOCALES = {
     "en": "en_US.UTF-8",
@@ -738,6 +750,11 @@ def load_settings() -> dict:
     except (TypeError, ValueError):
         brightness = DEFAULTS["brightness"]
     data["brightness"] = max(10, min(100, brightness))
+    try:
+        mouse_speed = int(data["mouse_speed"])
+    except (TypeError, ValueError):
+        mouse_speed = DEFAULTS["mouse_speed"]
+    data["mouse_speed"] = max(MOUSE_SPEEDS[0], min(MOUSE_SPEEDS[-1], mouse_speed))
     for key in (
         "show_clock",
         "clock_24h",
@@ -788,6 +805,7 @@ def save_settings(data: dict) -> None:
             "brightness",
             "screen_timeout",
             "mouse",
+            "mouse_speed",
             "history_limit",
             "mode_keys",
             "status_interval",
@@ -1005,6 +1023,10 @@ def apply_live(data: dict, key: str) -> None:
         tmux("set", "-g", "mouse", "on" if data["mouse"] else "off")
         global _POINTER_STATUS
         _POINTER_STATUS = None
+        request_pointer_apply()
+    elif key == "mouse_speed":
+        # cpz-pointer reads settings.conf, publishes the speed to the shim and
+        # reopens the pointer devices; cage itself is not restarted.
         request_pointer_apply()
     elif key == "history_limit":
         tmux("set", "-g", "history-limit", str(data["history_limit"]))
@@ -5087,6 +5109,17 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "kind": "toggle",
                 "key": "mouse",
                 "get": mouse_support_text,
+            }
+        )
+        items.append(
+            {
+                "label": "Mouse Speed",
+                "kind": "scale",
+                "key": "mouse_speed",
+                "values": MOUSE_SPEEDS,
+                "labels": {
+                    value: mouse_speed_label(value) for value in MOUSE_SPEEDS
+                },
             }
         )
         items.append(

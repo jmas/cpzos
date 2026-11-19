@@ -226,6 +226,7 @@ for file in \
 	stage3/01-session/files/imv-config \
 	stage3/01-session/files/cmus-rc \
 	stage3/01-session/files/cpz-pointer \
+	stage3/01-session/files/cpz-pointer-speed.c \
 	stage3/01-session/files/cpz-i18n \
 	stage3/01-session/files/i18n/en.json \
 	stage3/01-session/files/i18n/uk.json \
@@ -536,6 +537,7 @@ contains stage3/01-session/files/cpz-settings '"label": "Volume"'
 contains stage3/01-session/files/cpz-settings '"label": "Brightness"'
 contains stage3/01-session/files/settings.conf 'show_volume=0'
 contains stage3/01-session/files/settings.conf 'show_brightness=0'
+contains stage3/01-session/files/settings.conf 'mouse_speed=0'
 contains stage3/01-session/files/cpz-conn-status 'E+'
 contains stage3/01-session/files/tmux.conf 'status-right-length 36'
 contains stage3/01-session/01-run.sh 'enable cpz-conn-status.timer'
@@ -570,6 +572,12 @@ contains tools/verify-image.sh 'AttrEventCode=-REL_X;-REL_Y;-ABS_X;-ABS_Y;'
 not_contains tools/verify-image.sh 'AttrEventCode=-EV_REL;-EV_ABS;'
 contains stage3/01-session/files/60-cpz-phantom-pointer.quirks 'MatchName=gpio_ir_recv'
 contains stage3/01-session/01-run.sh 'etc/libinput/local-overrides.quirks'
+contains stage3/01-session/files/cpz-pointer-speed.c 'libinput_device_config_accel_set_speed'
+contains stage3/01-session/files/cpz-pointer-speed.c 'libinput_get_event'
+contains stage3/01-session/files/cpz-pointer 'mouse_speed'
+contains stage3/01-session/files/cpz-settings 'mouse_speed'
+contains stage3/01-session/files/cpz-cage 'cpz-pointer-speed.so'
+contains stage3/01-session/01-run.sh 'cpz-pointer-speed.so'
 contains stage3/01-session/files/cpz-settings 'language_codes'
 contains stage3/01-session/files/cpz-settings '"language"'
 contains stage3/01-session/files/i18n/uk.json 'Пошук'

@@ -48,6 +48,7 @@ PERSISTED = (
     "brightness",
     "screen_timeout",
     "mouse",
+    "mouse_speed",
     "history_limit",
     "mode_keys",
     "status_interval",
@@ -233,6 +234,27 @@ class SettingsTUI(unittest.TestCase):
         data = self.mod.load_settings()
         self.assertEqual(data["theme"], "cpz-homebrew")
         self.assertNotIn("unknown_key", data)
+
+    def test_mouse_speed_row_maps_tenths_to_libinput_range(self):
+        data = dict(self.mod.DEFAULTS)
+        items = {
+            item["label"]: item
+            for item in self.mod.page_items("keyboard", data, None)
+        }
+        item = items["Mouse Speed"]
+        self.assertEqual(item["kind"], "scale")
+        self.assertEqual(item["key"], "mouse_speed")
+        self.assertEqual(item["values"], tuple(range(-10, 11)))
+        self.assertEqual(item["labels"][-10], "-1.0")
+        self.assertEqual(item["labels"][-3], "-0.3")
+        self.assertEqual(item["labels"][0], "0.0")
+        self.assertEqual(item["labels"][4], "+0.4")
+        self.assertEqual(item["labels"][10], "+1.0")
+
+        self.write_user("mouse_speed=7\n")
+        self.assertEqual(self.mod.load_settings()["mouse_speed"], 7)
+        self.write_user("mouse_speed=99\n")
+        self.assertEqual(self.mod.load_settings()["mouse_speed"], 10)
 
     def test_save_and_load_round_trip(self):
         data = self.mod.load_settings()

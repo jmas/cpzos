@@ -17,6 +17,15 @@ install -d -m 0755 "${ROOTFS_DIR}/etc/profile.d"
 install -m 0644 files/cpz-session.sh files/10-cpz-locale.sh \
 	"${ROOTFS_DIR}/etc/profile.d/"
 
+# cage has no pointer-acceleration setting; this LD_PRELOAD shim applies
+# Settings > Input > Mouse Speed to every libinput device. The source is
+# installed here and compiled in the chroot below, while the toolchain from
+# stage2 is still present (stage3/03-cleanup removes it from the image).
+install -d -m 0755 "${ROOTFS_DIR}/usr/local/lib" \
+	"${ROOTFS_DIR}/usr/local/share/cpz"
+install -m 0644 files/cpz-pointer-speed.c \
+	"${ROOTFS_DIR}/usr/local/share/cpz/cpz-pointer-speed.c"
+
 # Wi-Fi is intentionally soft-blocked in the factory image and is enabled
 # from Settings. The stock login-shell check then prints "Wi-Fi is currently
 # blocked by rfkill" and points at raspi-config, which is not part of the CPZ
@@ -332,4 +341,14 @@ if [ -n "$first_home" ] && [ -x /usr/local/bin/cpz-keys ]; then
 fi
 
 systemctl daemon-reload || true
+CHROOT
+
+# Build the pointer-speed shim while build-essential is still in the image.
+on_chroot << 'CHROOT'
+set -e
+cc -O2 -fPIC -shared -Wall -Wextra \
+	-o /usr/local/lib/cpz-pointer-speed.so \
+	/usr/local/share/cpz/cpz-pointer-speed.c -ldl
+chmod 0644 /usr/local/lib/cpz-pointer-speed.so
+rm -f /usr/local/share/cpz/cpz-pointer-speed.c
 CHROOT

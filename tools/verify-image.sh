@@ -379,6 +379,20 @@ else
     fail "NetworkManager polkit rule MISSING"
 fi
 
+# cage has no pointer-acceleration API; the shim is compiled during stage3.
+if debugfs -R "stat usr/local/lib/cpz-pointer-speed.so" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "Size:"; then
+    pass "pointer-speed shim installed"
+else
+    fail "usr/local/lib/cpz-pointer-speed.so MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Mouse Speed"; then
+    pass "cpz-settings: Mouse Speed"
+else
+    fail "cpz-settings: Mouse Speed entry MISSING"
+fi
+
 if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "nmtui"; then
     pass "cpz-settings: Wi-Fi (nmtui)"
 else

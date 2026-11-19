@@ -272,6 +272,27 @@ whenever Settings saves the mouse setting. Plugging or unplugging a mouse is
 handled by the udev hook itself, so the cursor appears and disappears with the
 device.
 
+### Mouse speed
+
+**Settings → Input → Mouse Speed** sets libinput's acceleration speed from
+-1.0 (slowest) to 1.0 (fastest); 0.0 is libinput's default. The value is stored
+as tenths in the integer `mouse_speed` key, so `settings.conf` parsing does not
+depend on floats.
+
+cage 0.3.1 does not expose `libinput_device_config_accel_set_speed()`, and
+libinput has no udev property for acceleration. `/usr/local/lib/cpz-pointer-speed.so`
+is a small `LD_PRELOAD` shim loaded into the cage session by `cpz-cage`: it
+interposes `libinput_get_event()` and sets the speed on each device before
+wlroots sees its `DEVICE_ADDED` event. The source is
+`stage3/01-session/files/cpz-pointer-speed.c`; it resolves libinput with
+`dlsym`, so it has no build-time header or soname dependency.
+
+`cpz-pointer --apply` writes the current value to `/run/cpz-pointer/speed` and
+reopens the pointer devices, so a speed change takes effect without restarting
+the compositor. A mouse plugged in later reads the same file. The boot-time
+`cpz-pointer.service` runs before `getty@tty1`, so cage always starts with the
+persisted value.
+
 ### Ghost cursor workaround
 
 cage 0.3.1 has a race: after a pointer is removed it correctly unsets the

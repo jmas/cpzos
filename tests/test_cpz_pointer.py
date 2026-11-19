@@ -262,6 +262,30 @@ class PointerPolicyTest(unittest.TestCase):
             len(self.udev_log.read_text(encoding="utf-8").splitlines()), 4
         )
 
+    def test_mouse_speed_is_published_for_the_cage_shim(self):
+        self.add_device("event1", rel=REL_XY, key=BTN_LEFT)
+        self.run_pointer(["--apply"], settings="mouse=1\nmouse_speed=4\n")
+        self.assertEqual(
+            (self.run_dir / "speed").read_text(encoding="utf-8"), "0.4\n"
+        )
+
+        # A speed-only change changes the signature and reopens the pointer,
+        # so libinput applies the new value without a compositor restart.
+        self.udev_log.write_text("", encoding="utf-8")
+        self.run_pointer(["--apply"], settings="mouse=1\nmouse_speed=-6\n")
+        self.assertEqual(
+            (self.run_dir / "speed").read_text(encoding="utf-8"), "-0.6\n"
+        )
+        self.assertEqual(
+            len(self.udev_log.read_text(encoding="utf-8").splitlines()), 2
+        )
+
+        # Out-of-range settings are clamped to libinput's -1.0..1.0 range.
+        self.run_pointer(["--apply"], settings="mouse=1\nmouse_speed=99\n")
+        self.assertEqual(
+            (self.run_dir / "speed").read_text(encoding="utf-8"), "1.0\n"
+        )
+
     def test_nudge_clears_a_stale_cursor_without_restarting_cage(self):
         self.add_device("event1", rel=REL_XY, key=BTN_LEFT)
         keyboard = self.add_device(

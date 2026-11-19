@@ -153,6 +153,13 @@ fi
 # invisible once the screen blanked.
 : >"$run_dir/cage.err" 2>/dev/null || true
 
+# Apply the Settings > Input > Mouse Speed value. cage 0.3.1 has no pointer
+# acceleration API, so the shim configures each libinput device as it appears.
+if [ -r /usr/local/lib/cpz-pointer-speed.so ]; then
+	LD_PRELOAD=/usr/local/lib/cpz-pointer-speed.so
+	export LD_PRELOAD
+fi
+
 # -m last uses the last connected output. The output helper pins exactly one
 # card through WLR_DRM_DEVICES: the target card is always cage's primary DRM
 # device, because the pixman renderer cannot scan out on a secondary GPU. -s
