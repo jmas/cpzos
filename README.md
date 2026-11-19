@@ -353,10 +353,12 @@ keys.
 ## Search
 
 `Alt+O` opens CPZ Search in a centred tmux popup. It starts with a short
-priority list: mounted USB drives, New Tab, Close Tab, Mute, the first-level
-Settings pages and Help. Typing anything loads the rest of the searchable
-providers in the background, so the popup is usable before the catalog and
-PATH scan finish:
+priority list: each mounted USB drive gets an `Open <label>  [tab]` row that
+starts a new tab at the mount point and an `Unmount <label>  [media]` row that
+ejects it, followed by New Tab, Close Tab, Mute, the first-level Settings
+pages and Help. Typing anything loads the rest of the searchable providers in
+the background, so the popup is usable before the catalog and PATH scan
+finish:
 
 | Input | Provider |
 | --- | --- |

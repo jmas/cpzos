@@ -200,12 +200,19 @@ class SearchItems(unittest.TestCase):
             parsed,
             [
                 (
+                    "media-tab",
+                    str(mount),
+                    f"Open USB_STICK  [tab]  {mount}",
+                    "/dev/sda1",
+                    "media",
+                ),
+                (
                     "media",
                     "/dev/sda1",
                     f"Unmount USB_STICK  [media]  {mount}",
                     str(mount),
                     "media",
-                )
+                ),
             ],
         )
 
@@ -219,17 +226,27 @@ class SearchItems(unittest.TestCase):
         self.mod.managed_app_items = lambda: []
         self.mod.media_items = lambda: [
             self.mod.make_item(
+                "media-tab",
+                "/media/USB_STICK",
+                "Open USB_STICK  [tab]  /media/USB_STICK",
+                "/dev/sda1",
+                "media",
+            ),
+            self.mod.make_item(
                 "media",
                 "/dev/sda1",
                 "Unmount USB_STICK  [media]  /media/USB_STICK",
                 "/media/USB_STICK",
                 "media",
-            )
+            ),
         ]
-        parsed = [self.mod.parse_item(line) for line in self.mod.home_items()]
-        self.assertEqual(parsed[0][0], "media")
-        self.assertEqual(parsed[0][1], "/dev/sda1")
-        self.assertIn("Enter unmount", self.mod.hint_line(self.mod.home_items()[0]))
+        items = self.mod.home_items()
+        parsed = [self.mod.parse_item(line) for line in items]
+        self.assertEqual(parsed[0][0], "media-tab")
+        self.assertEqual(parsed[0][1], "/media/USB_STICK")
+        self.assertIn("Enter open in new tab", self.mod.hint_line(items[0]))
+        self.assertEqual(parsed[1][0], "media")
+        self.assertIn("Enter unmount", self.mod.hint_line(items[1]))
 
     def test_hint_line_depends_on_the_selected_item(self):
         installed = self.mod.make_item(
@@ -564,6 +581,11 @@ class Dispatch(unittest.TestCase):
             self.mod.dispatch("media", "/dev/sda1", "", "/tmp", "/media/USB")
         unmount.assert_called_once_with("/dev/sda1", "/media/USB")
 
+    def test_media_tab_enter_opens_the_mount_point(self):
+        with mock.patch.object(self.mod, "open_media_tab") as open_tab:
+            self.mod.dispatch("media-tab", "/media/USB", "", "/tmp", "/dev/sda1")
+        open_tab.assert_called_once_with("/dev/sda1", "/media/USB")
+
     def test_power_enter_confirms(self):
         with mock.patch.object(self.mod, "run_power") as run_power:
             self.mod.dispatch("power", "reboot", "", "/tmp")
@@ -659,6 +681,72 @@ class MediaUnmount(unittest.TestCase):
         ), mock.patch.object(self.mod, "notify") as notify:
             self.mod.unmount_media("/dev/sda1", "/media/USB")
         notify.assert_called_once_with("cpz-search: cannot unmount USB")
+
+
+class MediaTab(unittest.TestCase):
+    def setUp(self):
+        self.mod = load_script("cpz_search_media_tab", SEARCH)
+        self.env = mock.patch.dict(
+            os.environ, {"TMUX": "/tmp/tmux-1000/default,1,0"}
+        )
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def open_tab(self, device="/dev/sda1", mount="/media/USB_STICK", code=0):
+        completed = subprocess.CompletedProcess([], code)
+        patches = (
+            mock.patch.object(
+                self.mod.shutil, "which", return_value="/usr/bin/tmux"
+            ),
+            mock.patch.object(
+                self.mod, "helper", return_value="/usr/local/bin/cpz-tab-new"
+            ),
+            mock.patch.object(self.mod.subprocess, "run", return_value=completed),
+        )
+        started = [patch.start() for patch in patches]
+        for patch in patches:
+            self.addCleanup(patch.stop)
+        return started[2]
+
+    def test_opens_a_tagged_tab_at_the_mount_point(self):
+        run = self.open_tab()
+        with mock.patch.object(self.mod, "notify") as notify:
+            self.mod.open_media_tab("/dev/sda1", "/media/USB_STICK")
+        args, kwargs = run.call_args
+        self.assertEqual(
+            args[0],
+            [
+                "/usr/local/bin/cpz-tab-new",
+                "main",
+                "/media/USB_STICK",
+                "USB_STICK",
+            ],
+        )
+        # The tag lets cpz-automount close this tab before it unmounts the disk.
+        self.assertEqual(kwargs["env"]["CPZ_TAB_MOUNT"], "/media/USB_STICK")
+        self.assertIs(kwargs["stdout"], subprocess.DEVNULL)
+        self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
+        self.assertFalse(kwargs["check"])
+        notify.assert_not_called()
+
+    def test_window_name_is_shortened_for_the_status_bar(self):
+        run = self.open_tab(mount="/media/A_LONG_VOLUME_NAME")
+        with mock.patch.object(self.mod, "notify"):
+            self.mod.open_media_tab("/dev/sda1", "/media/A_LONG_VOLUME_NAME")
+        self.assertEqual(run.call_args[0][0][3], "A_LONG_VOLUME_NA")
+
+    def test_failure_is_reported(self):
+        self.open_tab(code=1)
+        with mock.patch.object(self.mod, "notify") as notify:
+            self.mod.open_media_tab("/dev/sda1", "/media/USB")
+        notify.assert_called_once_with("cpz-search: cannot open USB in a new tab")
+
+    def test_outside_tmux_is_reported(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("TMUX", None)
+            with mock.patch.object(self.mod, "notify") as notify:
+                self.mod.open_media_tab("/dev/sda1", "/media/USB")
+        notify.assert_called_once_with("cpz-search: not inside tmux")
 
 
 class SettingsDeepLink(unittest.TestCase):

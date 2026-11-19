@@ -821,10 +821,23 @@ def mounted_media() -> list[tuple[str, str]]:
 
 
 def media_items() -> list[str]:
-    """One Unmount row per filesystem mounted by cpz-automount."""
+    """Tab and Unmount rows per filesystem mounted by cpz-automount.
+
+    The tab row comes first: Enter on mounted media opens the disk at its
+    mount point, and the destructive Unmount needs a deliberate second step.
+    """
     items = []
     for device, mountpoint in mounted_media():
         label = os.path.basename(mountpoint.rstrip(os.sep)) or device
+        items.append(
+            make_item(
+                "media-tab",
+                mountpoint,
+                f"{tr('Open {label}', label=label)}  {tr('[tab]')}  {mountpoint}",
+                device,
+                "media",
+            )
+        )
         items.append(
             make_item(
                 "media",
@@ -1019,6 +1032,38 @@ def unmount_media(device: str, mountpoint: str) -> None:
         notify(f"Unmounted {label}")
     else:
         notify(f"cpz-search: cannot unmount {label}")
+
+
+def open_media_tab(device: str, mountpoint: str) -> None:
+    """Open a new tmux tab whose shell starts in the mounted filesystem.
+
+    cpz-tab-new tags the window with CPZ_TAB_MOUNT, exactly like the hotplug
+    tab, so cpz-automount closes it before the disk is unmounted instead of
+    leaving a shell on a dead path.
+    """
+    if not (os.environ.get("TMUX") and shutil.which("tmux")):
+        notify("cpz-search: not inside tmux")
+        return
+    executable = helper("cpz-tab-new")
+    label = os.path.basename(mountpoint.rstrip(os.sep)) or device
+    # Window names share the narrow status bar; cpz-tab-mount truncates the
+    # disk label the same way.
+    name = label[:16]
+    environment = dict(os.environ)
+    environment["CPZ_TAB_MOUNT"] = mountpoint
+    try:
+        result = subprocess.run(
+            [executable, "main", mountpoint, name],
+            env=environment,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError as error:
+        notify(f"cpz-search: cannot open {label}: {error}")
+        return
+    if result.returncode != 0:
+        notify(f"cpz-search: cannot open {label} in a new tab")
 
 
 def run_power(action: str) -> None:
@@ -1293,6 +1338,8 @@ def dispatch(
             open_settings("--tool", payload)
     elif kind == "buffer":
         paste_buffer(payload)
+    elif kind == "media-tab":
+        open_media_tab(extra, payload)
     elif kind == "media":
         unmount_media(payload, extra)
     elif kind == "action":
@@ -1363,6 +1410,8 @@ def hint_for(kind: str, extra: str, flags: set[str]) -> str:
         return tr("Enter open  Ctrl+Y copy  Ctrl+O folder")
     if kind == "buffer":
         return tr("Enter paste  Ctrl+Y copy")
+    if kind == "media-tab":
+        return tr("Enter open in new tab  Ctrl+Y copy")
     if kind == "media":
         return tr("Enter unmount  Ctrl+Y copy")
     if kind == "power":
@@ -1497,7 +1546,7 @@ def check() -> int:
             continue
         home_kinds.add(parsed[0])
         home_payloads.append(parsed[1])
-        if parsed[0] not in ("media", "action", "settings"):
+        if parsed[0] not in ("media", "media-tab", "action", "settings"):
             errors.append("home list must contain only media, actions or Settings")
             break
     for action_id in (*HOME_ACTION_IDS, "help"):
