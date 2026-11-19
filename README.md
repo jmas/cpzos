@@ -318,8 +318,9 @@ removed with one confirmation; the manager records its state in
 
 Three minimal media players are installed for the terminal file managers:
 
-- `imv-wayland` shows images (PNG, JPEG, GIF, WebP, BMP, SVG) as a gallery of
-  the whole directory: the opened file comes first, the arrows walk the rest;
+- `imv-wayland` shows images (JPEG, PNG, HEIC, TIFF, WebP, SVG, PSD and camera
+  RAW such as CR2/NEF/ARW) as a gallery of the whole directory: the opened file
+  comes first, the arrows walk the rest;
 - `mpv` plays video, with the directory queued as a playlist. It is configured
   with `vo=wlshm` and `hwdec=no`, because cage renders with pixman and cannot
   import the dmabuf/GL window a normal GPU video output would create.

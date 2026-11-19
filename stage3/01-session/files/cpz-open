@@ -48,14 +48,20 @@ dir=$(dirname -- "$file")
 media_of_kind() {
 	ext=$(printf '%s' "${1##*.}" | tr 'A-Z' 'a-z')
 	case "$kind:$ext" in
-		image:jpg | image:jpeg | image:jpe | image:png | image:gif | \
-			image:bmp | image:tif | image:tiff | image:webp | \
-			image:svg | image:svgz | image:heic | image:heif | \
-			image:avif) ;;
+		image:jpg | image:jpeg | image:jpe | image:jfif | image:png | \
+			image:gif | image:bmp | image:ico | image:tga | image:tif | \
+			image:tiff | image:webp | image:svg | image:svgz | image:heic | \
+			image:heif | image:avif | image:jxl | image:psd | \
+			image:ppm | image:pgm | image:pbm | image:pnm | \
+			image:cr2 | image:cr3 | image:crw | image:nef | image:nrw | \
+			image:arw | image:sr2 | image:srf | image:dng | image:orf | \
+			image:raf | image:rw2 | image:raw | image:pef | image:srw | \
+			image:x3f) ;;
 		video:mp4 | video:m4v | video:mkv | video:webm | video:avi | \
-			video:mov | video:mpg | video:mpeg | video:m2ts | video:mts | \
-			video:ts | video:wmv | video:flv | video:ogv | video:3gp | \
-			video:vob) ;;
+			video:mov | video:qt | video:mpg | video:mpeg | video:m2v | \
+			video:m2ts | video:mts | video:ts | video:wmv | video:flv | \
+			video:f4v | video:ogv | video:ogm | video:3gp | video:3g2 | \
+			video:vob | video:divx | video:asf | video:rm | video:rmvb) ;;
 		*) return 1 ;;
 	esac
 }

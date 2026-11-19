@@ -196,7 +196,7 @@ class OpenTest(unittest.TestCase):
 
             gallery = root / "gallery"
             gallery.mkdir()
-            for name in ("1.png", "2.png", "3.png", *extra_files):
+            for name in ("0.CR2", "1.png", "2.png", "3.png", "4.psd", *extra_files):
                 (gallery / name).write_text("x", encoding="utf-8")
 
             env = os.environ.copy()
@@ -226,8 +226,10 @@ class OpenTest(unittest.TestCase):
             [
                 "imv-wayland",
                 str(gallery / "2.png"),
+                str(gallery / "0.CR2"),
                 str(gallery / "1.png"),
                 str(gallery / "3.png"),
+                str(gallery / "4.psd"),
             ],
         )
 
