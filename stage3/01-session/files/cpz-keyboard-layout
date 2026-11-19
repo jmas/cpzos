@@ -444,12 +444,12 @@ prepare_cpz_maps() {
 	return 1
 }
 
-# Push the layout to systemd-localed. cpz-cage-output reads the published XKB
-# layout on its next tick. localed itself ignores an unchanged RMLVO, so this
-# is safe to call on every keyboard event. Do not read /etc/default/keyboard
-# here: Debian links
-# /etc/vconsole.conf to it, localed replaces that link on its first write, and
-# the two then diverge from the layout localed actually has.
+# Publish the layout for cpz-cage-output. cage reads XKB_DEFAULT_LAYOUT from
+# its session environment; it does not consult localed. This file is therefore
+# the authoritative channel and is written even when localed refuses the call.
+# Do not read /etc/default/keyboard here: Debian links /etc/vconsole.conf to
+# it, localed replaces that link on its first write, and the two then diverge
+# from the layout localed actually has.
 publish_xkb_state() {
 	# Cache the XKB code for cpz-cage-output. Reading this file on the output
 	# timer avoids a localectl D-Bus round trip every second on the CM0.
@@ -466,18 +466,21 @@ publish_xkb() {
 	case "$code" in
 		'' | *[!a-zA-Z0-9_-]*) return 1 ;;
 	esac
-	if command -v localectl >/dev/null 2>&1; then
-		if timeout 5 localectl --no-convert set-x11-keymap "$code" \
+	# Always publish for cage, before touching localed. Debian ships
+	# /usr/share/dbus-1/system.d/systemd-localed-read-only.conf, which denies
+	# org.freedesktop.locale1.SetX11Keyboard to every caller including root
+	# ("keymap/locales are not set via localed"). Making the localectl call a
+	# precondition left X11 Layout at "us", so cage never loaded cpz_us and
+	# Sym produced the base US symbols.
+	publish_xkb_state "$code"
+	if command -v localectl >/dev/null 2>&1 &&
+		timeout 5 localectl --no-convert set-x11-keymap "$code" \
 			>/dev/null 2>&1; then
-			publish_xkb_state "$code"
-			log "xkb layout: $code"
-			return 0
-		fi
-		log "localectl failed for xkb layout $code"
-		return 1
+		log "xkb layout: $code"
+	else
+		log "localed not writable; xkb layout $code published for cage"
 	fi
-	log "localectl is not available; xkb layout $code not applied"
-	return 1
+	return 0
 }
 
 # Apply a keymap file to every console. Returns success if at least one console

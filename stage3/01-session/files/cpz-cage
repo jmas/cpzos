@@ -79,6 +79,20 @@ case "$WLR_RENDERER" in
 		;;
 esac
 
+# cpz-keyboard-layout publishes the active layout for the compositor. Prefer
+# it over localectl: Debian's dbus policy denies SetX11Keyboard to localed, so
+# localectl can report a stale "us" layout even while the CPZ overlay is
+# active. This mirrors cpz-cage-output's fast path.
+if [ -z "${XKB_DEFAULT_LAYOUT:-}" ] && [ -r /run/cpz-layout.xkb ]; then
+	layout=$(sed -n 's/^layout=//p' /run/cpz-layout.xkb | tail -n 1)
+	case "$layout" in
+		*[!a-zA-Z0-9_,-]*) layout="" ;;
+	esac
+	[ -n "$layout" ] && export XKB_DEFAULT_LAYOUT="$layout"
+	variant=$(sed -n 's/^variant=//p' /run/cpz-layout.xkb | tail -n 1)
+	[ -n "$variant" ] && export XKB_DEFAULT_VARIANT="$variant"
+fi
+
 if [ -z "${XKB_DEFAULT_LAYOUT:-}" ] && command -v localectl >/dev/null 2>&1; then
 	status=$(timeout 5 localectl --no-pager status 2>/dev/null || true)
 	layout=$(printf '%s\n' "$status" |
