@@ -25,6 +25,7 @@ import sys
 BUS = 1
 ADDR = 0x4F
 I2C_RDWR = 0x0707
+CACHE = os.environ.get("CPZ_BACKLIGHT_CACHE", "/run/cpz-cage/backlight.level")
 
 # m5ioe1 register map: PWM channel 3 (PWM4) duty, and the shared frequency.
 PWM_L = 0x21
@@ -79,17 +80,46 @@ def set_level(percent):
         os.close(fd)
 
 
+def write_cache(value):
+    """Record the applied level for the five-second output reconciler.
+
+    The reconciler must not start Python and write the same PWM registers on
+    every tick. A caller-side cache can go stale when Settings or
+    cpz-brightness calls this helper directly, so the helper records the
+    successful result here; readers fall back to calling it when absent.
+    """
+    directory = os.path.dirname(CACHE)
+    if directory:
+        try:
+            os.makedirs(directory, exist_ok=True)
+        except OSError:
+            return
+    temporary = "%s.%d" % (CACHE, os.getpid())
+    try:
+        with open(temporary, "w", encoding="ascii") as handle:
+            handle.write(value + "\n")
+        os.replace(temporary, CACHE)
+    except OSError:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+
+
 def main(argv):
     action = argv[1] if len(argv) > 1 else "status"
     if action == "on":
         percent = argv[2] if len(argv) > 2 else "100"
         try:
-            set_level(percent)
+            level = max(0, min(100, int(percent)))
+            set_level(level)
         except ValueError:
             return 2
+        write_cache("on:%d" % level)
         return 0
     if action == "off":
         set_level(0)
+        write_cache("off")
         return 0
     if action == "init":
         return 0

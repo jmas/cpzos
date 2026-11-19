@@ -45,27 +45,10 @@ dir=$(dirname -- "$file")
 # Images and video start with the opened file, then the rest of its directory
 # in name order: imv treats its arguments as a gallery, mpv as a playlist.
 # Hidden entries are metadata (macOS ._ sidecars, .Trashes, ...), not media.
-media_of_kind() {
-	ext=$(printf '%s' "${1##*.}" | LC_ALL=C tr '[:upper:]' '[:lower:]')
-	case "$kind:$ext" in
-		image:jpg | image:jpeg | image:jpe | image:jfif | image:png | \
-			image:gif | image:bmp | image:ico | image:tga | image:tif | \
-			image:tiff | image:webp | image:svg | image:svgz | image:heic | \
-			image:heif | image:avif | image:jxl | image:psd | \
-			image:ppm | image:pgm | image:pbm | image:pnm | \
-			image:cr2 | image:cr3 | image:crw | image:nef | image:nrw | \
-			image:arw | image:sr2 | image:srf | image:dng | image:orf | \
-			image:raf | image:rw2 | image:raw | image:pef | image:srw | \
-			image:x3f) ;;
-		video:mp4 | video:m4v | video:mkv | video:webm | video:avi | \
-			video:mov | video:qt | video:mpg | video:mpeg | video:m2v | \
-			video:m2ts | video:mts | video:ts | video:wmv | video:flv | \
-			video:f4v | video:ogv | video:ogm | video:3gp | video:3g2 | \
-			video:vob | video:divx | video:asf | video:rm | video:rmvb) ;;
-		*) return 1 ;;
-	esac
-}
-
+#
+# The extension filter is one awk process, not one tr(1) per file: a folder
+# with a thousand photos otherwise needs a thousand forks before the viewer
+# even starts.
 if [ "$kind" != audio ]; then
 	queue=$(mktemp "${TMPDIR:-/tmp}/cpz-open.XXXXXX") || exit 1
 	trap 'rm -f -- "$queue"' EXIT HUP INT TERM
@@ -73,11 +56,24 @@ if [ "$kind" != audio ]; then
 		printf '%s\n' "$file"
 		find "$dir" -maxdepth 1 -type f ! -name '.*' -print |
 			LC_ALL=C sort |
-			while IFS= read -r f; do
-				[ "$f" = "$file" ] && continue
-				media_of_kind "$f" || continue
-				printf '%s\n' "$f"
-			done
+			awk -v skip="$file" -v kind="$kind" '
+				BEGIN {
+					if (kind == "image")
+						exts = "jpg jpeg jpe jfif png gif bmp ico tga tif tiff webp svg svgz heic heif avif jxl psd ppm pgm pbm pnm cr2 cr3 crw nef nrw arw sr2 srf dng orf raf rw2 raw pef srw x3f"
+					else
+						exts = "mp4 m4v mkv webm avi mov qt mpg mpeg m2v m2ts mts ts wmv flv f4v ogv ogm 3gp 3g2 vob divx asf rm rmvb"
+					n = split(exts, list, " ")
+					for (i = 1; i <= n; i++)
+						ok[list[i]] = 1
+				}
+				$0 == skip { next }
+				{
+					ext = $0
+					sub(/^.*\./, "", ext)
+					if (tolower(ext) in ok)
+						print
+				}
+			'
 	} >"$queue"
 	set --
 	while IFS= read -r f; do

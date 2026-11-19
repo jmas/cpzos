@@ -469,6 +469,24 @@ class Calculator(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.mod.check(), 0)
 
+    def test_calc_and_hint_do_not_load_the_action_registry(self):
+        # --calc and --hint run on every keystroke and highlight. Loading the
+        # shortcut registry and the i18n catalog there was the main reason the
+        # popup felt slow on the CM0.
+        def fail():
+            raise AssertionError("the shortcut registry must stay lazy")
+
+        self.mod.current_actions = fail
+        with mock.patch.object(sys, "argv", ["cpz-search", "--calc", "=2+2"]):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(self.mod.main(), 0)
+        self.assertIn("4", output.getvalue())
+        item = self.mod.make_item("action", "help", "Help  [Alt+H]")
+        with mock.patch.object(sys, "argv", ["cpz-search", "--hint", item]):
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(self.mod.main(), 0)
+        self.assertIn("Enter", output.getvalue())
+
 
 class ModeSwitch(unittest.TestCase):
     def setUp(self):

@@ -143,33 +143,32 @@ hide-when-typing=yes
 background=$bg
 foreground=$fg
 EOF
-	index=0
-	while [ "$index" -le 15 ]; do
-		hex=$(sed -n "s/^# palette $index=//p" "$theme_conf" 2>/dev/null |
-			tail -n 1)
-		hex=$(hex_or "$hex" "")
-		[ -n "$hex" ] || { index=$((index + 1)); continue; }
-		case "$index" in
-			0) key=regular0 ;;
-			1) key=regular1 ;;
-			2) key=regular2 ;;
-			3) key=regular3 ;;
-			4) key=regular4 ;;
-			5) key=regular5 ;;
-			6) key=regular6 ;;
-			7) key=regular7 ;;
-			8) key=bright0 ;;
-			9) key=bright1 ;;
-			10) key=bright2 ;;
-			11) key=bright3 ;;
-			12) key=bright4 ;;
-			13) key=bright5 ;;
-			14) key=bright6 ;;
-			15) key=bright7 ;;
-		esac
-		printf '%s=%s\n' "$key" "$hex"
-		index=$((index + 1))
-	done
+	palette=$(awk '
+		BEGIN {
+			for (i = 0; i <= 7; i++) names[i] = "regular" i
+			for (i = 0; i <= 7; i++) names[i + 8] = "bright" i
+		}
+		/^# palette / {
+			line = $0
+			sub(/^# palette /, "", line)
+			eq = index(line, "=")
+			if (eq <= 1)
+				next
+			idx = substr(line, 1, eq - 1)
+			hex = substr(line, eq + 1)
+			if (idx !~ /^[0-9]+$/ || idx + 0 > 15)
+				next
+			if (length(hex) != 6 || hex ~ /[^0-9a-fA-F]/)
+				next
+			values[idx + 0] = hex
+		}
+		END {
+			for (i = 0; i <= 15; i++)
+				if (i in values)
+					print names[i] "=" values[i]
+		}
+	' "$theme_conf" 2>/dev/null || true)
+	[ -z "$palette" ] || printf '%s\n' "$palette"
 }
 
 mkdir -p "$run_dir" 2>/dev/null || true

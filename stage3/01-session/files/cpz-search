@@ -210,7 +210,31 @@ def current_actions() -> tuple:
     return tuple(actions)
 
 
-ACTIONS = current_actions()
+_ACTIONS: tuple | None = None
+
+
+def actions() -> tuple:
+    """Return the action rows, loading the shortcut registry on first use.
+
+    The registry and the i18n catalog are comparatively expensive (two more
+    Python modules plus a JSON catalog). The calculator and the per-item hint
+    run for every keystroke/highlight and do not use them at all, so the
+    import must stay off their path.
+    """
+    global _ACTIONS
+    if _ACTIONS is None:
+        _ACTIONS = current_actions()
+    return _ACTIONS
+
+
+def __getattr__(name: str):
+    # Keep the historical module attribute without evaluating it on import.
+    # cpz-help and tests read ACTIONS; --calc/--hint never touch it.
+    if name == "ACTIONS":
+        return actions()
+    raise AttributeError(name)
+
+
 CALC_LIMIT = 80
 CALC_EXPONENT_LIMIT = 64
 BIN_DIRS = (
@@ -486,13 +510,13 @@ def action_items() -> list[str]:
         make_item("action", action_id, f"{label}  [{keys}]", "", "action")
         if keys
         else make_item("action", action_id, f"{label}  {tr('[action]')}", "", "action")
-        for action_id, label, keys in ACTIONS
+        for action_id, label, keys in actions()
     ]
 
 
 def action_rows(action_id: str) -> list[str]:
     """Return the Search row for one action id, if the registry has it."""
-    for current_id, label, keys in ACTIONS:
+    for current_id, label, keys in actions():
         if current_id != action_id:
             continue
         if keys:

@@ -28,6 +28,7 @@ class OutputPolicyTest(unittest.TestCase):
         edid=256,
         enabled="enabled",
         seed=None,
+        layout_state=None,
     ):
         """Run cpz-cage-output against a fake display/settings tree."""
         with tempfile.TemporaryDirectory() as temporary:
@@ -71,6 +72,10 @@ class OutputPolicyTest(unittest.TestCase):
             run_dir.mkdir(parents=True, exist_ok=True)
             for name, content in (seed or {}).items():
                 (run_dir / name).write_text(content, encoding="utf-8")
+            if layout_state is not None:
+                (root / "run" / "cpz-layout.xkb").write_text(
+                    layout_state, encoding="utf-8"
+                )
             helper = root / "bin" / "cpz-foot-config"
             helper.parent.mkdir(parents=True)
             helper.write_text(
@@ -119,6 +124,9 @@ class OutputPolicyTest(unittest.TestCase):
                 'first_home="$CPZ_TEST_HOME"',
             )
             text = text.replace("/run/cpz-cage", str(run_dir))
+            text = text.replace(
+                "/run/cpz-layout.xkb", str(root / "run" / "cpz-layout.xkb")
+            )
             text = text.replace("/sys/class/drm", str(drm))
             text = text.replace(
                 "/sys/class/backlight", str(root / "sys" / "class" / "backlight")
@@ -162,6 +170,18 @@ class OutputPolicyTest(unittest.TestCase):
                 (backlight / "bl_power").read_text(encoding="utf-8").strip()
             )
             return result, state, env_text, brightness, bl_power
+
+    def test_published_xkb_layout_reaches_the_cage_environment(self):
+        # cpz-keyboard-layout publishes the active layout because Debian's
+        # dbus policy denies SetX11Keyboard to localed. localectl still reports
+        # "us" in this harness; the published file must win, otherwise the
+        # internal keyboard loses the CPZ Sym overlay.
+        _result, _state, env_text, _brightness, _bl_power = self.run_output(
+            ["--prepare"],
+            display="panel",
+            layout_state="layout=cpz_us\n",
+        )
+        self.assertIn("XKB_DEFAULT_LAYOUT='cpz_us'", env_text)
 
     def test_panel_setting_wins_with_auto(self):
         result, state, env_text, brightness, bl_power = self.run_output(
@@ -344,8 +364,13 @@ class OutputPolicyTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("Type=simple", dropin)
         # A broken helper must not prevent the session from starting.
-        self.assertIn("ExecStartPre=-+/usr/local/bin/cpz-cage-output", dropin)
-        self.assertIn("ExecStartPre=-+/usr/local/bin/cpz-battery", dropin)
+        self.assertIn("ExecStartPre=-+/usr/local/bin/cpz-getty-prepare", dropin)
+        prepare = (FILES / "cpz-getty-prepare").read_text(encoding="utf-8")
+        self.assertIn("/usr/local/bin/cpz-battery boot", prepare)
+        self.assertIn("/usr/local/bin/cpz-cage-output --prepare", prepare)
+        self.assertIn("&", prepare)
+        self.assertIn('wait "$display_pid"', prepare)
+        self.assertIn('wait "$battery_pid"', prepare)
 
     def test_battery_boot_check_runs_once_per_boot(self):
         text = (FILES / "cpz-battery").read_text(encoding="utf-8")
@@ -372,6 +397,18 @@ class OutputPolicyTest(unittest.TestCase):
         brightness = (FILES / "cpz-brightness").read_text(encoding="utf-8")
         self.assertIn("cpz-panel-backlight", brightness)
 
+    def test_timer_skips_unchanged_foot_config_and_backlight(self):
+        # The five-second timer must not start Python or re-render foot.ini
+        # when none of its inputs changed; both are cached under /run.
+        text = OUTPUT.read_text(encoding="utf-8")
+        self.assertIn("foot_config_stamp", text)
+        self.assertIn("foot.stamp", text)
+        self.assertIn("backlight.level", text)
+        helper = (FILES / "cpz-panel-backlight").read_text(encoding="utf-8")
+        self.assertIn("backlight.level", helper)
+        # --force (suspend resume, display recovery) must bypass the caches.
+        self.assertIn('[ "$force" = 0 ]', text)
+
     def test_service_does_not_force_auto(self):
         service = (FILES / "cpz-cage-output.service").read_text(encoding="utf-8")
         self.assertNotIn("--auto", service)
@@ -394,8 +431,8 @@ class OutputPolicyTest(unittest.TestCase):
             FILES / "getty@tty1.service.d" / "10-cpz.conf"
         ).read_text(encoding="utf-8")
         self.assertIn("cpz-getty", dropin)
-        # cage only.
-        self.assertIn("cpz-cage-output --prepare", dropin)
+        # cage only; the two boot checks are launched by the concurrent wrapper.
+        self.assertIn("cpz-getty-prepare", dropin)
         profile = (FILES / "cpz-session.sh").read_text(encoding="utf-8")
         self.assertIn("/dev/tty1", profile)
         self.assertIn("/usr/local/bin/cpz-session-supervise", profile)

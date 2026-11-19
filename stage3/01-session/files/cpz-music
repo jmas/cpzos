@@ -40,25 +40,24 @@ trap 'rm -f -- "$queue" "$list"' EXIT HUP INT TERM
 
 # Every audio file of the folder (recursively), in name order. Hidden entries
 # are metadata, not music: macOS writes an AppleDouble "._track.mp3" next to
-# every file and those sort first.
+# every file and those sort first. One awk process filters the whole list;
+# tr(1) per file made a large folder pay a fork for every track.
 find "$dir" -type f ! -name '*.cue' -print | LC_ALL=C sort |
-	while IFS= read -r f; do
-		case "$f" in
-			*/.*) continue ;;
-		esac
-		case "${f##*.}" in
-			[0-9A-Za-z]*) ;;
-			*) continue ;;
-		esac
-		ext=$(printf '%s' "${f##*.}" | LC_ALL=C tr '[:upper:]' '[:lower:]')
-		case "$ext" in
-			mp3 | mp2 | aac | ogg | oga | opus | flac | wav | wv | mpc | mpp | \
-				mod | s3m | xm | it | mtm | 669 | stm | ult | far | \
-				ape | spx | m4a) ;;
-			*) continue ;;
-		esac
-		printf '%s\n' "$f"
-	done >"$list"
+	awk '
+		BEGIN {
+			exts = "mp3 mp2 aac ogg oga opus flac wav wv mpc mpp mod s3m xm it mtm 669 stm ult far ape spx m4a"
+			n = split(exts, list, " ")
+			for (i = 1; i <= n; i++)
+				ok[list[i]] = 1
+		}
+		$0 ~ /\/\./ { next }
+		{
+			ext = $0
+			sub(/^.*\./, "", ext)
+			if (tolower(ext) in ok)
+				print
+		}
+	' >"$list"
 
 # Rotate the list at the opened track so the album keeps its order.
 : >"$queue"

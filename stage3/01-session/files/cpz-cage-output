@@ -80,6 +80,8 @@ request_file=$run_dir/output.request
 restart_request=$run_dir/restart.request
 supervisor_pid=$run_dir/session-supervisor.pid
 restart_stamp=$run_dir/restart.stamp
+foot_stamp=$run_dir/foot.stamp
+backlight_cache=$run_dir/backlight.level
 unit=getty@tty1.service
 hdmi_debounce=2
 # One automatic compositor restart per gap. A switch drop the HDMI link for a
@@ -142,6 +144,18 @@ get_setting() {
 		[ -n "$value" ] && { printf '%s' "$value"; return 0; }
 	done
 	return 0
+}
+
+foot_config_stamp() {
+	# Everything cpz-foot-config reads: the settings files (font and theme
+	# name) and every theme body, plus the current output target. The timer
+	# runs every 5 s; rendering foot.ini and comparing it on every tick is
+	# pure idle work on a handheld.
+	stat -c '%n %Y %s' \
+		"$first_home/.config/cpz/settings.conf" \
+		/etc/cpz/settings.conf \
+		"$state_file" \
+		/etc/cpz/themes/*.conf 2>/dev/null | cksum
 }
 
 hdmi_probe() {
@@ -314,6 +328,12 @@ write_state() {
 		printf 'devices=%s\nrenderer=%s\n' "${devices:-none}" "${renderer:-none}"
 		printf 'conn=%s/%s/%s\n' "$hdmi_connected" "$hdmi_edid" "$hdmi_pinned"
 	} >"$tmp"
+	# Keep the file's mtime stable while nothing changes. Consumers use it as
+	# a cheap input stamp, and every tick must not look like a state change.
+	if [ -f "$state_file" ] && cmp -s "$tmp" "$state_file"; then
+		rm -f "$tmp"
+		return 0
+	fi
 	mv "$tmp" "$state_file"
 }
 
@@ -326,12 +346,23 @@ panel_off() {
 	# On this kernel the backlight class is a dead end (BL_CORE_FBBLANK is
 	# never cleared), so the PWM helper is the real control; the class loop
 	# stays for images where the driver works.
-	if [ -x /usr/local/bin/cpz-panel-backlight ] &&
-		/usr/local/bin/cpz-panel-backlight off >/dev/null 2>&1; then
+	#
+	# The level cache turns the five-second timer into a no-op once the panel
+	# is already dark. Without it every tick starts a Python interpreter and
+	# writes the same four PWM registers over I2C.
+	if [ "$force" = 0 ] &&
+		[ "$(cat "$backlight_cache" 2>/dev/null || true)" = "off" ]; then
 		return 0
 	fi
+	if [ -x /usr/local/bin/cpz-panel-backlight ] &&
+		/usr/local/bin/cpz-panel-backlight off >/dev/null 2>&1; then
+		printf 'off\n' >"$backlight_cache" 2>/dev/null || true
+		return 0
+	fi
+	applied=0
 	for light in /sys/class/backlight/*; do
 		[ -e "$light" ] || continue
+		applied=1
 		if [ -w "$light/bl_power" ] &&
 			[ "$(cat "$light/bl_power" 2>/dev/null || true)" != 4 ]; then
 			printf '4' >"$light/bl_power" 2>/dev/null || true
@@ -341,6 +372,8 @@ panel_off() {
 			printf '0' >"$light/brightness" 2>/dev/null || true
 		fi
 	done
+	[ "$applied" = 0 ] ||
+		printf 'off\n' >"$backlight_cache" 2>/dev/null || true
 }
 
 panel_on() {
@@ -348,12 +381,22 @@ panel_on() {
 	case "$percent" in
 		'' | *[!0-9]*) percent=100 ;;
 	esac
+	# Canonical decimal: a hand-written "050" must match the helper's cache
+	# key "on:50", otherwise every tick starts Python again.
+	percent=$((percent + 0))
 	[ "$percent" -ge 1 ] || percent=1
 	[ "$percent" -le 100 ] || percent=100
-	if [ -x /usr/local/bin/cpz-panel-backlight ] &&
-		/usr/local/bin/cpz-panel-backlight on "$percent" >/dev/null 2>&1; then
+	state="on:$percent"
+	if [ "$force" = 0 ] &&
+		[ "$(cat "$backlight_cache" 2>/dev/null || true)" = "$state" ]; then
 		return 0
 	fi
+	if [ -x /usr/local/bin/cpz-panel-backlight ] &&
+		/usr/local/bin/cpz-panel-backlight on "$percent" >/dev/null 2>&1; then
+		printf '%s\n' "$state" >"$backlight_cache" 2>/dev/null || true
+		return 0
+	fi
+	applied=0
 	for light in /sys/class/backlight/*; do
 		[ -e "$light" ] || continue
 		if [ -w "$light/bl_power" ] &&
@@ -367,9 +410,14 @@ panel_on() {
 		esac
 		value=$((percent * max / 100))
 		[ "$value" -ge 1 ] || value=1
-		[ "$(cat "$light/brightness" 2>/dev/null || true)" = "$value" ] ||
-			printf '%s' "$value" >"$light/brightness" 2>/dev/null || true
+		if [ "$(cat "$light/brightness" 2>/dev/null || true)" != "$value" ]; then
+			printf '%s' "$value" >"$light/brightness" 2>/dev/null ||
+				continue
+		fi
+		applied=1
 	done
+	[ "$applied" = 0 ] ||
+		printf '%s\n' "$state" >"$backlight_cache" 2>/dev/null || true
 }
 
 supervisor_up() {
@@ -511,8 +559,11 @@ fi
 # leave HDMI with only its cursor plane). A connected monitor that has not
 # exposed its EDID yet gets one short extra wait as well.
 if [ "$prepare" = 1 ]; then
+	# cage repeats this call in its own 20 × 0.2 s loop when it still cannot
+	# see a card, so a long wait here only delays login. Keep a short grace
+	# period for the common case where the drivers register just after udev.
 	tries=0
-	while [ "$tries" -lt 10 ] && [ -z "$panel_card" ] && [ -z "$hdmi_card" ]; do
+	while [ "$tries" -lt 5 ] && [ -z "$panel_card" ] && [ -z "$hdmi_card" ]; do
 		sleep 0.2
 		hdmi_probe
 		tries=$((tries + 1))
@@ -780,8 +831,21 @@ render_env && env_changed=1
 
 config_state=same
 if [ -x /usr/local/bin/cpz-foot-config ]; then
-	config_state=$(/usr/local/bin/cpz-foot-config 2>/dev/null || printf 'error')
-	[ "$config_state" = error ] && log "foot config render failed"
+	# cpz-foot-config is a shell renderer with a dozen helpers of its own.
+	# Run it only when one of its inputs (or the rendered file) changed;
+	# otherwise a five-second tick pays for work that always returns "same".
+	foot_stamp_now=$(foot_config_stamp 2>/dev/null || true)
+	if [ "$force" = 1 ] || [ ! -s "$run_dir/foot.ini" ] ||
+		[ "$foot_stamp_now" != "$(cat "$foot_stamp" 2>/dev/null || true)" ]; then
+		config_state=$(/usr/local/bin/cpz-foot-config 2>/dev/null ||
+			printf 'error')
+		if [ "$config_state" = error ]; then
+			log "foot config render failed"
+		else
+			printf '%s\n' "$foot_stamp_now" >"$foot_stamp" 2>/dev/null ||
+				true
+		fi
+	fi
 fi
 
 # cage enables an output on the selected card asynchronously. Give an already
@@ -822,6 +886,9 @@ elif [ "$config_state" = changed ] && session_up; then
 	if reload_foot; then
 		log "foot replaced for the changed configuration"
 	else
+		# Let the next tick render and try again instead of treating the
+		# configuration as already applied.
+		rm -f "$foot_stamp" 2>/dev/null || true
 		need_restart=1
 		restart_reason="foot config changed"
 	fi

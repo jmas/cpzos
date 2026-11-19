@@ -185,8 +185,38 @@ def read_layouts() -> tuple:
     return sort_layouts(layouts)
 
 
-LAYOUTS = read_layouts()
-LAYOUT_LABELS = dict(LAYOUTS)
+# Both tables are hundreds of lines from xkb-data/zoneinfo and are only
+# needed by the Input and Date & Time pages. Building them at import time made
+# cpz-search's `--list-tools` call (and every --help) pay for them.
+_LAYOUTS = None
+_LAYOUT_LABELS = None
+
+
+def layouts() -> tuple:
+    global _LAYOUTS
+    if _LAYOUTS is None:
+        _LAYOUTS = read_layouts()
+    return _LAYOUTS
+
+
+def layout_labels() -> dict:
+    global _LAYOUT_LABELS
+    if _LAYOUT_LABELS is None:
+        _LAYOUT_LABELS = dict(layouts())
+    return _LAYOUT_LABELS
+
+
+def __getattr__(name: str):
+    # Compatibility for callers and tests that read the old module globals.
+    if name == "LAYOUTS":
+        return layouts()
+    if name == "LAYOUT_LABELS":
+        return layout_labels()
+    if name == "TIMEZONES":
+        return timezones()
+    raise AttributeError(name)
+
+
 COMMON_TIMEZONES = (
     "UTC",
     "Europe/London",
@@ -236,7 +266,14 @@ def read_timezones() -> tuple:
     return tuple(preferred + rest)
 
 
-TIMEZONES = read_timezones()
+_TIMEZONES = None
+
+
+def timezones() -> tuple:
+    global _TIMEZONES
+    if _TIMEZONES is None:
+        _TIMEZONES = read_timezones()
+    return _TIMEZONES
 
 _I18N_MODULE: Any = None
 _LANGUAGE = "en"
@@ -528,9 +565,9 @@ def normalize_layouts(value) -> list:
     seen = set()
     for code in re.split(r"[,\s]+", str(value or "")):
         code = code.strip()
-        if code in LAYOUT_LABELS:
+        if code in layout_labels():
             seen.add(code)
-    ordered = [code for code, _label in LAYOUTS if code in seen]
+    ordered = [code for code, _label in layouts() if code in seen]
     return ordered or ["us"]
 
 
@@ -539,7 +576,7 @@ def layout_codes(data: dict) -> list:
 
 
 def layout_label(code: str) -> str:
-    return LAYOUT_LABELS.get(code, str(code).upper())
+    return layout_labels().get(code, str(code).upper())
 
 
 def layouts_text(data: dict) -> str:
@@ -2972,7 +3009,7 @@ def draw_layouts(
 def layouts_screen(screen, data: dict) -> None:
     active = active_layout(data)
     selected = next(
-        (index for index, (code, _label) in enumerate(LAYOUTS) if code == active),
+        (index for index, (code, _label) in enumerate(layouts()) if code == active),
         0,
     )
     query = ""
@@ -2980,7 +3017,7 @@ def layouts_screen(screen, data: dict) -> None:
     changed = False
 
     while True:
-        shown = filter_rows(LAYOUTS, query)
+        shown = filter_rows(layouts(), query)
         selected = max(0, min(selected, len(shown) - 1))
         draw_layouts(screen, data, shown, selected, query, searching)
         key = screen.getch()
@@ -3115,7 +3152,7 @@ def draw_timezone(
 
 
 def timezone_screen(screen) -> None:
-    rows = [(zone, zone) for zone in TIMEZONES]
+    rows = [(zone, zone) for zone in timezones()]
     current = timedatectl_value("Timezone")
     zone_names = [zone for zone, _label in rows]
     selected = zone_names.index(current) if current in zone_names else 0
@@ -5033,7 +5070,7 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                     "kind": "picker",
                     "key": "keyboard_layout_active",
                     "values": lambda: layout_codes(data),
-                    "labels": {code: label for code, label in LAYOUTS},
+                    "labels": {code: label for code, label in layouts()},
                 }
             )
         items.append(
