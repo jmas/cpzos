@@ -76,7 +76,7 @@ class MusicWrapperTest(unittest.TestCase):
                 "album/track-c.OGG": "d",
             },
         )
-        self.assertEqual(calls[-1], "-C player-play")
+        self.assertEqual(calls[-1], "-C win-activate")
         self.assertEqual(entries[0], str(root / "music" / "track-b.wav"))
         self.assertEqual(entries[1:], [
             str(root / "music" / "album" / "track-c.OGG"),
@@ -108,9 +108,11 @@ class MusicWrapperTest(unittest.TestCase):
         _, calls, _, root = self.run_music("only.mp3", {"only.mp3": "x"})
         self.assertEqual(calls[0], "-C status")
         self.assertEqual(calls[1], "-C clear -q")
-        self.assertTrue(calls[2].startswith("-C add -l "), calls[2])
-        self.assertTrue(calls[3].startswith("-C add -q "), calls[3])
-        self.assertEqual(calls[4], "-C player-play")
+        self.assertEqual(calls[2], "-C clear -p")
+        self.assertTrue(calls[3].startswith("-C add -p "), calls[3])
+        self.assertEqual(calls[4], "-C view 3")
+        self.assertEqual(calls[5], "-C win-top")
+        self.assertEqual(calls[6], "-C win-activate")
         self.assertEqual(list(root.glob("cpz-music-*.pl")), [])
 
     def test_folder_order_is_rotated_to_the_opened_track(self):
@@ -129,7 +131,7 @@ class MusicWrapperTest(unittest.TestCase):
     def test_a_single_file_queue_still_starts_playing(self):
         _, calls, entries, root = self.run_music("only.mp3", {"only.mp3": "x"})
         self.assertEqual(entries, [str(root / "music" / "only.mp3")])
-        self.assertIn("-C player-play", calls)
+        self.assertIn("-C win-activate", calls)
 
     def test_missing_argument_is_rejected(self):
         result = subprocess.run(

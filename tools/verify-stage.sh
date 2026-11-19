@@ -218,6 +218,7 @@ for file in \
 	stage3/01-session/files/cpz-open \
 	stage3/01-session/files/cpz-music \
 	stage3/01-session/files/cpz-media-keys \
+	stage3/01-session/files/cpz-track \
 	stage3/01-session/files/cpz-media-keys.service \
 	stage3/01-session/files/lfrc \
 	stage3/01-session/files/mpv.conf \
@@ -465,13 +466,18 @@ contains stage3/01-session/files/cpz-open '._*'
 contains stage3/01-session/files/cpz-open "trap ':' INT TERM"
 contains stage3/01-session/files/cpz-open 'maxdepth 1'
 contains stage3/01-session/files/lfrc 'audio/*'
-contains stage3/01-session/files/cpz-music 'add -q $queue'
+contains stage3/01-session/files/cpz-music 'clear -q'
 contains stage3/01-session/files/cpz-music '.pl'
 contains stage3/01-session/files/cpz-music '/dev/tty'
 contains stage3/01-session/files/cpz-music '*/.*'
 contains stage3/01-session/files/cpz-music 'status playing'
-contains stage3/01-session/files/cpz-music 'add -l $queue'
+contains stage3/01-session/files/cpz-music 'add -p $queue'
+contains stage3/01-session/files/cpz-music 'win-activate'
 contains stage3/01-session/files/cmus-rc 'set play_library=false'
+contains stage3/01-session/files/cpz-media-keys '164'
+contains stage3/01-session/files/cpz-media-keys 'cpz-track'
+contains stage3/01-session/01-run.sh 'files/cpz-track'
+contains stage3/01-session/files/cpz-track 'position'
 contains stage3/01-session/files/cmus-rc 'bind -f common q quit'
 contains stage3/01-session/01-run.sh 'files/cmus-rc'
 contains stage3/01-session/files/lfrc '/usr/local/bin/cpz-open'

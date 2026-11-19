@@ -5,7 +5,7 @@
 install -d -m 0755 "${ROOTFS_DIR}/usr/local/bin"
 install -m 0755 files/cpz-cage files/cpz-cage-output files/cpz-cage-session \
 	files/cpz-session-supervise files/cpz-open files/cpz-music \
-	files/cpz-media-keys \
+	files/cpz-media-keys files/cpz-track \
 	files/cpz-panel-backlight \
 	files/cpz-foot-config files/cpz-foot-reload \
 	files/cpz-getty files/cpz-run files/cpz-tmux files/cpz-tmux-start \

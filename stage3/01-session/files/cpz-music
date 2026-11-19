@@ -2,12 +2,12 @@
 # Open a folder in the cmus TUI and start with the selected track.
 #
 # cmus has no file argument and its command lexer is awkward with spaces, so
-# the wrapper describes the folder in a temporary cmus playlist (.pl). The
-# playlist is added to the play queue (playback order) and to the library (so
-# the whole folder stays visible in the Library view instead of vanishing as
-# the queue drains). Order is the folder order rotated to the opened track:
-# 04, 05, ... 13, 01, 02, 03. The remote helper runs in the background while
-# cmus owns the terminal; q returns to mc/lf.
+# the wrapper describes the folder in a temporary cmus playlist (.pl) and plays
+# from the playlist view. The playlist keeps every track visible (the play
+# queue drops tracks as they start) and makes player-prev/player-next work.
+# Order is the folder order rotated to the opened track: 04, 05, ... 13, 01,
+# 02, 03. The remote helper runs in the background while cmus owns the
+# terminal; q returns to mc/lf.
 set -eu
 
 [ "$#" -ge 1 ] || exit 1
@@ -75,15 +75,18 @@ done <"$list" >>"$queue"
 		sleep 0.1
 		tries=$((tries + 1))
 	done
+	# The play queue takes precedence over the playlist; clear it so the
+	# playlist is the playback source and prev/next stay inside the folder.
 	cmus-remote -C "clear -q" >/dev/null 2>&1 || true
-	cmus-remote -C "add -l $queue" >/dev/null 2>&1 || true
-	cmus-remote -C "add -q $queue" >/dev/null 2>&1 || true
-	# A large folder is still being scanned when add returns; player-play would
-	# run against an empty queue and the player would stay stopped. Retry until
-	# the status flips (up to ten seconds).
+	cmus-remote -C "clear -p" >/dev/null 2>&1 || true
+	cmus-remote -C "add -p $queue" >/dev/null 2>&1 || true
+	# A large folder is still being scanned when add returns; activating an
+	# empty playlist does nothing, so retry until playback actually starts.
 	tries=0
 	while [ "$tries" -lt 40 ]; do
-		cmus-remote -C "player-play" >/dev/null 2>&1 || true
+		cmus-remote -C "view 3" >/dev/null 2>&1 || true
+		cmus-remote -C "win-top" >/dev/null 2>&1 || true
+		cmus-remote -C "win-activate" >/dev/null 2>&1 || true
 		case "$(cmus-remote -Q 2>/dev/null || true)" in
 			*"status playing"*) break ;;
 		esac

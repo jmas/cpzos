@@ -327,11 +327,12 @@ Three minimal media players are installed for the terminal file managers:
   Subtitles next to the film load automatically (`film.srt`, `film.en.srt`,
   `film.2020.srt`, or a `Subs/`/`subtitles/` folder); Ukrainian is preferred,
   then English;
-- `cmus` is the TUI music player. Opening an audio file imports the whole
-  directory (recursively, audio only) into the library, so every track stays
-  visible in the Library view, and plays it in folder order rotated to the
-  opened track: `04, 05, ... 13, 01, 02, 03`. Playback ends with the folder
-  instead of jumping back into the library. `q` quits back to the file
+- `cmus` is the TUI music player. Opening an audio file loads the whole
+  directory (recursively, audio only) into the playlist view, so every track
+  stays visible, and plays it in folder order rotated to the opened track:
+  `04, 05, ... 13, 01, 02, 03`. The playlist does not shrink while it plays,
+  and the headset's next/previous buttons (the centre one skips forward) move
+  inside it. Playback ends with the folder. `q` quits back to the file
   manager. Drives written on macOS work too: the hidden `._` sidecars are
   skipped, and opening one opens the real file next to it.
 
