@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 import tempfile
 import unittest
 from pathlib import Path
@@ -73,6 +75,11 @@ class TrackButtonTest(unittest.TestCase):
             calls.splitlines(), ["-C player-prev", "-C player-prev"]
         )
 
+    def test_toggle_pauses_and_resumes(self):
+        result, calls = self.run_track("toggle")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.strip(), "-C player-pause")
+
     def test_press_without_a_player_is_ignored(self):
         result, calls = self.run_track("next", cmus_running=False)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -82,13 +89,39 @@ class TrackButtonTest(unittest.TestCase):
         result, _ = self.run_track("stop")
         self.assertEqual(result.returncode, 2)
 
-    def test_the_centre_button_maps_to_next(self):
-        # The RC01 headset reports KEY_PLAYPAUSE for its centre button; the
-        # side media keys report NEXTSONG/PREVIOUSSONG.
+    def test_media_keys_map_to_track_actions(self):
+        # The centre button toggles play/pause; the volume rocker changes the
+        # volume on a tap and skips tracks when held.
         text = MEDIA_KEYS.read_text(encoding="utf-8")
-        self.assertIn("164: [TRACK, \"next\"]", text)
-        self.assertIn("163: [TRACK, \"next\"]", text)
-        self.assertIn("165: [TRACK, \"prev\"]", text)
+        self.assertIn('164: [TRACK, "toggle"]', text)
+        self.assertIn('163: [TRACK, "next"]', text)
+        self.assertIn('165: [TRACK, "prev"]', text)
+        self.assertIn('115: [TRACK, "next"]', text)
+        self.assertIn('114: [TRACK, "prev"]', text)
+        self.assertIn('115: [VOLUME, "up"]', text)
+
+    def test_a_held_volume_key_skips_only_after_the_threshold(self):
+        loader = SourceFileLoader("cpz_media_keys", str(MEDIA_KEYS))
+        spec = spec_from_loader("cpz_media_keys", loader)
+        assert spec is not None
+        module = module_from_spec(spec)
+        loader.exec_module(module)
+
+        calls: list[list[str]] = []
+        module.run = calls.append
+        held = {115: (100.0, False)}
+
+        # Still inside the threshold: nothing happens and the loop waits.
+        wait = module.fire_long_presses(held, 100.3)
+        self.assertEqual(calls, [])
+        self.assertAlmostEqual(wait, 0.3, places=3)
+
+        # Past the threshold the track changes once, then the key is spent.
+        module.fire_long_presses(held, 100.7)
+        self.assertEqual(calls, [[module.TRACK, "next"]])
+        self.assertTrue(held[115][1])
+        module.fire_long_presses(held, 101.0)
+        self.assertEqual(calls, [[module.TRACK, "next"]])
 
 
 if __name__ == "__main__":

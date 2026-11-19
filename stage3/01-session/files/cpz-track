@@ -1,17 +1,17 @@
 #!/bin/sh
 # Skip to the next or previous track in the running cmus.
 #
-# Called by cpz-media-keys for the buttons on a USB headset: the centre
-# button reports KEY_PLAYPAUSE, the side ones KEY_NEXTSONG/KEY_PREVIOUSSONG.
-# Without a player the press is ignored (the headset is also used for plain
-# audio output).
+# Called by cpz-media-keys for the buttons on a USB headset (centre
+# KEY_PLAYPAUSE, side ones KEY_NEXTSONG/KEY_PREVIOUSSONG) and for the CPZ
+# keyboard's Fn layer (Fn+W previous, Fn+E next, Fn+Q play/pause). Without a
+# player the press is ignored.
 set -u
 
 action=${1:-}
 case "$action" in
-	next | prev) ;;
+	next | prev | toggle) ;;
 	*)
-		printf 'usage: %s next|prev\n' "${0##*/}" >&2
+		printf 'usage: %s next|prev|toggle\n' "${0##*/}" >&2
 		exit 2
 		;;
 esac
@@ -33,4 +33,8 @@ if [ "$action" = prev ]; then
 	fi
 fi
 
-cmus-remote -C "player-$action" >/dev/null 2>&1 || exit 1
+if [ "$action" = toggle ]; then
+	cmus-remote -C "player-pause" >/dev/null 2>&1 || exit 1
+else
+	cmus-remote -C "player-$action" >/dev/null 2>&1 || exit 1
+fi

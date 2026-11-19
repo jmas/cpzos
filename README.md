@@ -38,7 +38,11 @@ needed on the small CPZ keyboard. Volume is `Alt+U` / `Alt+I` and mute is
 `Alt+0` (5% steps through the same `wpctl` sink as Settings → Sound). The
 volume buttons on a USB headset work too: `cpz-media-keys` watches the evdev
 devices in the background and calls the same helper, because cage never
-forwards those keys to foot. Every
+forwards those keys to foot. A short press on the headset rocker changes the
+volume, holding it for half a second skips to the previous/next track, and the
+centre button toggles play/pause. The same service wires the keyboard's Fn
+layer: `Fn+W` previous, `Fn+E` next and `Fn+Q` play/pause (the TCA8418 keymap
+already reports them as the standard media keycodes). Every
 binding can be reassigned in Settings → Input → Shortcuts; see
 [docs/CPZ-KEYS.md](docs/CPZ-KEYS.md) for the complete default list and the
 shortcut rules.
