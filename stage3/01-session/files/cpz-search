@@ -5,23 +5,24 @@ and tmux buffers.
 Started by Alt+O from /etc/tmux.conf. The popup opens like a search box with the
 apps installed through the Applications manager, the mounted USB media, one row
 per Settings page, the daily CPZ tmux actions and the power actions; typing
-anything loads the full list. Search covers installed apps and catalog apps that
-can be installed with apt; the wider apt package search lives in Settings →
-Applications. A leading prefix switches the provider, in the same spirit as
-Walker in Omarchy:
+anything loads the full list. Search covers installed apps and every app in the
+loaded CPZ Hub catalog used by Settings → Applications. The hub is the whole
+scope: there is no apt package search. A leading prefix switches the provider,
+in the same spirit as Walker in Omarchy:
     /      files under $HOME and the small system configuration roots
     =      calculator
-    apps   installed and apt-installable catalog apps
+    apps   installed and available Hub apps
     $      tmux paste buffers
 
-There is no daemon, index or new package. fzf, find, file, tmux and python3 are
-already part of the image; the search runs only while the popup is open.
+There is no daemon, database or extra package. The Hub catalog is a small JSON
+file shipped with the image; fzf, find, file, tmux and python3 are already part
+of the image, and the search runs only while the popup is open.
 
 The item format is "kind<US>payload<US>display<US>extra<US>flags". Only the
 display field is shown (--with-nth=3); fzf matches against that visible field,
 which is why file paths are absolute (a leading "/" selects and matches them)
 and the calculator line starts with the original expression. The hidden extra
-field holds the command to run for a Terminal Trove app, and flags record
+field holds the command to run for a Hub app, and flags record
 whether that app is installed, managed or installable.
 """
 
@@ -247,7 +248,7 @@ BIN_DIRS = (
     "/usr/sbin",
     "/sbin",
 )
-TROVE_STATE = ("cpz", "trove-apps.json")
+HUB_STATE = ("cpz", "hub-apps.json")
 # cpz-automount writes one <dev>.mountpoint file per filesystem it mounted.
 AUTOMOUNT_STATE = "/run/cpz-automount"
 
@@ -400,15 +401,17 @@ def scan_apps() -> list[str]:
     return _SCAN_CACHE
 
 
-def trove_state_path() -> str:
+def hub_state_path() -> str:
     base = os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local", "state")
-    return os.path.join(base, *TROVE_STATE)
+    return os.path.join(base, *HUB_STATE)
+
 
 
 def read_managed_apps(path: str | None = None) -> list[dict[str, str]]:
     """Read the Applications manager state without starting cpz-settings."""
+    target = path or hub_state_path()
     try:
-        with open(path or trove_state_path(), "r", encoding="utf-8") as handle:
+        with open(target, "r", encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, ValueError):
         return []
@@ -595,13 +598,12 @@ def dedupe(items: list[str]) -> list[str]:
 def default_items() -> list[str]:
     """Search lists installed apps and catalog apps ready to install.
 
-    The manager owns the wider apt package search. Search stays on its smaller
-    scope: apps recorded by Applications, installed catalog tools and Terminal
-    Trove entries that can be installed with apt. Arbitrary PATH commands are
-    not app rows.
+    Search stays on the Hub scope: apps recorded by Applications and every
+    application present in the bundled or cached Hub index. Arbitrary PATH
+    commands are not app rows.
     """
     managed = managed_app_items()
-    catalog = trove_items()
+    catalog = hub_items()
     installed = [
         item for item in catalog if "installed" in item_flags(item)
     ]
@@ -724,12 +726,12 @@ def display_sort_key(line: str) -> str:
     return parsed[2].lower() if parsed else line.lower()
 
 
-def parse_trove_payload(text: str, available_only: bool = True) -> list[str]:
+def parse_hub_payload(text: str, available_only: bool = True) -> list[str]:
     """Turn `cpz-settings --list-tools` JSON into fzf items.
 
-    Search only offers installed apps and catalog entries that apt can install.
-    ``available_only=False`` keeps the parser reusable for diagnostics and
-    tests, which still inspect the whole catalog.
+    Search only offers installed apps and applications present in the loaded
+    Hub index. ``available_only=False`` keeps the parser reusable for
+    diagnostics and tests.
     """
     try:
         data = json.loads(text)
@@ -751,11 +753,9 @@ def parse_trove_payload(text: str, available_only: bool = True) -> list[str]:
         if command and not usable_text(command):
             command = ""
         installed = bool(tool.get("installed")) or managed or bool(command)
-        apt = str(tool.get("apt", "")).strip()
-        apt_available = tool.get("available", True) is not False
-        if available_only and not (
-            installed or (apt and apt_available)
-        ):
+        package = str(tool.get("package", "")).strip()
+        hub_available = bool(package) and tool.get("available", True) is not False
+        if available_only and not (installed or hub_available):
             continue
         summary = str(tool.get("summary", "")).strip()
         categories = tool.get("categories")
@@ -766,7 +766,7 @@ def parse_trove_payload(text: str, available_only: bool = True) -> list[str]:
             state = tr("[run app]")
         elif installed:
             state = tr("[installed]")
-        elif apt and apt_available:
+        elif hub_available:
             state = tr("[install app]")
         else:
             state = tr("[info]")
@@ -778,14 +778,14 @@ def parse_trove_payload(text: str, available_only: bool = True) -> list[str]:
             "managed" if managed else "",
             "installed" if installed else "",
             "runnable" if command else "",
-            "installable" if not installed and apt and apt_available else "",
+            "installable" if not installed and hub_available else "",
         ]
         items.append(make_item("tool", slug, display, command, set_flags(*flags)))
     items.sort(key=lambda line: (tool_rank(line), display_sort_key(line)))
     return items
 
 
-def trove_items() -> list[str]:
+def hub_items() -> list[str]:
     executable = settings_path()
     items: list[str] = []
     if executable:
@@ -800,7 +800,7 @@ def trove_items() -> list[str]:
         except (OSError, subprocess.SubprocessError):
             result = None
         if result is not None and result.returncode == 0:
-            items = parse_trove_payload(result.stdout)
+            items = parse_hub_payload(result.stdout)
     # --list-tools already appends managed apps that have no catalog row. Keep
     # the provider useful when cpz-settings cannot be started or its catalog is
     # missing, and make sure every recorded app still appears exactly once.
@@ -1654,7 +1654,7 @@ def check() -> int:
         if parsed is None or parsed[1]:
             errors.append(f"calc {expression}: unsafe expression accepted")
 
-    trove = parse_trove_payload(
+    hub = parse_hub_payload(
         json.dumps(
             {
                 "tools": [
@@ -1670,7 +1670,7 @@ def check() -> int:
             }
         )
     )
-    parsed = parse_item(trove[0]) if trove else None
+    parsed = parse_item(hub[0]) if hub else None
     if parsed != (
         "tool",
         "tmux",
@@ -1678,11 +1678,11 @@ def check() -> int:
         "tmux",
         "managed,installed,runnable",
     ):
-        errors.append("trove provider is malformed")
+        errors.append("hub provider is malformed")
 
     if hint_line("") != tr("Type to search  / files  = calc  apps  $ buffers"):
         errors.append("empty hint is malformed")
-    if hint_line(trove[0] if trove else "") != tr(
+    if hint_line(hub[0] if hub else "") != tr(
         "Enter run  Ctrl+Y copy  Ctrl+O info"
     ):
         errors.append("installed app hint is malformed")
@@ -1711,8 +1711,8 @@ def main() -> int:
     if "--files" in arguments:
         emit(file_items())
         return 0
-    if "--trove" in arguments or "--apps" in arguments:
-        emit(trove_items())
+    if "--apps" in arguments:
+        emit(hub_items())
         return 0
     if "--hint" in arguments:
         index = arguments.index("--hint")

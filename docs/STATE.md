@@ -19,10 +19,10 @@ slot; it must not need to preserve anything outside `/home`.
 | --- | --- | --- | --- |
 | User data | `/home/<user>/**` | yes | files, shell and tmux history, media, user SSH keys |
 | User configuration | `/home/<user>/.config/cpz/**` | yes | `settings.conf`, `keys.conf`, `system.json` |
-| User state | `/home/<user>/.local/state/cpz/**` | yes | session layout, Terminal Trove manifest |
-| User cache | `/home/<user>/.cache/cpz/**` | yes, may be cleared | Trove catalog, generated tmux bindings |
+| User state | `/home/<user>/.local/state/cpz/**` | yes | session layout, CPZ Hub manifest |
+| User cache | `/home/<user>/.cache/cpz/**` | yes, may be cleared | Hub catalog, generated tmux bindings |
 | Machine identity | system slots | inherited from the previous slot | `/etc/shadow`, `/etc/machine-id`, SSH host keys |
-| System packages | rootfs | no | apt packages installed by Terminal Trove |
+| System packages | rootfs | no | apt packages installed through CPZ Hub |
 | System configuration | `/etc` | no, replaced by the image | unit files, udev rules, sudoers |
 | Runtime state | `/run`, `/tmp` | no | cage output, foot config, XKB cache |
 | Derived system files | `/usr/share/X11/xkb/symbols/cpz_*` | no, regenerated | generated keyboard layouts |
@@ -45,8 +45,10 @@ A/B system the new slot inherits it from the slot that is being replaced.
   `~/.cache/cpz/tmux-keys.conf`, both owned by `cpz-keys`.
 - **Session layout** — `~/.local/state/cpz/session.tsv`, written by
   `cpz-session-save` and read by `cpz-session-restore`.
-- **Terminal Trove** — catalog cache in `~/.cache/cpz/trove-index.json`, the
-  installed-app manifest in `~/.local/state/cpz/trove-apps.json`.
+- **CPZ Hub** — catalog cache in `~/.cache/cpz/hub.json`, the installed-app
+  manifest in `~/.local/state/cpz/hub-apps.json`. The first read migrates the
+  old `~/.local/state/cpz/trove-apps.json` manifest and keeps only records that
+  exist in the current hub index.
 - **Audio** — PipeWire/WirePlumber volume, mute and default-device state live
   in `~/.local/state/wireplumber`.
 - **Application state** — Midnight Commander, cmus and mpv keep their own state
@@ -69,7 +71,7 @@ system slot loses them.
 | P1 | Radio on/off | `/var/lib/systemd/rfkill/`, `NetworkManager.state` | `nmcli radio`, `cpz-wifi`, `cpz-bt-unblock` | `system.json`, applied at boot |
 | P2 | User themes | `/etc/cpz/themes` only | build | `~/.local/share/cpz/themes`, with the image directory as fallback |
 | P2 | First-login marker | `/etc/cpz/shadow-mtime` | build, read by `cpz-first-login` | identity handling; the user-visible marker moves to `~/.local/state/cpz` |
-| — | Installed apt packages | rootfs | `cpz-settings` (Trove) | not data: keep the manifest in `/home` and restore after a slot switch |
+| — | Installed apt packages | rootfs | `cpz-settings` (Hub) | not data: keep the manifest in `/home` and restore after a slot switch |
 | — | System journal | `/var/log/journal` | journald | not data; document the retention policy separately |
 
 Keyboard layout is already a user setting (`settings.conf`). The runtime writes
@@ -85,7 +87,7 @@ describes 0.9.0, not the target contract.
 /home/<user>/.config/cpz/settings.conf   UI and session settings
 /home/<user>/.config/cpz/keys.conf       shortcut overrides
 /home/<user>/.config/cpz/system.json     declarative system intent
-/home/<user>/.local/state/cpz/           session.tsv, trove-apps.json, markers
+/home/<user>/.local/state/cpz/           session.tsv, hub-apps.json, markers
 /home/<user>/.cache/cpz/                 catalog and generated bindings
 /home/.cpz/machine/                      root:root 0700, not a user home
 ```
@@ -130,7 +132,7 @@ and do not include it in a per-user backup.
 4. **MUST** treat files in `/run`, `/tmp` and generated XKB files as
    regenerable. Nothing may depend on them surviving a reboot or an update.
 5. **MUST** keep system packages out of the data model. Record the user's
-   intent (the Trove manifest) in `/home` and reinstall after a slot switch.
+   intent (the Hub manifest) in `/home` and reinstall after a slot switch.
 
 ### File formats and compatibility
 

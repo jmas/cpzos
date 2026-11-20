@@ -16,11 +16,11 @@ import calendar
 import curses
 import glob
 import gzip
+import hashlib
 import json
 import os
 import platform
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -3872,83 +3872,35 @@ def show_resources(screen, _data) -> None:
     run_interactive(screen, ["htop"])
 
 
-# Terminal Trove applications. The catalog is a static index built by the
-# separate terminal-trove-index project and downloaded to the image. Only apt
-# packages can be installed and removed by this manager; every other tool is
-# discovered here but its install instructions are shown to the user instead.
-TROVE_INDEX_SYSTEM = "/usr/share/cpz/trove-index.json"
-TROVE_INDEX_URL_FILE = "/etc/cpz/trove-index.url"
-TROVE_APT_SNAPSHOT = "/usr/share/cpz/apt-packages.txt.gz"
-TROVE_APT_SNAPSHOT_TXT = "/usr/share/cpz/apt-packages.txt"
-TROVE_INDEX_DEFAULT_URL = (
-    "https://raw.githubusercontent.com/jmas/terminal-trove-index/"
-    "main/index/trove.json.gz"
+# CPZ Hub applications. The catalog is a flat index built by the separate
+# cpzos-hub project. The image ships a snapshot, so opening Applications never
+# waits for the network; a background refresh replaces the user cache.
+HUB_INDEX_SYSTEM = "/usr/share/cpz/hub.json"
+HUB_INDEX_URL_FILE = "/etc/cpz/hub.url"
+HUB_INDEX_DEFAULT_URL = (
+    "https://raw.githubusercontent.com/jmas/cpzos-hub/main/index/hub.json"
 )
-TROVE_APT_INSTALL = (
+HUB_INDEX_MAX_BYTES = 8 * 1024 * 1024
+HUB_DEB_MAX_BYTES = 128 * 1024 * 1024
+HUB_REFRESH_INTERVAL = 24 * 60 * 60
+HUB_APT_INSTALL = (
     "env",
     "DEBIAN_FRONTEND=noninteractive",
-    "APT_LISTCHANGES_FRONTEND=none",
     "apt-get",
     "install",
     "-y",
     "--no-install-recommends",
 )
+HUB_APT_PURGE = (
+    "env",
+    "DEBIAN_FRONTEND=noninteractive",
+    "APT_LISTCHANGES_FRONTEND=none",
+    "apt-get",
+    "purge",
+    "-y",
+)
 APT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9+.-]*$")
-# Apt metadata is read once per package. The Applications screen redraws on
-# every key press, while the section and dependency list cannot change during
-# one search or one details visit.
-_TROVE_APT_METADATA: dict[str, dict[str, str]] = {}
-# Sections and dependency names that usually mean a graphical application.
-# They are only hints: packaging is inconsistent, so the details page says
-# "may be" and still leaves installation to the user.
-GUI_SECTIONS = frozenset(
-    {
-        "cinnamon",
-        "gnome",
-        "kde",
-        "lxde",
-        "lxqt",
-        "mate",
-        "x11",
-        "xfce",
-    }
-)
-GUI_DEPENDENCY_MARKERS = (
-    "libgdk-3",
-    "libgdk-x11",
-    "libgtk",
-    "libqt",
-    "libsdl",
-    "libvulkan",
-    "libwayland-client",
-    "libwebkit",
-    "libx11",
-    "libxext",
-    "libxfixes",
-    "libxinerama",
-    "libxrandr",
-    "libxrender",
-    "xserver-xorg",
-)
-# Packages that are libraries, build artifacts or data rather than runnable
-# applications. Names are matched because a fresh image only has the build-time
-# package-name snapshot and no apt metadata until the first apt update.
-APT_LIBRARY_RE = re.compile(r"^lib[a-z0-9+.-]*[0-9][a-z0-9+.-]*$")
-APT_NON_APP_SUFFIX_RE = re.compile(
-    r"-(?:dev|dbg|dbgsym|doc|docs|data|common|headers|examples?|tests?|"
-    r"locale|l10n|translations?|icons?|themes?|fonts?)$"
-)
-APT_NON_APP_PREFIXES = (
-    "firmware-",
-    "fonts-",
-    "golang-",
-    "linux-headers-",
-    "linux-image-",
-    "node-",
-    "perl-",
-    "ruby-",
-    "texlive-",
-)
+HUB_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+:~_-]*$")
 PKG_CORE = frozenset(
     {
         "apt",
@@ -3975,32 +3927,53 @@ PKG_CORE = frozenset(
 )
 
 
-def trove_cache_path() -> str:
+def hub_cache_path() -> str:
     base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
         os.path.expanduser("~"), ".cache"
     )
-    return os.path.join(base, "cpz", "trove-index.json")
+    return os.path.join(base, "cpz", "hub.json")
 
 
-def trove_state_path() -> str:
+def hub_refresh_stamp_path() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache"
+    )
+    return os.path.join(base, "cpz", "hub.refreshed")
+
+
+def hub_deb_dir() -> str:
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".cache"
+    )
+    return os.path.join(base, "cpz", "hub")
+
+
+def hub_state_path() -> str:
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state"
+    )
+    return os.path.join(base, "cpz", "hub-apps.json")
+
+
+def legacy_hub_state_path() -> str:
     base = os.environ.get("XDG_STATE_HOME") or os.path.join(
         os.path.expanduser("~"), ".local", "state"
     )
     return os.path.join(base, "cpz", "trove-apps.json")
 
 
-def trove_index_url() -> str:
-    override = os.environ.get("CPZ_TROVE_INDEX_URL", "").strip()
-    if override:
+def hub_index_url() -> str:
+    override = os.environ.get("CPZ_HUB_INDEX_URL", "").strip()
+    if override and override.lower() not in ("none", "off", "0"):
         return override
     try:
-        with open(TROVE_INDEX_URL_FILE, "r", encoding="utf-8") as handle:
+        with open(HUB_INDEX_URL_FILE, "r", encoding="utf-8") as handle:
             value = handle.read().strip()
             if value:
                 return value
     except OSError:
         pass
-    return TROVE_INDEX_DEFAULT_URL
+    return HUB_INDEX_DEFAULT_URL
 
 
 def read_json_file(path: str):
@@ -4011,630 +3984,244 @@ def read_json_file(path: str):
         return None
 
 
-def valid_trove_index(data) -> bool:
+def valid_hub_index(data) -> bool:
     return (
         isinstance(data, dict)
         and data.get("schema") == 1
-        and isinstance(data.get("tools"), list)
+        and isinstance(data.get("apps"), list)
     )
 
 
-def normalize_trove_tool(raw) -> dict[str, Any] | None:
+def normalize_hub_app(raw) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
-    slug = str(raw.get("slug", "")).strip()
-    name = str(raw.get("name", "")).strip() or slug
-    if not slug or not name:
+    app_id = str(raw.get("id", raw.get("slug", ""))).strip()
+    name = str(raw.get("name", "")).strip() or app_id
+    package = str(raw.get("package", raw.get("apt", ""))).strip()
+    if not app_id or not name or not APT_NAME_RE.fullmatch(package):
+        return None
+    kind = str(raw.get("kind", "apt")).strip().lower()
+    if kind not in ("apt", "deb"):
         return None
     categories = []
     for item in raw.get("categories") or []:
         value = str(item).strip()
         if value and value not in categories:
             categories.append(value)
-    platforms = []
-    for item in raw.get("platforms") or []:
-        value = str(item).strip()
-        if value and value not in platforms:
-            platforms.append(value)
-    install = raw.get("install")
-    apt = raw.get("apt")
-    return {
-        "slug": slug,
+    app: dict[str, Any] = {
+        "id": app_id,
         "name": name,
-        "url": str(raw.get("url", "")).strip()
-        or f"https://terminaltrove.com/{slug}/",
         "summary": str(raw.get("summary", "")).strip(),
-        "description": str(raw.get("description", "")).strip(),
-        "language": str(raw.get("language", "")).strip().lower(),
-        "language_label": str(raw.get("language_label", "")).strip(),
+        "kind": kind,
+        "package": package,
         "categories": categories,
-        "platforms": platforms,
-        "install": install if isinstance(install, dict) else {},
-        "apt": apt if isinstance(apt, dict) else {},
-        "website": str(raw.get("website", "")).strip(),
-        "source": str(raw.get("source", "")).strip(),
         "license": str(raw.get("license", "")).strip(),
-        "stars": raw.get("stars") if isinstance(raw.get("stars"), int) else 0,
-        "release": str(raw.get("release", "")).strip(),
+        "homepage": str(raw.get("homepage", "")).strip(),
+        "source": str(raw.get("source", "")).strip(),
+        "source_url": str(raw.get("source_url", "")).strip(),
     }
+    version = str(raw.get("version", "")).strip()
+    if version:
+        app["version"] = version
+    command = str(raw.get("command", "")).strip()
+    if command and APT_NAME_RE.fullmatch(command):
+        app["command"] = command
+    if kind == "deb":
+        deb = raw.get("deb")
+        if not isinstance(deb, dict):
+            return None
+        url = str(deb.get("url", "")).strip()
+        sha256 = str(deb.get("sha256", "")).strip().lower()
+        if not url.startswith("https://") or len(sha256) != 64:
+            return None
+        if any(char not in "0123456789abcdef" for char in sha256):
+            return None
+        app["deb"] = {"url": url, "sha256": sha256}
+        size = deb.get("size")
+        if isinstance(size, int) and size > 0:
+            app["deb"]["size"] = size
+    return app
 
 
-def load_trove_index() -> dict[str, Any]:
+def load_hub_index() -> dict[str, Any]:
     empty: dict[str, Any] = {
         "schema": 1,
-        "tools": [],
-        "categories": [],
-        "languages": [],
-        "count": 0,
+        "apps": [],
+        "generated_at": "",
         "path": "",
     }
-    candidates: list[tuple[str, str, dict[str, Any]]] = []
-    for path in (trove_cache_path(), TROVE_INDEX_SYSTEM):
+    candidates: list[tuple[str, float, str, dict[str, Any]]] = []
+    for path in (hub_cache_path(), HUB_INDEX_SYSTEM):
         try:
-            if os.path.getsize(path) > 50 * 1024 * 1024:
+            if os.path.getsize(path) > HUB_INDEX_MAX_BYTES:
                 continue
+            mtime = os.path.getmtime(path)
         except OSError:
             continue
         data = read_json_file(path)
-        if not valid_trove_index(data):
+        if not valid_hub_index(data):
             continue
         generated = str(data.get("generated_at", ""))
-        candidates.append((generated, path, data))
+        candidates.append((generated, mtime, path, data))
     if not candidates:
         return empty
-    for _generated, path, data in sorted(
-        candidates, key=lambda item: item[0], reverse=True
-    ):
-        tools = []
-        for raw in data["tools"]:
-            tool = normalize_trove_tool(raw)
-            if tool:
-                tools.append(tool)
-        if not tools:
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    for generated, _mtime, path, data in candidates:
+        apps = []
+        seen = set()
+        for raw in data["apps"]:
+            app = normalize_hub_app(raw)
+            if app is None or app["id"] in seen:
+                continue
+            seen.add(app["id"])
+            apps.append(app)
+        if not apps:
             continue
-        data["tools"] = tools
+        data["apps"] = apps
         data["path"] = path
-        data["count"] = len(tools)
+        data["generated_at"] = generated
         return data
     return empty
 
 
-def download_trove_index() -> tuple[bool, str]:
-    url = trove_index_url()
+def download_hub_index() -> tuple[bool, str]:
+    url = hub_index_url()
     request = urllib.request.Request(
         url, headers={"User-Agent": "cpz-settings/1"}
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            raw = response.read(20 * 1024 * 1024 + 1)
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.read(HUB_INDEX_MAX_BYTES + 1)
     except (urllib.error.URLError, OSError, ValueError) as error:
         return False, catalog_error(error_line(str(error)) or "network error")
-    if len(raw) > 20 * 1024 * 1024:
+    if len(raw) > HUB_INDEX_MAX_BYTES:
         return False, catalog_error("index is too large")
     if raw[:2] == b"\x1f\x8b":
         try:
             raw = gzip.decompress(raw)
         except OSError:
             return False, catalog_error("bad gzip data")
-    if len(raw) > 50 * 1024 * 1024:
+    if len(raw) > HUB_INDEX_MAX_BYTES:
         return False, catalog_error("index is too large")
     try:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
         return False, catalog_error("invalid JSON")
-    if not valid_trove_index(data):
+    if not valid_hub_index(data) or not data.get("apps"):
         return False, catalog_error("unsupported index")
-    if not data.get("tools"):
-        return False, catalog_error("empty index")
-    path = trove_cache_path()
+    path = hub_cache_path()
     try:
         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
         temp = path + ".tmp"
         with open(temp, "wb") as handle:
             handle.write(raw)
+        os.chmod(temp, 0o600)
         os.replace(temp, path)
     except OSError as error:
         return False, catalog_error(error_line(str(error)) or "cannot write cache")
     return True, tr(
-        "Catalog updated: {count} tools",
-        count=len(data.get("tools", [])),
+        "Catalog updated: {count} apps",
+        count=len(data.get("apps", [])),
     )
+
+
+def hub_refresh_due() -> bool:
+    try:
+        return time.time() - os.path.getmtime(hub_refresh_stamp_path()) > HUB_REFRESH_INTERVAL
+    except OSError:
+        return True
+
+
+def start_hub_refresh(force: bool = False):
+    """Start a detached index refresh and return the process, if any.
+
+    The caller never waits for it. The next draw reloads the cache after the
+    process exits with code 0.
+    """
+    if not force and not hub_refresh_due():
+        return None
+    stamp = hub_refresh_stamp_path()
+    try:
+        os.makedirs(os.path.dirname(stamp), mode=0o700, exist_ok=True)
+        with open(stamp, "a", encoding="utf-8"):
+            pass
+        os.utime(stamp, None)
+    except OSError:
+        pass
+    try:
+        return subprocess.Popen(
+            [sys.executable, os.path.abspath(__file__), "--refresh-hub"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            start_new_session=True,
+        )
+    except OSError:
+        return None
 
 
 def catalog_error(reason: str) -> str:
     return tr("Catalog update failed: {reason}", reason=tr(reason))
 
 
-def apt_command_package(command: str) -> str:
-    """Return the package from a Debian/Ubuntu apt install command."""
-    if not command:
-        return ""
-    text = re.split(r"[;&|]", command.strip(), maxsplit=1)[0].strip()
-    match = re.search(
-        r"(?:^|\s)(?:sudo\s+(?:-\S+\s+)*)?(?:env\s+\S+\s+)*"
-        r"(?:[A-Z_][A-Z0-9_]*=\S+\s+)*apt(?:-get)?\s+"
-        r"(?:install|add)\s+(.+)$",
-        text,
-    )
-    if not match:
-        return ""
+def dpkg_installed() -> dict[str, str]:
+    """Package name -> installed version, read once per screen/lookup."""
     try:
-        tokens = shlex.split(match.group(1))
-    except ValueError:
-        tokens = match.group(1).split()
-    skip_next = False
-    for token in tokens:
-        if skip_next:
-            skip_next = False
+        result = subprocess.run(
+            ["dpkg-query", "-W", "-f=${Package}\t${Version}\n"],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if result.returncode != 0:
+        return {}
+    installed = {}
+    for line in result.stdout.splitlines():
+        if "\t" not in line:
             continue
-        if token.startswith("-"):
-            if token in ("-t", "--target-release", "-o"):
-                skip_next = True
-            continue
-        if "/" in token or token.startswith((".", "~")):
-            return ""
-        name = token.split("=", 1)[0].split(":", 1)[0]
-        if APT_NAME_RE.fullmatch(name):
-            return name
-    return ""
-
-
-def catalog_trove_apt(tool: dict[str, Any]) -> dict[str, str]:
-    apt = tool.get("apt")
-    if isinstance(apt, dict):
-        package = str(apt.get("package", "")).strip()
-        command = str(apt.get("command", "")).strip()
+        package, version = line.split("\t", 1)
+        package = package.strip()
         if APT_NAME_RE.fullmatch(package):
-            return {
-                "package": package,
-                "command": command or f"apt install {package}",
-            }
-    install = tool.get("install")
-    if isinstance(install, dict):
-        for platform_name in ("linux", "debian", "ubuntu"):
-            entries = install.get(platform_name)
-            if isinstance(entries, dict):
-                for manager, command in entries.items():
-                    lowered = str(manager).lower()
-                    if "ubuntu" not in lowered and "debian" not in lowered:
-                        continue
-                    package = apt_command_package(str(command))
-                    if package:
-                        return {"package": package, "command": str(command)}
-            elif isinstance(entries, str):
-                package = apt_command_package(entries)
-                if package:
-                    return {"package": package, "command": entries}
-    return {}
-
-
-def package_from_text(value: str) -> str:
-    name = re.sub(r"[^a-z0-9+.-]+", "-", value.lower()).strip("-.")
-    return name if APT_NAME_RE.fullmatch(name) else ""
+            installed[package] = version.strip()
+    return installed
 
 
 def apt_lists_present() -> bool:
-    """True when apt has downloaded package lists."""
-    try:
-        with os.scandir("/var/lib/apt/lists") as entries:
-            for entry in entries:
-                if entry.is_file() and "Packages" in entry.name:
-                    return True
-    except OSError:
-        return False
-    return False
-
-
-def apt_status(package: str) -> dict[str, str]:
-    if not APT_NAME_RE.fullmatch(package):
-        return {"package": package, "status": "missing", "version": ""}
-    rc, out, _ = nm_run(
-        ["dpkg-query", "-W", "-f=${Status}\n${Version}\n", package], timeout=10
+    return bool(
+        glob.glob("/var/lib/apt/lists/*Packages*")
+        or glob.glob("/var/lib/apt/lists/*Packages")
     )
-    lines = out.splitlines()
-    if rc == 0 and lines and "install ok installed" in lines[0]:
-        return {
-            "package": package,
-            "status": "installed",
-            "version": lines[1] if len(lines) > 1 else "",
+
+
+def read_hub_apps() -> dict[str, dict[str, Any]]:
+    data = read_json_file(hub_state_path())
+    if data is None:
+        data = read_json_file(legacy_hub_state_path())
+        if data is None:
+            return {}
+        apps = parse_hub_state(data)
+        hub = load_hub_index()
+        ids = {app["id"] for app in hub["apps"]}
+        packages = {app["package"] for app in hub["apps"]}
+        apps = {
+            slug: record
+            for slug, record in apps.items()
+            if slug in ids or record.get("package") in packages
         }
-    rc, out, _ = nm_run(["apt-cache", "policy", package], timeout=15)
-    if rc == 0:
-        installed = re.search(r"^\s*Installed:\s*(\S+)", out, re.MULTILINE)
-        candidate = re.search(r"^\s*Candidate:\s*(\S+)", out, re.MULTILINE)
-        if installed and installed.group(1) != "(none)":
-            return {
-                "package": package,
-                "status": "installed",
-                "version": installed.group(1),
-            }
-        if candidate and candidate.group(1) != "(none)":
-            return {
-                "package": package,
-                "status": "available",
-                "version": candidate.group(1),
-            }
-    return {"package": package, "status": "missing", "version": ""}
+        if ids:
+            try:
+                write_hub_apps(apps)
+            except OSError:
+                pass
+        return apps
+    return parse_hub_state(data)
 
 
-def apt_snapshot_lines(path: str):
-    if path.endswith(".gz"):
-        return gzip.open(path, "rt", encoding="utf-8", errors="replace")
-    return open(path, "r", encoding="utf-8", errors="replace")
-
-
-def trove_apt_names() -> set[str]:
-    """Return every package name apt knows about, plus installed packages.
-
-    ``apt-cache pkgnames`` is a single fast command, unlike running apt-cache
-    policy once per catalog entry. dpkg-query covers packages that are
-    installed but missing from the current apt lists. export-image deletes
-    /var/lib/apt/lists, so the build also stores a compressed snapshot of the
-    package names for offline use.
-    """
-    names: set[str] = set()
-    for command in (
-        ["apt-cache", "pkgnames"],
-        ["dpkg-query", "-W", "-f=${Package}\n"],
-    ):
-        rc, out, _ = nm_run(command, timeout=60)
-        if rc != 0:
-            continue
-        for line in out.splitlines():
-            name = line.strip().split(":", 1)[0]
-            if APT_NAME_RE.fullmatch(name):
-                names.add(name)
-    for path in (TROVE_APT_SNAPSHOT, TROVE_APT_SNAPSHOT_TXT):
-        try:
-            with apt_snapshot_lines(path) as handle:
-                for line in handle:
-                    name = line.strip().split(":", 1)[0]
-                    if APT_NAME_RE.fullmatch(name):
-                        names.add(name)
-        except OSError:
-            continue
-    return names
-
-
-def parse_apt_stanzas(text: str) -> dict[str, dict[str, str]]:
-    """Parse the first apt/dpkg stanza per package.
-
-    Only stable metadata is kept: the section, dependency lists and the short
-    description. Continuation lines are dropped because the details page and
-    the list only need the summary.
-    """
-    result: dict[str, dict[str, str]] = {}
-    for block in re.split(r"\n\s*\n", text.strip()):
-        fields: dict[str, str] = {}
-        for line in block.splitlines():
-            if line[:1].isspace():
-                continue
-            match = re.match(r"^([A-Za-z0-9-]+):\s*(.*)$", line)
-            if not match:
-                continue
-            key = match.group(1).lower()
-            value = match.group(2).strip()
-            if key == "description":
-                fields["summary"] = value
-            else:
-                fields[key] = value
-        package = fields.get("package", "")
-        if package and package not in result:
-            result[package] = fields
-    return result
-
-
-def apt_metadata_many(packages: list[str]) -> dict[str, dict[str, str]]:
-    """Return apt metadata for several packages in one or two subprocesses.
-
-    The build-time snapshot contains package names only because export-image
-    removes /var/lib/apt/lists. apt-cache provides richer metadata once the
-    lists exist; dpkg-query covers installed packages on a fresh image.
-    """
-    wanted = [
-        package
-        for package in dict.fromkeys(packages)
-        if APT_NAME_RE.fullmatch(package)
-    ]
-    missing = [package for package in wanted if package not in _TROVE_APT_METADATA]
-    if missing:
-        timeout = max(10, min(30, len(missing) * 2))
-        rc, out, _ = nm_run(
-            ["apt-cache", "show", "--no-all-versions", *missing],
-            timeout=timeout,
-        )
-        if rc != 0 or not out:
-            rc, out, _ = nm_run(
-                ["apt-cache", "show", *missing],
-                timeout=timeout,
-            )
-        if out:
-            _TROVE_APT_METADATA.update(parse_apt_stanzas(out))
-        still_missing = [
-            package
-            for package in missing
-            if package not in _TROVE_APT_METADATA
-        ]
-        if still_missing:
-            rc, out, _ = nm_run(
-                [
-                    "dpkg-query",
-                    "-W",
-                    "-f=${Package}\t${Section}\t${Depends}\n",
-                    *still_missing,
-                ],
-                timeout=10,
-            )
-            if out:
-                for line in out.splitlines():
-                    parts = line.split("\t")
-                    package = parts[0].strip().split(":", 1)[0]
-                    if not APT_NAME_RE.fullmatch(package):
-                        continue
-                    _TROVE_APT_METADATA[package] = {
-                        "package": package,
-                        "section": parts[1].strip() if len(parts) > 1 else "",
-                        "depends": parts[2].strip() if len(parts) > 2 else "",
-                        "summary": "",
-                    }
-    return {
-        package: _TROVE_APT_METADATA.get(package, {})
-        for package in wanted
-    }
-
-
-def apt_metadata(package: str) -> dict[str, str]:
-    return apt_metadata_many([package]).get(package, {})
-
-
-def apt_looks_like_app(package: str) -> bool:
-    """Reject packages that are clearly libraries, docs or build artifacts."""
-    lowered = package.lower()
-    if APT_LIBRARY_RE.fullmatch(lowered):
-        return False
-    if APT_NON_APP_SUFFIX_RE.search(lowered):
-        return False
-    return not lowered.startswith(APT_NON_APP_PREFIXES)
-
-
-def apt_search_tools(
-    query: str,
-    apt_names: set[str],
-    skip_packages: set[str] | None = None,
-    limit: int = 30,
-    candidates: list[str] | None = None,
-) -> list[dict[str, Any]]:
-    """Find ordinary apt packages that are not in the Terminal Trove catalog.
-
-    Filtering happens against the package-name snapshot, so search works on a
-    fresh image after export-image deletes /var/lib/apt/lists. Metadata is only
-    requested for the short list that is about to be displayed.
-
-    ``candidates`` is the precomputed app-like subset of ``apt_names``; the
-    screen builds it once because the full snapshot is large.
-    """
-    words = [word.lower() for word in query.split() if word]
-    if not words or len(query.strip()) < 2 or not apt_names:
-        return []
-    if candidates is None:
-        candidates = [
-            name for name in apt_names if apt_looks_like_app(name)
-        ]
-    skip = {package.lower() for package in (skip_packages or set())}
-    matches = []
-    for name in candidates:
-        lowered = name.lower()
-        if lowered in skip or not apt_looks_like_app(lowered):
-            continue
-        if all(word in lowered for word in words):
-            matches.append(name)
-    matches.sort(
-        key=lambda name: (
-            not name.lower().startswith(words[0]),
-            len(name),
-            name.lower(),
-        )
-    )
-    matches = matches[: max(1, limit)]
-    metadata = apt_metadata_many(matches)
-    tools = []
-    for package in matches:
-        fields = metadata.get(package, {})
-        tools.append(
-            {
-                "slug": package,
-                "name": package,
-                "summary": str(fields.get("summary", "")).strip(),
-                "description": "",
-                "language": "",
-                "language_label": "",
-                "categories": [],
-                "platforms": ["linux"],
-                "install": {},
-                "apt": {
-                    "command": f"apt install {package}",
-                    "package": package,
-                },
-                "website": "",
-                "source": "",
-                "license": "",
-                "stars": 0,
-                "release": "",
-                "_package": package,
-                "_apt_search": True,
-            }
-        )
-    return tools
-
-
-def package_desktop_files(package: str) -> list[str]:
-    """Return .desktop launchers shipped by an installed package."""
-    if not package or not APT_NAME_RE.fullmatch(package):
-        return []
-    if not shutil.which("dpkg"):
-        return []
-    rc, out, _ = nm_run(["dpkg", "-L", package], timeout=10)
-    if rc != 0:
-        return []
-    return [
-        path.strip()
-        for path in out.splitlines()
-        if path.strip().startswith("/usr/share/applications/")
-        and path.strip().endswith(".desktop")
-    ]
-
-
-def trove_gui_signals(
-    tool: dict[str, Any], apt: dict[str, str]
-) -> list[str]:
-    """Return human-readable hints that an app is not CLI/TUI.
-
-    This is deliberately a heuristic, not a gate: CPZ can run graphical apps
-    through cage, but a desktop package usually needs integration that the
-    device does not provide. The details page shows the hints before install.
-    """
-    package = str(tool.get("_package") or apt.get("package", "")).strip()
-    if not package or not APT_NAME_RE.fullmatch(package):
-        return []
-    fields = apt_metadata(package)
-    signals = []
-    section = str(fields.get("section", "")).strip().lower()
-    if section in GUI_SECTIONS:
-        signals.append(tr("apt section: {section}", section=section))
-    dependencies = " ".join(
-        str(fields.get(key, ""))
-        for key in ("depends", "pre-depends", "recommends")
-    ).lower()
-    for marker in GUI_DEPENDENCY_MARKERS:
-        if marker in dependencies:
-            signals.append(tr("depends on {library}", library=marker))
-            break
-    if package_desktop_files(package):
-        signals.append(tr("installs a desktop launcher"))
-    categories = {
-        str(category).strip().lower()
-        for category in tool.get("categories", [])
-    }
-    if categories & {"desktop", "gui"}:
-        signals.append(tr("catalog category: {category}", category="GUI"))
-    return list(dict.fromkeys(signals))
-
-
-def trove_tool_from_record(
-    record: dict[str, Any], tool: dict[str, Any] | None = None
-) -> dict[str, Any]:
-    """Build a catalog-shaped tool for a managed app missing from the index."""
-    package = str(record.get("package", "")).strip()
-    slug = str(record.get("slug", "")).strip() or package
-    data = dict(tool or {})
-    data.setdefault("slug", slug)
-    data.setdefault("name", str(record.get("name", "")).strip() or slug)
-    data.setdefault("summary", tr("Managed apt package"))
-    data.setdefault("description", "")
-    data.setdefault("language", "")
-    data.setdefault("language_label", "")
-    data.setdefault("categories", [])
-    data.setdefault("platforms", ["linux"])
-    data.setdefault("install", {})
-    existing_apt = data.get("apt")
-    if package and not (
-        isinstance(existing_apt, dict) and existing_apt.get("package")
-    ):
-        data["apt"] = {
-            "command": f"apt install {package}",
-            "package": package,
-        }
-    data.setdefault("website", "")
-    data.setdefault("source", "")
-    data.setdefault("license", "")
-    data.setdefault("stars", 0)
-    data.setdefault("release", "")
-    data["_record"] = record
-    data["_package"] = package
-    return data
-
-
-def trove_tool_apt_supported(
-    tool: dict[str, Any], apt_names: set[str]
-) -> bool:
-    """True when the tool has a package name present in apt."""
-    if not apt_names:
-        return False
-    catalog = catalog_trove_apt(tool)
-    if catalog:
-        return catalog["package"] in apt_names
-    for value in (tool.get("slug", ""), tool.get("name", "")):
-        package = package_from_text(str(value))
-        if package and package in apt_names:
-            return True
-    return False
-
-
-def resolve_trove_apt(
-    tool: dict[str, Any], apt_names: set[str] | None = None
-) -> dict[str, str]:
-    """Find the apt package for a catalog tool, if one exists.
-
-    The catalog's Debian/Ubuntu command is authoritative. Only when the index
-    has no apt command do we try the tool slug and name, which catches packages
-    such as lazygit that Terminal Trove lists without an Ubuntu/Debian cell.
-
-    ``apt_names`` is the offline package-name snapshot. It lets a fresh image
-    report a package as available even though export-image removed
-    /var/lib/apt/lists; install runs apt-get update before using it.
-    """
-    catalog = catalog_trove_apt(tool)
-    candidates: list[tuple[str, str]] = []
-    if catalog:
-        candidates.append((catalog["package"], "catalog"))
-    else:
-        for value, source in (
-            (str(tool.get("slug", "")), "slug"),
-            (str(tool.get("name", "")), "name"),
-        ):
-            package = package_from_text(value)
-            if package and all(package != item[0] for item in candidates):
-                candidates.append((package, source))
-    for package, source in candidates:
-        status = apt_status(package)
-        if status["status"] != "missing":
-            return {**status, "source": source}
-        if apt_names and package in apt_names and not apt_lists_present():
-            return {
-                "package": package,
-                "status": "available",
-                "version": "",
-                "source": source,
-                "needs_update": "1",
-            }
-    return {
-        "package": candidates[0][0] if candidates else "",
-        "status": "missing",
-        "version": "",
-        "source": candidates[0][1] if candidates else "",
-    }
-
-
-def trove_install_commands(tool: dict[str, Any]) -> list[tuple[str, str]]:
-    install = tool.get("install")
-    if not isinstance(install, dict):
-        return []
-    commands: list[tuple[str, str]] = []
-    for platform_name, entries in install.items():
-        if isinstance(entries, dict):
-            for manager, command in entries.items():
-                if str(command).strip():
-                    commands.append(
-                        (f"{platform_name} / {manager}", str(command).strip())
-                    )
-        elif isinstance(entries, str) and entries.strip():
-            commands.append((str(platform_name), entries.strip()))
-    commands.sort(key=lambda item: (0 if "linux" in item[0].lower() else 1, item[0]))
-    return commands
-
-
-def read_trove_apps() -> dict[str, dict[str, Any]]:
-    data = read_json_file(trove_state_path())
+def parse_hub_state(data) -> dict[str, dict[str, Any]]:
     raw_apps = data.get("apps") if isinstance(data, dict) else None
     apps: dict[str, dict[str, Any]] = {}
     if not isinstance(raw_apps, list):
@@ -4642,13 +4229,14 @@ def read_trove_apps() -> dict[str, dict[str, Any]]:
     for raw in raw_apps:
         if not isinstance(raw, dict):
             continue
-        slug = str(raw.get("slug", "")).strip()
+        slug = str(raw.get("slug", raw.get("id", ""))).strip()
         package = str(raw.get("package", "")).strip()
         if not slug or not APT_NAME_RE.fullmatch(package):
             continue
         apps[slug] = {
             "slug": slug,
             "name": str(raw.get("name", "")).strip() or slug,
+            "kind": str(raw.get("kind", "apt")).strip() or "apt",
             "package": package,
             "version": str(raw.get("version", "")).strip(),
             "installed_at": str(raw.get("installed_at", "")).strip(),
@@ -4658,11 +4246,11 @@ def read_trove_apps() -> dict[str, dict[str, Any]]:
     return apps
 
 
-def write_trove_apps(apps: dict[str, dict[str, Any]]) -> None:
-    path = trove_state_path()
+def write_hub_apps(apps: dict[str, dict[str, Any]]) -> None:
+    path = hub_state_path()
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     payload = {
-        "version": 1,
+        "schema": 1,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
         "apps": [apps[slug] for slug in sorted(apps)],
     }
@@ -4674,453 +4262,322 @@ def write_trove_apps(apps: dict[str, dict[str, Any]]) -> None:
     os.replace(temp, path)
 
 
-def trove_haystack(tool: dict[str, Any]) -> str:
+def hub_app_by_id(app_id: str, apps: list[dict[str, Any]] | None = None) -> dict[str, Any] | None:
+    app_id = app_id.strip()
+    if not app_id:
+        return None
+    for app in apps if apps is not None else load_hub_index()["apps"]:
+        if app["id"] == app_id:
+            return app
+    record = read_hub_apps().get(app_id)
+    if record:
+        return {
+            "id": app_id,
+            "name": record["name"],
+            "summary": "",
+            "kind": record["kind"],
+            "package": record["package"],
+            "categories": [],
+            "license": "",
+            "homepage": "",
+            "source": "",
+            "source_url": "",
+            "version": record.get("version", ""),
+        }
+    return None
+
+
+def hub_haystack(app: dict[str, Any]) -> str:
     parts = [
-        str(tool.get("name", "")),
-        str(tool.get("slug", "")),
-        str(tool.get("summary", "")),
-        str(tool.get("language", "")),
-        str(tool.get("language_label", "")),
-        str(tool.get("_package", "")),
+        str(app.get("id", "")),
+        str(app.get("name", "")),
+        str(app.get("package", "")),
+        str(app.get("summary", "")),
     ]
-    parts.extend(str(item) for item in tool.get("categories", []))
-    parts.extend(str(item) for item in tool.get("platforms", []))
-    apt = tool.get("apt")
-    if isinstance(apt, dict):
-        parts.append(str(apt.get("package", "")))
-    return " ".join(parts).lower()
+    parts.extend(str(item) for item in app.get("categories") or [])
+    return " ".join(parts).casefold()
 
 
-def trove_matches(tool: dict[str, Any], query: str) -> bool:
-    words = [word for word in query.lower().split() if word]
+def hub_matches(app: dict[str, Any], query: str) -> bool:
+    words = query.casefold().split()
     if not words:
         return True
-    haystack = trove_haystack(tool)
+    haystack = hub_haystack(app)
     return all(word in haystack for word in words)
 
 
-def filter_trove_tools(
-    tools: list[dict[str, Any]],
-    query: str = "",
-    category: str = "",
-    language: str = "",
-    apt_names: set[str] | None = None,
-) -> list[dict[str, Any]]:
-    selected = []
-    for tool in tools:
-        if category and category not in tool.get("categories", []):
-            continue
-        if language and language != tool.get("language", ""):
-            continue
-        if apt_names is not None and not trove_tool_apt_supported(tool, apt_names):
-            continue
-        if not trove_matches(tool, query):
-            continue
-        selected.append(tool)
-    return selected
+def filter_hub_apps(apps: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    shown = [app for app in apps if hub_matches(app, query)]
+    return sorted(shown, key=lambda app: str(app.get("name", "")).casefold())
 
 
-def trove_category_options(index: dict[str, Any]) -> list[tuple[str, str, int]]:
-    options = [("", "All categories", 0)]
-    raw = index.get("categories")
-    if isinstance(raw, list):
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            slug = str(item.get("slug", "")).strip()
-            if not slug:
-                continue
-            label = str(item.get("name", "")).strip() or slug
-            count_value = item.get("count")
-            count = count_value if isinstance(count_value, int) else 0
-            options.append((slug, label, count))
-    return options
-
-
-def trove_language_options(index: dict[str, Any]) -> list[tuple[str, str, int]]:
-    options = [("", "All languages", 0)]
-    raw = index.get("languages")
-    if isinstance(raw, list):
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            slug = str(item.get("slug", "")).strip()
-            if not slug:
-                continue
-            label = str(item.get("name", "")).strip() or slug
-            count_value = item.get("count")
-            count = count_value if isinstance(count_value, int) else 0
-            options.append((slug, label, count))
-    return options
-
-
-def trove_option_label(
-    options: list[tuple[str, str, int]], slug: str, fallback: str = "All"
-) -> str:
-    for value, label, _count in options:
-        if value == slug:
-            return label
-    return fallback if not slug else slug
-
-
-def trove_category_name(slug: str) -> str:
-    names = {
-        "ai": "AI",
-        "api": "API",
-        "bpf": "BPF",
-        "cli": "CLI",
-        "csv": "CSV",
-        "dns": "DNS",
-        "git": "Git",
-        "irc": "IRC",
-        "json": "JSON",
-        "llm": "LLM",
-        "sre": "SRE",
-        "sql": "SQL",
-        "ssh": "SSH",
-        "tui": "TUI",
-        "tui-frameworks": "TUI Frameworks",
-        "vpn": "VPN",
-        "web": "Web",
-    }
-    return names.get(slug, slug.replace("-", " ").title())
-
-
-def trove_filter_popup(
-    screen, title: str, options: list[tuple[str, str, int]], current: str
-) -> str | None:
-    """Pick a category/language. Printable keys narrow the list."""
-    query = ""
-    selected = 0
-    height, width = screen.getmaxyx()
-    hint = "Type to filter  Enter keep  Esc cancel"
-    popup_height = min(16, max(8, height - 2))
-    popup_width = min(
-        max(
-            28,
-            text_width(title) + 12,
-            text_width(hint) + 2 * MODAL_TEXT_COLUMN,
-        ),
-        max(20, width - 2),
-    )
-    top = max(0, (height - popup_height) // 2)
-    left = max(0, (width - popup_width) // 2)
-    try:
-        popup = curses.newwin(popup_height, popup_width, top, left)
-    except curses.error:
-        return None
-    popup.keypad(True)
-    initialized = False
-
-    while True:
-        needle = query.lower()
-        filtered = [
-            item
-            for item in options
-            if not needle
-            or needle in item[1].lower()
-            or needle in item[0].lower()
-        ]
-        if not initialized:
-            selected = next(
-                (index for index, item in enumerate(filtered) if item[0] == current),
-                0,
-            )
-            initialized = True
-        selected = max(0, min(selected, len(filtered) - 1))
-        visible = max(1, popup_height - 6)
-        content_cols = max(0, popup_width - 2 * MODAL_TEXT_COLUMN)
-        first = max(0, min(selected - visible + 1, len(filtered) - visible))
-        first = max(0, first)
-
-        draw_modal_frame(popup, title, hint)
-        put(
-            popup,
-            2,
-            MODAL_TEXT_COLUMN,
-            text_truncate(
-                tr("Search: {query}", query=query),
-                content_cols,
-            ),
-        )
-        for offset, (_value, label, count) in enumerate(
-            filtered[first : first + visible]
-        ):
-            row = first + offset
-            text = f"{'>' if row == selected else ' '} {label}"
-            if count:
-                text += f" ({count})"
-            attr = curses.A_REVERSE if row == selected else 0
-            put(
-                popup,
-                3 + offset,
-                MODAL_TEXT_COLUMN,
-                text_pad(text, content_cols),
-                attr,
-            )
-        if not filtered:
-            put(popup, 3, MODAL_TEXT_COLUMN, "No matches")
-        popup.refresh()
-
-        key = popup.getch()
-        if key in (ord("q"), ord("Q"), 27):
-            del popup
-            return None
-        if key in (curses.KEY_UP, curses.KEY_PPAGE):
-            selected = max(0, selected - (visible if key == curses.KEY_PPAGE else 1))
-            continue
-        if key in (curses.KEY_DOWN, curses.KEY_NPAGE):
-            selected = min(
-                len(filtered) - 1,
-                selected + (visible if key == curses.KEY_NPAGE else 1),
-            )
-            continue
-        if key in (10, 13, curses.KEY_RIGHT):
-            del popup
-            return filtered[selected][0] if filtered else None
-        if key in (curses.KEY_BACKSPACE, 8, 127):
-            query = query[:-1]
-            selected = 0
-            continue
-        if 32 <= key < 127:
-            query += chr(key)
-            selected = 0
-
-
-def trove_installed_tools(
+def hub_installed_tools(
     index: dict[str, Any],
-    apps: dict[str, dict[str, Any]],
-    query: str = "",
+    managed: dict[str, dict[str, Any]],
+    installed: dict[str, str],
+    query: str,
 ) -> list[dict[str, Any]]:
-    """Return the manager's journal only, never apt/system packages.
+    by_id = {app["id"]: app for app in index.get("apps", [])}
+    by_package = {app["package"]: app for app in index.get("apps", [])}
+    tools = []
+    for slug, record in managed.items():
+        app = by_id.get(slug) or by_package.get(record.get("package", ""))
+        tool = dict(app or {})
+        tool.update(
+            {
+                "id": slug,
+                "slug": slug,
+                "name": record.get("name") or tool.get("name", slug),
+                "package": record.get("package", tool.get("package", "")),
+                "kind": record.get("kind", tool.get("kind", "apt")),
+                "summary": tool.get("summary", ""),
+                "version": installed.get(record.get("package", ""), "")
+                or record.get("version", ""),
+                "_record": record,
+            }
+        )
+        if hub_matches(tool, query):
+            tools.append(tool)
+    return sorted(tools, key=lambda tool: str(tool.get("name", "")).casefold())
 
-    ``apps`` is ``read_trove_apps()``. A catalog tool that dpkg reports as
-    installed but that has no record here was installed by the image or by
-    apt directly and must stay out of the Installed tab.
-    """
-    by_slug = {tool["slug"]: tool for tool in index.get("tools", [])}
-    installed = []
-    for slug, record in apps.items():
-        tool = trove_tool_from_record(record, by_slug.get(slug))
-        if not trove_matches(tool, query):
-            continue
-        installed.append(tool)
-    return sorted(installed, key=lambda item: item.get("name", "").lower())
+
+def hub_app_status(
+    app: dict[str, Any],
+    managed: dict[str, dict[str, Any]],
+    installed: dict[str, str],
+) -> str:
+    if app["id"] in managed or any(
+        record.get("package") == app["package"] for record in managed.values()
+    ):
+        return "managed"
+    if app["package"] in installed:
+        return "system"
+    return "available"
 
 
-def trove_details_lines(
-    tool: dict[str, Any],
-    apt: dict[str, str],
+def hub_details_lines(
+    app: dict[str, Any],
     record: dict[str, Any] | None,
+    installed: dict[str, str],
     width: int,
-    gui_signals: list[str] | None = None,
 ) -> list[str]:
-    name = tool.get("name", tool.get("slug", "?"))
-    categories = ", ".join(
-        trove_category_name(str(item)) for item in tool.get("categories", [])
-    ) or "-"
-    language = tool.get("language_label") or tool.get("language") or "-"
-    platforms = ", ".join(tool.get("platforms", [])) or "-"
-    status = "not installed"
-    if record:
-        status = "installed (managed)"
-    elif apt.get("status") == "installed":
-        status = "installed (system)"
-    lines = [
-        tr("Name: {name}", name=name),
-        tr("Language: {language}", language=language),
-    ]
+    status = hub_app_status(app, {app["id"]: record} if record else {}, installed)
+    lines: list[str] = []
+    if app.get("summary"):
+        lines.extend(textwrap.wrap(str(app["summary"]), max(20, width - 1)))
+        lines.append("")
+    lines.append(tr("Package: {package}", package=app.get("package", "-")))
+    lines.append(
+        tr(
+            "Kind: {kind}",
+            kind=tr("Debian package")
+            if app.get("kind") == "apt"
+            else tr("Bundled .deb"),
+        )
+    )
+    version = (
+        installed.get(str(app.get("package", "")), "")
+        or (record or {}).get("version")
+        or str(app.get("version", ""))
+    )
+    if version:
+        lines.append(tr("Version: {version}", version=version))
+    status_label = {
+        "managed": tr("installed (managed)"),
+        "system": tr("installed (system)"),
+        "available": tr("available"),
+    }[status]
+    lines.append(tr("Status: {status}", status=status_label))
+    categories = ", ".join(str(item) for item in app.get("categories") or []) or "-"
     lines.extend(
         textwrap.wrap(
             tr("Categories: {categories}", categories=categories),
             max(20, width - 1),
         )
     )
-    lines.extend(
-        textwrap.wrap(
-            tr("Platforms: {platforms}", platforms=platforms),
-            max(20, width - 1),
-        )
-    )
-    lines.append(tr("Status: {status}", status=tr(status)))
-    if gui_signals is None:
-        gui_signals = trove_gui_signals(tool, apt)
-    if gui_signals:
+    if app.get("license"):
+        lines.append(tr("License: {license}", license=app["license"]))
+    if app.get("homepage"):
         lines.extend(
             textwrap.wrap(
-                tr("Warning: this may be a desktop app, not a CLI/TUI app."),
+                tr("Homepage: {url}", url=app["homepage"]),
                 max(20, width - 1),
+                break_long_words=True,
             )
         )
-        for signal in gui_signals:
-            lines.extend(
-                textwrap.wrap(
-                    tr("  - {signal}", signal=signal),
-                    max(20, width - 1),
-                )
-            )
-    if tool.get("license"):
-        lines.append(tr("License: {license}", license=tool["license"]))
-    if tool.get("stars"):
-        lines.append(tr("Stars: {stars}", stars=f"{int(tool['stars']):,}"))
-    if tool.get("release"):
-        lines.append(tr("Latest release: {release}", release=tool["release"]))
-    if apt.get("package"):
-        version = f" {apt['version']}" if apt.get("version") else ""
-        lines.append(
-            tr(
-                "Apt package: {package}",
-                package=f"{apt['package']}{version}",
+    if app.get("source"):
+        lines.extend(
+            textwrap.wrap(
+                tr("Source: {url}", url=app["source"]),
+                max(20, width - 1),
+                break_long_words=True,
             )
         )
-    else:
-        lines.append("Apt package: not available")
-    if apt.get("needs_update") == "1":
-        lines.append("Package lists: update before install")
+    lines.append("")
     if record:
         lines.append(
             tr(
                 "Remove: {command}",
                 command=record.get("uninstall_command")
-                or "apt-get purge " + record.get("package", ""),
+                or f"apt-get purge {app['package']}",
             )
         )
-    elif apt.get("status") == "available":
-        command = catalog_trove_apt(tool).get("command") or (
-            f"apt install {apt.get('package', '')}"
-        )
-        lines.append(tr("Install: {command}", command=command))
-    elif apt.get("status") == "installed":
-        lines.append("Installed outside the manager; not tracked here.")
+        lines.append(tr("Press d to remove this app."))
+    elif status == "system":
+        lines.append(tr("Installed outside the manager; not tracked here."))
+    elif app.get("kind") == "deb":
+        lines.append(tr("Install: download the verified .deb and install it."))
+    else:
+        lines.append(tr("Install: apt install {package}", package=app["package"]))
     lines.append("")
-    commands = trove_install_commands(tool)
-    if apt.get("status") == "missing":
-        lines.append("Not available in apt; install manually:")
-        if commands:
-            for manager, command in commands:
-                lines.extend(
-                    textwrap.wrap(
-                        f"  {manager}: {command}",
-                        max(20, width - 1),
-                        break_long_words=True,
-                    )
-                )
-        else:
-            lines.append("  No install command was published.")
-    lines.append("")
-    if tool.get("summary"):
-        lines.extend(textwrap.wrap(str(tool["summary"]), max(20, width - 1)))
-        lines.append("")
-    description = str(tool.get("description", ""))
-    if description:
-        for paragraph in description.split("\n\n"):
-            lines.extend(
-                textwrap.wrap(
-                    " ".join(paragraph.split()),
-                    max(20, width - 1),
-                    break_long_words=True,
-                )
-            )
-            lines.append("")
-    if tool.get("url"):
-        lines.append(tr("Catalog: {url}", url=tool["url"]))
-    if tool.get("website"):
-        lines.append(tr("Website: {url}", url=tool["website"]))
+    lines.append(tr("Press i to install, e to run, q to close."))
     return lines
 
 
-def trove_install_tool(
-    screen, tool: dict[str, Any], apt_names: set[str] | None = None
-) -> str | None:
-    if apt_names is None:
-        apt_names = trove_apt_names()
-    apt = resolve_trove_apt(tool, apt_names)
-    name = tool.get("name", tool.get("slug", "?"))
-    if apt["status"] == "missing":
+def fetch_hub_deb(app: dict[str, Any]) -> tuple[str, str]:
+    """Download and verify a pinned deb. Returns (path, error)."""
+    deb = app.get("deb")
+    if not isinstance(deb, dict):
+        return "", "No deb metadata"
+    url = str(deb.get("url", "")).strip()
+    sha256 = str(deb.get("sha256", "")).strip().lower()
+    version = str(app.get("version", "")).strip()
+    app_id = str(app.get("id", "")).strip()
+    if not url.startswith("https://") or len(sha256) != 64:
+        return "", "Invalid deb metadata"
+    if not APT_NAME_RE.fullmatch(app_id) or not HUB_VERSION_RE.fullmatch(version):
+        return "", "Invalid deb name"
+    directory = hub_deb_dir()
+    path = os.path.join(directory, f"{app_id}-{version}.deb")
+    try:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+    except OSError:
+        return "", "Cannot create the download directory"
+    if os.path.isfile(path):
+        if file_sha256(path) == sha256:
+            return path, ""
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "cpz-settings/1"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            raw = response.read(HUB_DEB_MAX_BYTES + 1)
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        return "", error_line(str(error)) or "download failed"
+    if len(raw) > HUB_DEB_MAX_BYTES:
+        return "", "deb is too large"
+    if hashlib.sha256(raw).hexdigest() != sha256:
+        return "", "checksum mismatch"
+    try:
+        temp = path + ".tmp"
+        with open(temp, "wb") as handle:
+            handle.write(raw)
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+    except OSError as error:
+        return "", error_line(str(error)) or "cannot save the deb"
+    return path, ""
+
+
+def file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
+def hub_prepare_apt(screen) -> str:
+    if apt_lists_present():
+        return ""
+    draw_loading(screen, "Updating apt lists...")
+    rc = run_privileged(
+        screen,
+        ["env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "update"],
+    )
+    if rc != 0:
+        return "apt update failed"
+    return ""
+
+
+def hub_install_tool(screen, app: dict[str, Any]) -> str | None:
+    installed = dpkg_installed()
+    managed = read_hub_apps()
+    status = hub_app_status(app, managed, installed)
+    name = str(app.get("name", app.get("id", "?")))
+    if status == "managed":
+        return tr("{name} is already installed", name=name)
+    if status == "system":
         return tr(
-            "{name} is not in apt; press Enter for instructions",
+            "{name} is already installed outside the manager",
             name=name,
         )
-    if apt["status"] == "installed":
-        return tr("{name} is already installed", name=name)
-    package = apt["package"]
-    question = tr("Install {name}?", name=name)
-    detail_lines = []
-    if package != name:
-        detail_lines.append(tr("apt package: {package}", package=package))
-    gui_signals = trove_gui_signals(tool, apt)
-    if gui_signals:
-        detail_lines.append(
-            tr("Warning: this may be a desktop app, not a CLI/TUI app.")
-        )
-        detail_lines.extend(f"  - {signal}" for signal in gui_signals)
-    detail = "\n".join(detail_lines)
-    if not confirm(screen, question, title="Install App", detail=detail):
+    package = str(app["package"])
+    if package in PKG_CORE:
+        return tr("{name} is a system package", name=name)
+    detail = tr("apt package: {package}", package=package)
+    if app.get("kind") == "deb":
+        detail = tr("Verified .deb package: {package}", package=package)
+    if not confirm(
+        screen,
+        tr("Install {name}?", name=name),
+        title="Install App",
+        detail=detail,
+    ):
         return None
-    if apt.get("needs_update") == "1":
-        draw_loading(screen, "Updating apt lists...")
-        rc = run_privileged(
-            screen,
-            [
-                "env",
-                "DEBIAN_FRONTEND=noninteractive",
-                "apt-get",
-                "update",
-            ],
-        )
-        if rc != 0:
-            return "apt update failed"
-        _TROVE_APT_METADATA.clear()
-        apt = resolve_trove_apt(tool, set())
-        if apt["status"] == "installed":
-            return tr("{name} is already installed", name=name)
-        if apt["status"] == "missing":
-            return tr("{name} is not in apt after update", name=name)
-        package = apt["package"]
-        updated_signals = trove_gui_signals(tool, apt)
-        if updated_signals and updated_signals != gui_signals:
-            detail = "\n".join(
-                [
-                    tr("Warning: this may be a desktop app, not a CLI/TUI app."),
-                    *(f"  - {signal}" for signal in updated_signals),
-                ]
-            )
-            if not confirm(
-                screen, question, title="Install App", detail=detail
-            ):
-                return None
-    rc = run_privileged(screen, list(TROVE_APT_INSTALL) + [package])
+    package_path = ""
+    if app.get("kind") == "deb":
+        draw_loading(screen, "Downloading app...")
+        package_path, error = fetch_hub_deb(app)
+        if error:
+            return tr("Download failed: {reason}", reason=error)
+    error = hub_prepare_apt(screen)
+    if error:
+        return error
+    command = list(HUB_APT_INSTALL) + [package_path or package]
+    rc = run_privileged(screen, command)
     if rc != 0:
         return "Install failed (try sudo apt update)"
-    apps = read_trove_apps()
-    version = apt_status(package).get("version", "")
-    apps[str(tool.get("slug", package))] = {
-        "slug": str(tool.get("slug", package)),
+    apps = read_hub_apps()
+    apps[str(app["id"])] = {
+        "slug": str(app["id"]),
         "name": name,
+        "kind": str(app.get("kind", "apt")),
         "package": package,
-        "version": version,
+        "version": dpkg_installed().get(package, app.get("version", "")),
         "installed_at": datetime.now().isoformat(timespec="seconds"),
-        "install_command": catalog_trove_apt(tool).get("command")
-        or f"apt install {package}",
+        "install_command": (
+            f"apt install ./{os.path.basename(package_path)}"
+            if package_path
+            else f"apt install {package}"
+        ),
         "uninstall_command": f"apt-get purge {package}",
     }
     try:
-        write_trove_apps(apps)
+        write_hub_apps(apps)
     except OSError:
         return tr("Installed {name} (manager state not saved)", name=name)
     return tr("Installed {name}", name=name)
 
 
-def trove_uninstall_tool(screen, record: dict[str, Any]) -> str | None:
+def hub_uninstall_tool(screen, record: dict[str, Any]) -> str | None:
     package = str(record.get("package", ""))
     name = str(record.get("name", package)) or package
     if package in PKG_CORE:
         return tr("{name} is a system package", name=name)
-    if apt_status(package)["status"] == "missing":
-        apps = read_trove_apps()
+    installed = dpkg_installed()
+    if package not in installed:
+        apps = read_hub_apps()
         apps.pop(str(record.get("slug", "")), None)
         try:
-            write_trove_apps(apps)
+            write_hub_apps(apps)
         except OSError:
             return "Cannot update manager state"
         return tr(
@@ -5132,6 +4589,13 @@ def trove_uninstall_tool(screen, record: dict[str, Any]) -> str | None:
         return "Cannot check what would be removed"
     if any(item in PKG_CORE for item in planned):
         return "Refused: would remove core packages"
+    other_packages = {
+        str(item.get("package", ""))
+        for slug, item in read_hub_apps().items()
+        if slug != record.get("slug")
+    }
+    if any(item in other_packages for item in planned if item != package):
+        return "Refused: would remove another managed app"
     extra = [item for item in planned if item != package]
     label = name if name == package else f"{name} ({package})"
     question = tr("Remove {label}?", label=label)
@@ -5145,34 +4609,20 @@ def trove_uninstall_tool(screen, record: dict[str, Any]) -> str | None:
         detail = tr("Also removes: {packages}", packages=", ".join(extra))
     if not confirm(screen, question, title="Remove App", detail=detail, danger=True):
         return None
-    rc = run_privileged(
-        screen,
-        ["env", "DEBIAN_FRONTEND=noninteractive", "APT_LISTCHANGES_FRONTEND=none", "apt-get", "purge", "-y", package],
-    )
+    rc = run_privileged(screen, list(HUB_APT_PURGE) + [package])
     if rc != 0:
         return "Removal failed (try sudo apt update)"
-    apps = read_trove_apps()
+    apps = read_hub_apps()
     apps.pop(str(record.get("slug", "")), None)
     try:
-        write_trove_apps(apps)
+        write_hub_apps(apps)
     except OSError:
         return tr("Removed {name} (manager state not saved)", name=name)
     return tr("Removed {name}", name=name)
 
 
-def find_trove_tool(slug: str) -> dict[str, Any] | None:
-    slug = slug.strip()
-    if not slug:
-        return None
-    index = load_trove_index()
-    for tool in index.get("tools", []):
-        if str(tool.get("slug", "")).strip() == slug:
-            return tool
-    record = read_trove_apps().get(slug)
-    if record:
-        # Apps installed as ordinary apt packages have no catalog entry.
-        return trove_tool_from_record(record)
-    return None
+def find_hub_app(app_id: str) -> dict[str, Any] | None:
+    return hub_app_by_id(app_id.strip())
 
 
 def pause_for_close() -> None:
@@ -5187,87 +4637,63 @@ def pause_for_close() -> None:
 
 def cli_install_tool(slug: str) -> int:
     """Install from CPZ Search without the curses Applications screen."""
-    tool = find_trove_tool(slug)
-    if tool is None:
+    app = find_hub_app(slug)
+    if app is None:
         print(f"cpz-settings: unknown app '{slug}'", file=sys.stderr)
         return 2
-    name = str(tool.get("name", "")).strip() or slug
-    apt_names = trove_apt_names()
-    apt = resolve_trove_apt(tool, apt_names)
-    if apt["status"] == "installed":
+    name = str(app.get("name", "")).strip() or slug
+    installed = dpkg_installed()
+    managed = read_hub_apps()
+    status = hub_app_status(app, managed, installed)
+    if status == "managed":
         print(tr("{name} is already installed", name=name))
         return 0
-    if apt["status"] == "missing":
-        print(tr("{name} is not available in apt", name=name))
-        commands = trove_install_commands(tool)
-        if commands:
-            print(tr("Install it manually:"))
-            for manager, command in commands:
-                print(f"  {manager}: {command}")
+    if status == "system":
+        print(tr("{name} is already installed outside the manager", name=name))
+        return 0
+    package = str(app["package"])
+    if package in PKG_CORE:
+        print(tr("{name} is a system package", name=name), file=sys.stderr)
         return 1
-
-    package = apt["package"]
-    gui_signals = trove_gui_signals(tool, apt)
-    if gui_signals:
-        print(tr("Warning: this may be a desktop app, not a CLI/TUI app."))
-        for signal in gui_signals:
-            print(f"  - {signal}")
-    print(tr("Installing {name} ({package})...", name=name, package=package))
-    if apt.get("needs_update") == "1":
+    package_path = ""
+    if app.get("kind") == "deb":
+        print(tr("Downloading {name}...", name=name))
+        package_path, error = fetch_hub_deb(app)
+        if error:
+            print(tr("Download failed: {reason}", reason=error), file=sys.stderr)
+            return 1
+    if not apt_lists_present():
         print("Updating apt lists...")
         rc = subprocess.call(
-            [
-                "sudo",
-                "env",
-                "DEBIAN_FRONTEND=noninteractive",
-                "apt-get",
-                "update",
-            ]
+            ["sudo", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "update"]
         )
         if rc != 0:
             print("apt update failed", file=sys.stderr)
             return 1
-        _TROVE_APT_METADATA.clear()
-        apt = resolve_trove_apt(tool, set())
-        if apt["status"] == "installed":
-            print(tr("{name} is already installed", name=name))
-            return 0
-        if apt["status"] == "missing":
-            print(
-                tr(
-                    "{name} is not available in apt after update",
-                    name=name,
-                ),
-                file=sys.stderr,
-            )
-            return 1
-        package = apt["package"]
-        updated_signals = trove_gui_signals(tool, apt)
-        if updated_signals and updated_signals != gui_signals:
-            print(
-                tr("Warning: this may be a desktop app, not a CLI/TUI app.")
-            )
-            for signal in updated_signals:
-                print(f"  - {signal}")
-
-    rc = subprocess.call(["sudo", *TROVE_APT_INSTALL, package])
+    print(tr("Installing {name} ({package})...", name=name, package=package))
+    rc = subprocess.call(
+        ["sudo", *HUB_APT_INSTALL, package_path or package]
+    )
     if rc != 0:
         print("Install failed (try sudo apt update)", file=sys.stderr)
         return 1
-
-    apps = read_trove_apps()
+    apps = read_hub_apps()
     apps[slug] = {
         "slug": slug,
         "name": name,
+        "kind": str(app.get("kind", "apt")),
         "package": package,
-        "version": apt_status(package).get("version", ""),
+        "version": dpkg_installed().get(package, app.get("version", "")),
         "installed_at": datetime.now().isoformat(timespec="seconds"),
-        "install_command": catalog_trove_apt(tool).get("command")
-        or f"apt install {package}",
+        "install_command": (
+            f"apt install ./{os.path.basename(package_path)}"
+            if package_path
+            else f"apt install {package}"
+        ),
         "uninstall_command": f"apt-get purge {package}",
     }
     try:
-        write_trove_apps(apps)
+        write_hub_apps(apps)
     except OSError:
         print(tr("Installed {name} (manager state not saved)", name=name))
         return 0
@@ -5303,18 +4729,16 @@ def draw_loading(screen, text: str) -> None:
     screen.refresh()
 
 
-def draw_trove_list(
+def draw_hub_list(
     screen,
     mode: str,
     tools: list[dict[str, Any]],
     selected: int,
-    category_label: str,
-    language_label: str,
     query: str,
     search_active: bool,
     managed: dict[str, dict[str, Any]],
+    installed: dict[str, str],
     index_count: int,
-    apt_only: bool = False,
 ) -> None:
     screen.erase()
     height, width = screen.getmaxyx()
@@ -5322,9 +4746,7 @@ def draw_trove_list(
     cw = content_width(width)
     title = tr("Applications")
     if index_count:
-        title += " · " + tr("{count} of {total}", count=len(tools), total=index_count)
-    else:
-        title += " · " + tr("catalog not downloaded")
+        title += " · " + tr("{count} apps", count=index_count)
     put(screen, 0, left, title, curses.A_BOLD)
 
     tab_x = left
@@ -5332,26 +4754,19 @@ def draw_trove_list(
         (" " + tr("Browse") + " ", "browse"),
         (" " + tr("Installed") + " ", "installed"),
     ):
-        piece = text
         attr = curses.A_REVERSE if mode == tab_mode else curses.A_DIM
-        put(screen, 1, tab_x, piece, attr)
-        tab_x += len(piece)
+        put(screen, 1, tab_x, text, attr)
+        tab_x += len(text)
     put(screen, 1, tab_x + 1, tr("Tab"), curses.A_DIM)
 
     if search_active:
         put(screen, 2, left, tr("Search: {query}", query=query) + "_")
     elif mode == "browse":
-        filters = [
-            tr("Category: {label}", label=tr(category_label)),
-            tr("Language: {label}", label=tr(language_label)),
-        ]
-        if apt_only:
-            filters.insert(0, tr("Apt only"))
         put(
             screen,
             2,
             left,
-            text_truncate(" " + " · ".join(filters), cw),
+            tr("Catalog: {count} apps", count=index_count),
         )
 
     top = 3
@@ -5365,11 +4780,9 @@ def draw_trove_list(
     name_width = min(26, max(12, cw // 3))
     for offset, tool in enumerate(tools[first : first + visible]):
         row = first + offset
-        marker = "*" if tool.get("slug") in managed else " "
-        name = text_truncate(
-            str(tool.get("name", tool.get("slug", "?"))),
-            name_width,
-        )
+        status = hub_app_status(tool, managed, installed)
+        marker = "*" if status == "managed" else "+" if status == "system" else " "
+        name = text_truncate(str(tool.get("name", tool.get("id", "?"))), name_width)
         if mode == "installed":
             record = tool.get("_record") or {}
             package = str(record.get("package", ""))
@@ -5392,11 +4805,9 @@ def draw_trove_list(
         )
     if not tools:
         if not index_count:
-            message = "No catalog. Press u to download it."
+            message = "No app catalog. Press u to update."
         elif mode == "installed":
             message = "Nothing installed yet. Tab opens Browse."
-        elif apt_only:
-            message = "No apt tools match. Press a for all."
         else:
             message = "No matches. Esc clears the filter."
         put(screen, top, left + 1, tr(message))
@@ -5412,41 +4823,31 @@ def draw_trove_list(
 
     if search_active:
         hint = tr("Type to filter  Enter keep  Esc clear")
-    elif not index_count:
-        hint = tr("u download catalog  q back")
     elif mode == "browse":
-        hint = tr("F/X move  / search  Enter info  i install  q back")
+        hint = tr("F/X move  / search  Enter info  i install  u update  q back")
     else:
-        hint = tr("F/X move  / search  Enter info  e run  q back")
+        hint = tr("F/X move  / search  Enter info  e run  d remove  q back")
     put(screen, height - 1, left, hint, hint_attr())
     screen.refresh()
 
 
-def trove_details_screen(
+def hub_details_screen(
     screen,
-    tool: dict[str, Any],
-    record: dict[str, Any] | None,
-    apt_names: set[str] | None = None,
+    app: dict[str, Any],
+    record: dict[str, Any] | None = None,
 ) -> None:
     offset = 0
-    if apt_names is None:
-        apt_names = trove_apt_names()
-    gui_signals = trove_gui_signals(
-        tool, resolve_trove_apt(tool, apt_names)
-    )
     while True:
-        apt = resolve_trove_apt(tool, apt_names)
-        managed = read_trove_apps()
-        current = managed.get(str(tool.get("slug", "")))
-        record = current
+        installed = dpkg_installed()
+        managed = read_hub_apps()
+        record = managed.get(str(app.get("id", "")))
         _height, width = screen.getmaxyx()
         left = SCREEN_PAD
         cw = content_width(width)
-        lines = trove_details_lines(tool, apt, record, cw, gui_signals)
+        lines = hub_details_lines(app, record, installed, cw)
         screen.erase()
         height, _width = screen.getmaxyx()
-        title = str(tool.get("name", tool.get("slug", "?")))
-        put(screen, 0, left, title, curses.A_BOLD)
+        put(screen, 0, left, str(app.get("name", app.get("id", "?"))), curses.A_BOLD)
         visible = max(1, height - 4)
         offset = max(0, min(offset, max(0, len(lines) - visible)))
         for index in range(visible):
@@ -5468,10 +4869,7 @@ def trove_details_screen(
                 continue
             delta = mouse_wheel_delta(event[2])
             if delta:
-                offset = max(
-                    0,
-                    min(max(0, len(lines) - visible), offset + delta),
-                )
+                offset = max(0, min(max(0, len(lines) - visible), offset + delta))
             continue
         if key in (ord("q"), ord("Q"), 27):
             return
@@ -5488,31 +4886,14 @@ def trove_details_screen(
             offset = min(max(0, len(lines) - visible), offset + visible)
             continue
         if key in (ord("i"), ord("I")):
-            if record:
-                notify(
-                    screen,
-                    "Already installed through the manager",
-                    title="Applications",
-                    error=False,
-                )
-            elif apt["status"] == "missing":
-                notify(
-                    screen,
-                    "No apt package. Use the install command above.",
-                    title="Applications",
-                )
-            else:
-                notify(
-                    screen,
-                    trove_install_tool(screen, tool, apt_names),
-                    title="Applications",
-                )
-                gui_signals = trove_gui_signals(
-                    tool, resolve_trove_apt(tool, apt_names)
-                )
+            notify(
+                screen,
+                hub_install_tool(screen, app),
+                title="Applications",
+            )
             continue
         if key in (ord("e"), ord("E")):
-            error = run_trove_app(screen, tool, record)
+            error = run_hub_app(screen, app, record)
             if error:
                 notify(screen, error, title="Applications", error=False)
             continue
@@ -5520,7 +4901,7 @@ def trove_details_screen(
             if record:
                 notify(
                     screen,
-                    trove_uninstall_tool(screen, record),
+                    hub_uninstall_tool(screen, record),
                     title="Applications",
                 )
             else:
@@ -5534,7 +4915,6 @@ def trove_details_screen(
 
 
 def executable_names() -> set[str]:
-    """Return executable names in PATH for the Trove launch hints."""
     names = set()
     for directory in os.environ.get("PATH", "").split(os.pathsep):
         if not directory:
@@ -5555,30 +4935,23 @@ def executable_names() -> set[str]:
     return names
 
 
-def trove_command(tool: dict[str, Any], available: set[str]) -> str:
-    """Pick the command that Terminal Trove's tool most likely installs."""
-    name = str(tool.get("name", "")).strip().lower()
-    candidates = [
-        str(tool.get("slug", "")).strip(),
-        name.replace(" ", "-"),
-        name.replace(" ", ""),
-        catalog_trove_apt(tool).get("package", ""),
-    ]
-    for candidate in candidates:
-        if candidate and candidate in available:
-            return candidate
-    return ""
-
-
 def package_executables(package: str) -> list[str]:
-    """Executable names that dpkg says an installed package provides."""
     if not package or not APT_NAME_RE.fullmatch(package):
         return []
-    rc, out, _ = nm_run(["dpkg", "-L", package], timeout=10)
-    if rc != 0:
+    try:
+        result = subprocess.run(
+            ["dpkg", "-L", package],
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
         return []
     names = []
-    for path in out.splitlines():
+    for path in result.stdout.splitlines():
         path = path.strip()
         if not path or os.path.dirname(path) not in (
             "/usr/local/bin",
@@ -5597,29 +4970,29 @@ def package_executables(package: str) -> list[str]:
     return sorted(set(names))
 
 
-def managed_trove_command(
-    record: dict[str, Any], available: set[str]
+def hub_command(
+    app: dict[str, Any],
+    available: set[str],
+    record: dict[str, Any] | None = None,
+    installed_packages: dict[str, str] | None = None,
 ) -> str:
-    """Find the command of an app installed through the manager.
-
-    Most packages install a binary named like the package, but a few (for
-    example ``github-cli``) use a different name. dpkg -L covers those so an
-    installed app can still be run from Search.
-    """
-    name = str(record.get("name", "")).strip().lower()
-    candidates = (
-        str(record.get("slug", "")).strip(),
-        str(record.get("package", "")).strip(),
-        name.replace(" ", "-"),
-        name.replace(" ", ""),
-    )
+    candidates = [
+        str(app.get("command", "")).strip(),
+        str(app.get("id", "")).strip(),
+        str(app.get("name", "")).strip().lower().replace(" ", "-"),
+        str(app.get("name", "")).strip().lower().replace(" ", ""),
+        str(app.get("package", "")).strip(),
+        str((record or {}).get("slug", "")).strip(),
+        str((record or {}).get("package", "")).strip(),
+    ]
     for candidate in candidates:
         if candidate and candidate in available:
             return candidate
+    package = str(app.get("package", "")).strip()
+    if installed_packages is not None and package not in installed_packages:
+        return ""
     installed_names = [
-        name
-        for name in package_executables(str(record.get("package", "")).strip())
-        if name in available
+        name for name in package_executables(package) if name in available
     ]
     for candidate in candidates:
         if candidate and candidate in installed_names:
@@ -5635,227 +5008,143 @@ def managed_trove_command(
 
 def list_tools_payload() -> dict[str, Any]:
     """Machine-readable app list used by CPZ Search (Alt+O, apps provider)."""
-    index = load_trove_index()
-    managed = read_trove_apps()
+    index = load_hub_index()
+    managed = read_hub_apps()
+    installed = dpkg_installed()
     available = executable_names()
-    apt_names = trove_apt_names()
     tools = []
-    for tool in index.get("tools", []):
-        slug = str(tool.get("slug", "")).strip()
+    seen = set()
+    for app in index.get("apps", []):
+        slug = str(app.get("id", "")).strip()
         if not slug:
             continue
+        seen.add(slug)
         record = managed.get(slug)
-        command = trove_command(tool, available)
-        if not command and record:
-            command = managed_trove_command(record, available)
-        apt = catalog_trove_apt(tool)
+        command = hub_command(app, available, record, installed)
+        package = str(app.get("package", "")).strip()
         tools.append(
             {
                 "slug": slug,
-                "name": str(tool.get("name", "")).strip() or slug,
-                "summary": str(tool.get("summary", "")).strip(),
-                "categories": list(tool.get("categories") or []),
+                "name": str(app.get("name", "")).strip() or slug,
+                "summary": str(app.get("summary", "")).strip(),
+                "categories": list(app.get("categories") or []),
+                "kind": str(app.get("kind", "apt")),
                 "command": command,
-                "installed": bool(command or record),
+                "installed": bool(record or package in installed),
                 "managed": record is not None,
-                "apt": apt.get("package", ""),
-                "available": bool(
-                    record or trove_tool_apt_supported(tool, apt_names)
-                ),
+                "package": package,
+                "version": installed.get(package, "")
+                or (record or {}).get("version")
+                or str(app.get("version", "")),
+                "available": True,
             }
         )
-    seen = {str(tool.get("slug", "")) for tool in tools}
     for slug, record in managed.items():
         if slug in seen:
             continue
+        package = str(record.get("package", "")).strip()
         tools.append(
             {
                 "slug": slug,
                 "name": str(record.get("name", "")).strip() or slug,
-                "summary": tr("Managed apt package"),
+                "summary": tr("Managed package"),
                 "categories": [],
-                "command": managed_trove_command(record, available),
+                "kind": str(record.get("kind", "apt")),
+                "command": hub_command(
+                    {
+                        "id": slug,
+                        "name": str(record.get("name", "")),
+                        "package": package,
+                    },
+                    available,
+                    record,
+                    installed,
+                ),
                 "installed": True,
                 "managed": True,
-                "apt": str(record.get("package", "")).strip(),
+                "package": package,
+                "version": str(record.get("version", "")).strip()
+                or installed.get(package, ""),
                 "available": True,
             }
         )
     return {"schema": 1, "tools": tools}
 
 
-def run_trove_app(
+def run_hub_app(
     screen,
-    tool: dict[str, Any],
+    app: dict[str, Any],
     record: dict[str, Any] | None = None,
 ) -> str | None:
-    """Run an installed catalog app and return an error message, if any."""
     available = executable_names()
-    command = trove_command(tool, available)
-    if not command and record:
-        command = managed_trove_command(record, available)
-    if not command:
-        package = str(
-            tool.get("_package") or catalog_trove_apt(tool).get("package", "")
-        ).strip()
-        command = next(
-            (
-                name
-                for name in package_executables(package)
-                if name in available
-            ),
-            "",
-        )
+    command = hub_command(app, available, record, dpkg_installed())
     if not command:
         return "No runnable command found"
-    # The tmux server predates cage, so it does not hold WAYLAND_DISPLAY or
-    # XAUTHORITY. cpz-run applies the environment published by foot before
-    # starting the app.
     runner = "/usr/local/bin/cpz-run"
     command_line = [runner, command] if os.access(runner, os.X_OK) else [command]
     run_interactive(screen, command_line)
     return None
 
 
-def browse_trove_tools(
-    tools: list[dict[str, Any]],
-    apt_names: set[str],
-    apt_candidates: list[str],
-    query: str,
-    category: str,
-    language: str,
-    apt_only: bool,
-    apt_search_cache: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]],
-) -> list[dict[str, Any]]:
-    """Return the Browse list for one query.
-
-    A plain listing stays on the catalog index (apt-filtered by default). Once
-    the user searches, catalog matches stay first and ordinary apt packages are
-    appended after them.
-    """
-    shown = filter_trove_tools(
-        tools,
-        query,
-        category,
-        language,
-        apt_names if apt_only else None,
-    )
-    if len(query.strip()) < 2:
-        return shown
-    # Skip packages already represented by a visible catalog row, so one app
-    # cannot appear twice. The index rows always keep their position at the top.
-    skip_packages = set()
-    for tool in shown:
-        skip_packages.add(str(tool.get("slug", "")).strip().lower())
-        skip_packages.add(str(tool.get("name", "")).strip().lower())
-        skip_packages.add(
-            catalog_trove_apt(tool).get("package", "").lower()
-        )
-    skip_packages.discard("")
-    cache_key = (query, tuple(sorted(skip_packages)))
-    if cache_key not in apt_search_cache:
-        apt_search_cache[cache_key] = apt_search_tools(
-            query,
-            apt_names,
-            skip_packages,
-            candidates=apt_candidates,
-        )
-    return shown + apt_search_cache[cache_key]
-
-
-def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
+def hub_apps_screen(screen, focus_slug: str | None = None) -> None:
     data = load_settings()
     apply_language(data["language"])
     enable_mouse()
-    draw_loading(screen, "Loading app catalog...")
-    index = load_trove_index()
-    tools = index.get("tools", [])
-    managed = read_trove_apps()
-    categories = trove_category_options(index)
-    languages = trove_language_options(index)
-    draw_loading(screen, "Checking installable apps...")
-    apt_names = trove_apt_names()
-    apt_available = bool(apt_names)
-    apt_candidates = [
-        name for name in apt_names if apt_looks_like_app(name)
-    ]
-    apt_only = apt_available and not focus_slug
+    refresh_proc = start_hub_refresh()
+    index = load_hub_index()
+    apps = index.get("apps", [])
+    managed = read_hub_apps()
+    installed = dpkg_installed()
     mode = "browse"
-    category = ""
-    language = ""
     query = focus_slug or ""
     search_active = False
     row = {"browse": 0, "installed": 0}
-    apt_search_cache: dict[tuple[str, tuple[str, ...]], list[dict[str, Any]]] = {}
-    if not tools and not (focus_slug and focus_slug in managed):
+    if not apps and not managed:
         notify(
             screen,
-            "Catalog not downloaded. Press u to update.",
+            "No app catalog in this image. Press u to update.",
             title="Applications",
             wait=True,
-        )
-    elif not apt_available:
-        notify(
-            screen,
-            "Package list unavailable; showing all apps",
-            title="Applications",
-            wait=True,
-            error=False,
         )
     if focus_slug:
-        # CPZ Search's "Enter info" and Ctrl+O name one app, so show that app's
-        # details straight away. Landing on a filtered catalog list made it look
-        # as if the app page had not opened at all.
-        focused = next(
-            (
-                tool
-                for tool in tools
-                if str(tool.get("slug", "")).strip() == focus_slug
-            ),
-            None,
-        )
-        if focused is None and focus_slug in managed:
-            focused = trove_tool_from_record(managed[focus_slug])
+        focused = hub_app_by_id(focus_slug, apps)
         if focused is not None:
-            trove_details_screen(
-                screen, focused, managed.get(focus_slug), apt_names or None
-            )
+            hub_details_screen(screen, focused, managed.get(focus_slug))
             return
 
     while True:
+        if refresh_proc is not None and refresh_proc.poll() is not None:
+            if refresh_proc.returncode == 0:
+                updated = load_hub_index()
+                if updated.get("generated_at") != index.get("generated_at"):
+                    index = updated
+                    apps = index.get("apps", [])
+            refresh_proc = None
+            managed = read_hub_apps()
+            installed = dpkg_installed()
+
         if mode == "browse":
-            shown = browse_trove_tools(
-                tools,
-                apt_names,
-                apt_candidates,
-                query,
-                category,
-                language,
-                apt_only,
-                apt_search_cache,
-            )
+            shown = filter_hub_apps(apps, query)
         else:
-            shown = trove_installed_tools(index, managed, query)
+            shown = hub_installed_tools(index, managed, installed, query)
         position = min(row[mode], max(0, len(shown) - 1))
         if focus_slug:
             for offset, tool in enumerate(shown):
-                if str(tool.get("slug", "")) == focus_slug:
+                if str(tool.get("id", "")) == focus_slug:
                     position = offset
                     break
             focus_slug = None
         row[mode] = position
-        draw_trove_list(
+        draw_hub_list(
             screen,
             mode,
             shown,
             position,
-            trove_option_label(categories, category, "All"),
-            trove_option_label(languages, language, "All"),
             query,
             search_active,
             managed,
-            len(tools),
-            apt_only=apt_only,
+            installed,
+            len(apps),
         )
         key = screen.getch()
         if key == curses.KEY_MOUSE:
@@ -5894,27 +5183,6 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
                 row[mode] = (position + 1) % len(shown)
                 continue
             continue
-        if key in (ord("a"), ord("A")) and mode == "browse":
-            if not apt_available:
-                notify(
-                    screen,
-                    "Package list unavailable",
-                    title="Applications",
-                    wait=True,
-                    error=False,
-                )
-                continue
-            apt_only = not apt_only
-            row["browse"] = 0
-            notify(
-                screen,
-                "Showing apt packages only"
-                if apt_only
-                else "Showing all catalog tools",
-                title="Applications",
-                error=False,
-            )
-            continue
         if key in (ord("q"), ord("Q"), 27):
             if query:
                 query = ""
@@ -5924,52 +5192,15 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
         if key in (ord("/"), ord("s"), ord("S")):
             search_active = True
             continue
-
         if key in (ord("u"), ord("U")):
-            draw_loading(screen, "Updating catalog...")
-            ok, message = download_trove_index()
-            notify(screen, message, title="Applications", error=not ok)
-            if ok:
-                index = load_trove_index()
-                tools = index.get("tools", [])
-                categories = trove_category_options(index)
-                languages = trove_language_options(index)
-                draw_loading(screen, "Checking installable apps...")
-                apt_names = trove_apt_names()
-                apt_available = bool(apt_names)
-                apt_candidates = [
-                    name for name in apt_names if apt_looks_like_app(name)
-                ]
-                if not apt_available:
-                    apt_only = False
-                row = {"browse": 0, "installed": 0}
-                apt_search_cache.clear()
-            continue
-        if key in (ord("t"), ord("T")) and mode == "browse":
-            value = trove_filter_popup(screen, "Category", categories, category)
-            if value is not None:
-                category = value
-                row["browse"] = 0
-            continue
-        if key in (ord("g"), ord("G")) and mode == "browse":
-            value = trove_filter_popup(screen, "Language", languages, language)
-            if value is not None:
-                language = value
-                row["browse"] = 0
-            continue
-        if key in NAV_LEFT and mode == "browse":
-            if categories:
-                slugs = [item[0] for item in categories]
-                current = slugs.index(category) if category in slugs else 0
-                category = slugs[(current - 1) % len(slugs)]
-                row["browse"] = 0
-            continue
-        if key in NAV_RIGHT and mode == "browse":
-            if categories:
-                slugs = [item[0] for item in categories]
-                current = slugs.index(category) if category in slugs else 0
-                category = slugs[(current + 1) % len(slugs)]
-                row["browse"] = 0
+            if refresh_proc is None or refresh_proc.poll() is not None:
+                refresh_proc = start_hub_refresh(force=True)
+            notify(
+                screen,
+                "Updating app catalog in the background",
+                title="Applications",
+                error=False,
+            )
             continue
         if key in NAV_UP:
             if shown:
@@ -5995,45 +5226,49 @@ def trove_apps_screen(screen, focus_slug: str | None = None) -> None:
             continue
         if key in (10, 13, ord(" ")) and shown:
             tool = shown[position]
-            record = tool.get("_record") if mode == "installed" else managed.get(
-                str(tool.get("slug", ""))
+            hub_details_screen(
+                screen,
+                tool,
+                tool.get("_record")
+                or managed.get(str(tool.get("id", ""))),
             )
-            trove_details_screen(screen, tool, record, apt_names)
-            managed = read_trove_apps()
+            managed = read_hub_apps()
+            installed = dpkg_installed()
             continue
         if key in (ord("i"), ord("I")) and mode == "browse" and shown:
             notify(
                 screen,
-                trove_install_tool(screen, shown[position], apt_names),
+                hub_install_tool(screen, shown[position]),
                 title="Applications",
             )
-            managed = read_trove_apps()
+            managed = read_hub_apps()
+            installed = dpkg_installed()
             continue
         if key in (ord("e"), ord("E")) and shown:
             tool = shown[position]
-            record = tool.get("_record") if mode == "installed" else managed.get(
-                str(tool.get("slug", ""))
-            )
-            error = run_trove_app(screen, tool, record)
+            record = tool.get("_record") or managed.get(str(tool.get("id", "")))
+            error = run_hub_app(screen, tool, record)
             if error:
                 notify(screen, error, title="Applications", error=False)
             continue
         if key in (ord("d"), ord("D")) and mode == "installed" and shown:
             record = shown[position].get("_record") or managed.get(
-                str(shown[position].get("slug", ""))
+                str(shown[position].get("id", ""))
             )
             if record:
                 notify(
                     screen,
-                    trove_uninstall_tool(screen, record),
+                    hub_uninstall_tool(screen, record),
                     title="Applications",
                 )
-                managed = read_trove_apps()
+                managed = read_hub_apps()
+                installed = dpkg_installed()
             continue
 
 
+
 def applications_action(screen, _data) -> None:
-    trove_apps_screen(screen)
+    hub_apps_screen(screen)
 
 
 def network_details_action(screen, _data) -> None:
@@ -6806,7 +6041,7 @@ def run(screen, start_page: str | None = None) -> None:
             elif request_kind == "tool":
                 # Applications is an action, not a page, so the catalog runs in
                 # place and the user returns to the page they came from.
-                trove_apps_screen(screen, value)
+                hub_apps_screen(screen, value)
                 data = load_settings()
                 dirty = True
         page_name, selected = stack[-1]
@@ -7049,6 +6284,10 @@ def main() -> int:
         for page, title in PAGE_TITLES.items():
             print(f"{page}\t{tr(title)}")
         return 0
+    if "--refresh-hub" in arguments:
+        ok, message = download_hub_index()
+        print(message)
+        return 0 if ok else 1
     if "--list-tools" in arguments:
         print(json.dumps(list_tools_payload(), ensure_ascii=False))
         return 0
@@ -7090,7 +6329,7 @@ def main() -> int:
         return 1
     try:
         if start_tool:
-            curses.wrapper(trove_apps_screen, start_tool)
+            curses.wrapper(hub_apps_screen, start_tool)
         else:
             curses.wrapper(run, start_page)
     except KeyboardInterrupt:

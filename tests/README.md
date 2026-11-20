@@ -27,7 +27,7 @@ pull request (`.github/workflows/ci.yml`).
   module and checks settings precedence, defaults/clamping, save/load
   round-trip, layout normalization, the date/time editor helpers, the
   internal submenu graph (`--check-pages`), menu label widths, long-list
-  filtering and the Terminal Trove catalog filters/apt parsing/manager state.
+  filtering and the CPZ Hub catalog loading, scoped manager state and install/remove policy.
 - `test_cpz_output.py` runs a copy of `cpz-cage-output` against a fake
   sysfs/settings tree and checks that `display=panel` is honoured both by the
   systemd unit, the generated cage environment and the panel backlight,
@@ -53,7 +53,7 @@ pull request (`.github/workflows/ci.yml`).
   checks the Terminus pixel size, background/foreground and 16-colour palette.
 - `test_cpz_search.py` checks the `cpz-search` providers (the short action
   home list, commands, actions, Settings, power actions, files, calculator,
-  Terminal Trove and tmux buffers), item format, file roots/pruning, safe
+  Hub apps and tmux buffers), item format, file roots/pruning, safe
   calculator, dispatch to the Settings tab and the `cpz-settings` entry points
   used by the CPZ Search popup (`--page`, `--tool`, `--list-pages`,
   `--list-tools`, `--install-tool`, request queue).

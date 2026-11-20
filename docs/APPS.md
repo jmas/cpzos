@@ -1,183 +1,127 @@
-# Applications and the Terminal Trove catalog
+# Applications and the CPZ Hub catalog
 
-Settings → Applications is a local catalog browser backed by
-[Terminal Trove](https://terminaltrove.com/). The catalog is not fetched from
-the live site while the TUI is open. Instead:
+Settings → Applications is a small, curated catalog of CLI/TUI applications
+that are expected to work on CPZ. An entry must be installable from the
+Debian suite used by the image or from a pinned arm64 `.deb`. The catalog lives
+in the separate
+[cpzos-hub](https://github.com/jmas/cpzos-hub) repository:
 
-1. The separate [terminal-trove-index](https://github.com/jmas/terminal-trove-index)
-   project crawls the A-Z list and each tool page.
-2. Its GitHub workflow commits `index/trove.json` and `index/trove.json.gz`.
-3. The image build downloads the gzip index to
-   `/usr/share/cpz/trove-index.json` and records the source URL in
-   `/etc/cpz/trove-index.url`.
-4. Applications reads the local snapshot. `u` downloads a newer snapshot to
-   `~/.cache/cpz/trove-index.json`; the user copy takes precedence.
+```text
+https://raw.githubusercontent.com/jmas/cpzos-hub/main/index/hub.json
+```
 
-`CPZ_TROVE_INDEX_URL` overrides the download source for a build. An empty value
-uses the hosted default. Pin a tag or commit in the URL if an image must be
-reproducible. If the default repository is not published yet, the build prints
-a warning and the image starts without a catalog; press `u` in Applications
-after pointing the runtime URL at a reachable copy.
+The image downloads `index/hub.json` during the build and stores it at
+`/usr/share/cpz/hub.json`. Opening Applications reads that local file
+immediately; the screen never waits for the network.
+
+A refresh runs in the background at most once a day and writes a newer snapshot
+to `~/.cache/cpz/hub.json`. The cache wins over the image copy when its
+`generated_at` is newer. Press `u` to request an update explicitly; it also runs
+in the background and the list reloads when it finishes.
+
+## Scope
+
+The hub only contains applications that CPZ can install and then remove
+cleanly. Every entry is one of two kinds:
+
+| Kind | Install | Remove |
+| --- | --- | --- |
+| `apt` | `apt-get install -y --no-install-recommends PACKAGE` | `apt-get purge -y PACKAGE` |
+| `deb` | download the pinned `.deb`, verify SHA-256, `apt-get install ./file.deb` | `apt-get purge -y PACKAGE` |
+
+`apt` entries reference the Debian suite used by the image. `deb` entries are
+arm64 packages hosted over HTTPS and pinned in the index. `dpkg` owns the file
+list in both cases, so removal does not need a custom uninstaller.
+
+The catalog is a closed scope. Applications does **not** search the apt package
+list and does not offer tools that are missing from the hub index. An
+application installed outside the manager is shown as `installed (system)` and
+is not offered for removal. It is also not tracked by CPZ Search.
 
 ## Keys
 
 | Key | Action |
 | --- | --- |
 | `Up` / `Down` (or `k` / `j`, `f` / `x`) | move |
-| `/` or `s` | search the current list |
-| `t` | category picker |
-| `g` | language picker |
-| `Left` / `Right` | cycle categories |
-| `a` | toggle apt-only / full catalog |
-| `Enter` | details / install instructions |
-| `i` | install the selected apt package |
-| `e` | run an installed app |
+| `/` or `s` | search the loaded hub index |
 | `Tab` | switch Browse / Installed |
+| `Enter` | details |
+| `i` | install the selected app |
+| `e` | run an installed app |
 | `d` (Installed) | uninstall a managed app |
-| `u` | download the newest catalog |
-| `r` | reload the local catalog and manager state |
+| `u` | refresh the index in the background |
 | `q` / `Esc` | back |
 
 ## Install policy
 
-The catalog is a discovery source, not a package-manager abstraction. Browse
-defaults to the apt-backed subset so the list only contains things CPZ can
-actually install and track. Press `a` to show the full Terminal Trove catalog;
-entries without an apt package show their published install instructions.
-
-The default list is built from `apt-cache pkgnames`, installed dpkg package
-names and the build-time `/usr/share/cpz/apt-packages.txt.gz` snapshot. The
-snapshot matters because `export-image` deletes `/var/lib/apt/lists`; without
-it a fresh image would know only its installed packages. The catalog's
-Debian/Ubuntu package is preferred; only when Terminal Trove publishes no apt
-command are the tool slug and display name checked.
-
-Typing in Browse also searches ordinary apt package names that are not in the
-catalog. A plain listing stays on the catalog index (apt-filtered by default);
-while searching, index matches stay first and ordinary apt matches are appended
-after them. The apt search runs locally against the package-name snapshot, so
-it works offline; metadata is read only for the short result list. This is how
-apps such as `nano` or `ncdu` become installable through the manager even
-though Terminal Trove does not list them.
-
-CPZ only installs what apt can provide:
-
-- If Terminal Trove publishes a Debian/Ubuntu `apt install` command, that
-  package is authoritative.
-- If there is no Debian/Ubuntu cell, the tool slug and then its display name are
-  checked in apt. This catches tools such as `lazygit` that are packaged by
-  Debian without an explicit apt command on Terminal Trove.
-- If neither check finds a package, the tool is shown with the install
-  instructions published on Terminal Trove and is **not** tracked. The TUI
-  never executes those strings.
-
-Installs use:
-
-```sh
-sudo apt-get install -y --no-install-recommends PACKAGE
-```
-
-Because `export-image` removes `/var/lib/apt/lists`, the first install from a
-fresh image runs `sudo apt-get update` automatically before installing.
-
-Removal uses the same protection as the rest of Settings:
-
-```sh
-sudo apt-get purge -y PACKAGE
-```
-
-A removal is simulated first and refused if it would remove core CPZ packages
-(`cage`, `foot`, `tmux`, `systemd`, etc.). Core package names are listed in
-`PKG_CORE` in `cpz-settings`.
-
-Only apps installed through Applications are tracked. A package that was
-already installed by the image or by the user is reported as
-"installed (system)" and is not offered for removal through the manager.
-The Installed tab is built from the manager journal only, so apt and image
-packages never appear in that list.
-
-## Desktop warning
-
-The details page warns when apt metadata or an installed `.desktop` launcher
-suggests the package is a graphical application rather than a CLI/TUI one. The
-warning is advisory: CPZ can open graphical clients through `cage`, but a
-desktop application may expect a desktop session, integration services or
-window management that the device does not provide. The install confirmation
-repeats the warning; nothing is blocked.
-
-Signals are a desktop-environment apt section (`gnome`, `kde`, `x11`, ...),
-dependencies on GTK/Qt/SDL/X11/Wayland libraries, an installed
-`/usr/share/applications/*.desktop` file and a `gui`/`desktop` catalog
-category. On a fresh image the build-time snapshot has package names only, so
-metadata-backed signals for packages that are not installed appear after the
-first `apt-get update`; the warning for already installed packages works
-offline.
+- Only applications present in the loaded hub index are shown and installable.
+- An app installed through the manager is tracked. An app installed by the
+  image or by plain `apt` is reported as `installed (system)` and is not
+  tracked.
+- A removal is simulated first and refused if it would remove a core CPZ
+  package or another managed hub app.
+- `apt-get purge` is used without `autoremove`, so shared dependencies are not
+  silently removed.
+- User configuration under `/home` is not touched by removal.
 
 ## State
 
-Tracked installs are stored per user:
+The manager records only hub applications installed through Applications:
 
 ```text
-~/.local/state/cpz/trove-apps.json
+~/.local/state/cpz/hub-apps.json
 ```
 
-Each record contains the catalog slug, display name, apt package, installed
-version, timestamp and the install/remove commands that were used. If the apt
-package disappears externally, the Installed tab still lists the record and `d`
-removes the stale tracking entry.
+The file has `schema: 1` and stores the application id, kind, package, version,
+install time and the install/remove commands. The first Applications read migrates the old
+Trove-era manifest `~/.local/state/cpz/trove-apps.json` and keeps only records
+that exist in the current hub index; tools installed outside the hub scope are
+dropped.
 
-The catalog cache and image snapshot are read-only data:
+Read-only catalog data:
 
 ```text
-~/.cache/cpz/trove-index.json       user-updated snapshot
-/usr/share/cpz/trove-index.json     image snapshot
-/usr/share/cpz/apt-packages.txt.gz  build-time apt package-name snapshot
-/etc/cpz/trove-index.url            build-time source URL
+/usr/share/cpz/hub.json     image snapshot, installed at build time
+~/.cache/cpz/hub.json       newer user copy from a background refresh
+/etc/cpz/hub.url            build-time source URL
 ```
 
 ## Index schema
 
-`schema` is `1`. The top level contains `generated_at`, `count`, `categories`,
-`languages` and `tools`. Every tool has `slug`, `name`, `summary`,
-`description`, `language`, `categories`, `platforms`, `install`, `apt`,
-`url`, `website`, `source` and `license`.
-
-`install` mirrors Terminal Trove's `data-install` object: platform → package
-manager → display command. `apt` is derived only from the Debian/Ubuntu cell:
+`index/hub.json` has `schema: 1`, `generated_at`, `count` and `apps`. Every app
+has `id`, `name`, `summary`, `kind`, `package`, `categories`, `license`,
+`homepage`, `source` and `source_url`. A `deb` app also has `version` and:
 
 ```json
 {
-  "apt": {"command": "apt install tmux", "package": "tmux"}
+  "deb": {
+    "url": "https://example.com/app-1.0-arm64.deb",
+    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "size": 2388416
+  }
 }
 ```
 
-## Search integration
+The index is generated from `apps/<id>.json` files in the hub repository. CI
+validates the files, compiles the flat index and commits it. The initial index
+was seeded from Terminal Trove and filtered to apt packages that exist in
+Debian trixie arm64; later entries are expected to be checked on a device.
 
-CPZ Search (Alt+O) covers the smaller scope: installed apps and catalog apps
-that can be installed with apt. It does not scan the whole PATH and it does not
-list every apt package; the wider apt package search belongs to
-Settings → Applications. The `apps` prefix applies the same rule.
+## Trove sync
 
-Search reads the manager state for managed apps and calls
-`cpz-settings --list-tools` for the catalog, dropping entries that are neither
-installed nor apt-installable. Apps installed through the manager are shown as
-soon as the popup opens and are resolved with `dpkg -L` when the binary name
-differs from the package name; apps installed as ordinary apt packages are
-included even when they have no catalog entry. The search never fetches the
-catalog from the network and never starts an install from the result list
-itself. Enter runs an app that has a detected command; `[installed]` and
-`[install app]` rows open their details page, where `i` installs and `e` runs.
+The hub repository runs a daily workflow that imports apt-backed CLI/TUI tools
+from the existing [terminal-trove-index](https://github.com/jmas/terminal-trove-index)
+catalog. The sync only adds missing applications; hand-curated entries, `deb`
+packages and deliberate delistings are never overwritten.
 
-## Updating the index
+Trove is a maintainer-side discovery source. The device no longer downloads or
+searches the Trove catalog, and it no longer carries an apt package-name
+snapshot.
 
-Run the collector locally:
+## Updating the build source
 
-```bash
-cd terminal-trove-index
-python3 scripts/build_index.py
-```
-
-Or start the `update-index` GitHub workflow. The free reader tier is rate
-limited; the default delay is 3.2 seconds. Set `JINA_API_KEY` for the
-authenticated reader tier, or use `--via direct` where the site accepts direct
-HTML requests.
+Set `CPZ_HUB_INDEX_URL` to use another index, or `CPZ_HUB_INDEX_PATH` to copy a
+local checkout during development. Pin a tag or commit in the URL when a build
+must be reproducible. A normal build fails when the index cannot be downloaded,
+because an image without it would show an empty Applications screen.
+`CPZ_OFFLINE=1` skips the download for developer builds.

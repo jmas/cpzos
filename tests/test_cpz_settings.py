@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import contextlib
 import curses
-import gzip
 import importlib.util
 import io
 import json
@@ -83,14 +82,8 @@ class SettingsTUI(unittest.TestCase):
 
         self.mod.SYSTEM_SETTINGS = str(self.system)
         self.mod.THEME_DIR = str(self.themes)
-        self.mod.TROVE_INDEX_SYSTEM = str(
-            root / "usr" / "share" / "cpz" / "trove-index.json"
-        )
-        self.mod.TROVE_APT_SNAPSHOT = str(
-            root / "usr" / "share" / "cpz" / "apt-packages.txt.gz"
-        )
-        self.mod.TROVE_APT_SNAPSHOT_TXT = str(
-            root / "usr" / "share" / "cpz" / "apt-packages.txt"
+        self.mod.HUB_INDEX_SYSTEM = str(
+            root / "usr" / "share" / "cpz" / "hub.json"
         )
         self.config_home = root / "home" / ".config"
         old = os.environ.get("XDG_CONFIG_HOME")
@@ -802,574 +795,400 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(self.mod.filter_rows(rows, "US"), [("us", "English (US)")])
         self.assertEqual(self.mod.filter_rows(rows, "zzz"), [])
 
-    def test_apt_package_parsing(self):
-        self.assertEqual(self.mod.apt_command_package("apt install tmux"), "tmux")
-        self.assertEqual(
-            self.mod.apt_command_package("sudo apt-get install -y bat"), "bat"
-        )
-        self.assertEqual(self.mod.apt_command_package("sudo -E apt install bat"), "bat")
-        self.assertEqual(
-            self.mod.apt_command_package(
-                "DEBIAN_FRONTEND=noninteractive apt install bat"
-            ),
-            "bat",
-        )
-        self.assertEqual(
-            self.mod.apt_command_package(
-                "apt install -y --no-install-recommends htop"
-            ),
-            "htop",
-        )
-        self.assertEqual(self.mod.apt_command_package("apt install rust:arm64"), "rust")
-        self.assertEqual(self.mod.apt_command_package("snap install foo"), "")
-        self.assertEqual(self.mod.apt_command_package("apt install ./foo.deb"), "")
-
-    def test_trove_index_loading_and_filters(self):
-        index = {
-            "schema": 1,
-            "tools": [
+    def test_hub_index_loading_and_filters(self):
+        cache = Path(self.mod.hub_cache_path())
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(
+            json.dumps(
                 {
-                    "slug": "tmux",
-                    "name": "tmux",
-                    "summary": "terminal multiplexer",
-                    "language": "c",
-                    "language_label": "C",
-                    "categories": ["tui", "multiplexers"],
-                    "platforms": ["linux"],
-                    "install": {
-                        "linux": {"ubuntu / debian": "apt install tmux"},
-                    },
-                    "apt": {"command": "apt install tmux", "package": "tmux"},
-                },
-                {
-                    "slug": "lazygit",
-                    "name": "lazygit",
-                    "summary": "terminal UI for git",
-                    "language": "go",
-                    "language_label": "Go",
-                    "categories": ["git", "tui"],
-                    "platforms": ["linux"],
-                    "install": {},
-                    "apt": {},
-                },
-            ],
-            "categories": [
-                {"slug": "git", "name": "Git", "count": 1},
-                {"slug": "tui", "name": "TUI", "count": 2},
-            ],
-            "languages": [
-                {"slug": "c", "name": "C", "count": 1},
-                {"slug": "go", "name": "Go", "count": 1},
-            ],
-        }
-        path = Path(self.mod.trove_cache_path())
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(__import__("json").dumps(index), encoding="utf-8")
-
-        loaded = self.mod.load_trove_index()
-        self.assertEqual(loaded["count"], 2)
-        self.assertEqual(
-            [tool["slug"] for tool in self.mod.filter_trove_tools(loaded["tools"])],
-            ["tmux", "lazygit"],
-        )
-        self.assertEqual(
-            [
-                tool["slug"]
-                for tool in self.mod.filter_trove_tools(
-                    loaded["tools"], "git", "", ""
-                )
-            ],
-            ["lazygit"],
-        )
-        self.assertEqual(
-            [
-                tool["slug"]
-                for tool in self.mod.filter_trove_tools(
-                    loaded["tools"], "", "tui", "c"
-                )
-            ],
-            ["tmux"],
-        )
-        self.assertEqual(
-            self.mod.trove_option_label(
-                self.mod.trove_category_options(loaded), "tui"
-            ),
-            "TUI",
-        )
-
-    def test_trove_tool_list_for_search(self):
-        index = {
-            "schema": 1,
-            "tools": [
-                {
-                    "slug": "tmux",
-                    "name": "tmux",
-                    "summary": "terminal multiplexer",
-                    "categories": ["tui"],
-                    "apt": {"command": "apt install tmux", "package": "tmux"},
-                },
-                {
-                    "slug": "lazygit",
-                    "name": "lazygit",
-                    "summary": "terminal UI for git",
-                    "categories": ["git"],
-                    "apt": {},
-                },
-                {
-                    "slug": "github-cli",
-                    "name": "GitHub CLI",
-                    "summary": "GitHub from the terminal",
-                    "categories": ["git"],
-                    "apt": {"command": "apt install gh", "package": "github-cli"},
-                },
-            ],
-        }
-        path = Path(self.mod.trove_cache_path())
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(index), encoding="utf-8")
-        self.mod.write_trove_apps(
-            {
-                "github-cli": {
-                    "slug": "github-cli",
-                    "name": "GitHub CLI",
-                    "package": "github-cli",
-                    "version": "2.0",
-                    "installed_at": "2026-11-18T00:00:00",
-                    "install_command": "apt install gh",
-                    "uninstall_command": "apt-get purge github-cli",
+                    "schema": 1,
+                    "generated_at": "2026-11-20T00:00:00+00:00",
+                    "apps": [
+                        {
+                            "id": "btop",
+                            "name": "btop",
+                            "summary": "resource monitor",
+                            "kind": "apt",
+                            "package": "btop",
+                            "categories": ["monitor", "tui"],
+                        },
+                        {
+                            "id": "wifitui",
+                            "name": "wifitui",
+                            "summary": "Wi-Fi TUI",
+                            "kind": "deb",
+                            "package": "cpz-app-wifitui",
+                            "version": "0.13.0",
+                            "categories": ["network"],
+                            "deb": {
+                                "url": "https://example.com/wifitui.deb",
+                                "sha256": "a" * 64,
+                            },
+                        },
+                    ],
                 }
-            }
+            ),
+            encoding="utf-8",
         )
 
-        bindir = Path(self.tmp.name) / "bin"
-        bindir.mkdir()
-        for name in ("tmux", "gh"):
-            binary = bindir / name
-            binary.write_text("#!/bin/sh\n", encoding="utf-8")
-            binary.chmod(0o755)
-        old = os.environ.get("PATH")
-        os.environ["PATH"] = str(bindir)
-        self.addCleanup(self.restore_env, "PATH", old)
-        self.mod.package_executables = lambda package: (
-            ["gh"] if package == "github-cli" else []
-        )
-        self.mod.trove_apt_names = lambda: {"tmux", "lazygit", "github-cli"}
-
-        payload = self.mod.list_tools_payload()
-        self.assertEqual(payload["schema"], 1)
-        tools = {tool["slug"]: tool for tool in payload["tools"]}
-        self.assertEqual(tools["tmux"]["command"], "tmux")
-        self.assertTrue(tools["tmux"]["installed"])
-        self.assertFalse(tools["tmux"]["managed"])
-        self.assertEqual(tools["tmux"]["apt"], "tmux")
-        self.assertTrue(tools["tmux"]["available"])
-        self.assertEqual(tools["lazygit"]["command"], "")
-        self.assertFalse(tools["lazygit"]["installed"])
-        self.assertFalse(tools["lazygit"]["managed"])
-        self.assertTrue(tools["lazygit"]["available"])
-        self.assertEqual(tools["github-cli"]["command"], "gh")
-        self.assertTrue(tools["github-cli"]["installed"])
-        self.assertTrue(tools["github-cli"]["managed"])
-
-    def test_apt_search_finds_plain_packages_and_skips_libraries(self):
-        self.mod.apt_metadata_many = lambda packages: {
-            package: {"summary": f"summary {package}"}
-            for package in packages
-        }
-        names = {
-            "nano",
-            "nano-tiny",
-            "libnano6",
-            "nano-doc",
-            "nano-dev",
-            "tmux",
-        }
-        tools = self.mod.apt_search_tools("nano", names, {"tmux"})
+        loaded = self.mod.load_hub_index()
+        self.assertEqual(loaded["count"] if "count" in loaded else len(loaded["apps"]), 2)
+        self.assertEqual([app["id"] for app in loaded["apps"]], ["btop", "wifitui"])
+        self.assertEqual(loaded["apps"][1]["kind"], "deb")
         self.assertEqual(
-            [tool["slug"] for tool in tools],
-            ["nano", "nano-tiny"],
+            [app["id"] for app in self.mod.filter_hub_apps(loaded["apps"], "wifi")],
+            ["wifitui"],
         )
-        self.assertEqual(tools[0]["summary"], "summary nano")
-        self.assertEqual(tools[0]["apt"]["package"], "nano")
-        self.assertEqual(tools[0]["apt"]["command"], "apt install nano")
-        self.assertEqual(self.mod.apt_search_tools("n", names), [])
         self.assertEqual(
-            self.mod.apt_search_tools("tmux", names, {"tmux"}), []
+            [app["id"] for app in self.mod.filter_hub_apps(loaded["apps"], "monitor")],
+            ["btop"],
         )
 
-    def test_browse_starts_with_index_and_appends_apt_only_on_search(self):
-        catalog = [
+    def test_hub_index_drops_invalid_deb_entries(self):
+        app = self.mod.normalize_hub_app(
             {
-                "slug": "tmux",
-                "name": "tmux",
-                "apt": {"package": "tmux", "command": "apt install tmux"},
+                "id": "broken",
+                "name": "Broken",
+                "kind": "deb",
+                "package": "cpz-app-broken",
+                "version": "1.0",
+                "deb": {"url": "https://example.com/broken.deb", "sha256": "x"},
             }
-        ]
-        apt_extra = [{"slug": "nano", "name": "nano"}]
-        cache: dict = {}
-        with mock.patch.object(
-            self.mod, "filter_trove_tools", return_value=catalog
-        ) as filtered, mock.patch.object(
-            self.mod, "apt_search_tools", return_value=apt_extra
-        ) as apt_search:
-            default = self.mod.browse_trove_tools(
-                [], {"nano"}, ["nano"], "", "", "", True, cache
-            )
-            self.assertEqual([tool["slug"] for tool in default], ["tmux"])
-            apt_search.assert_not_called()
-            filtered.assert_called_with([], "", "", "", {"nano"})
-
-            found = self.mod.browse_trove_tools(
-                [], {"nano"}, ["nano"], "nano", "", "", True, cache
-            )
-            self.assertEqual(
-                [tool["slug"] for tool in found], ["tmux", "nano"]
-            )
-            apt_search.assert_called_once()
-
-    def test_gui_signals_use_section_dependencies_and_launchers(self):
-        self.mod.apt_metadata = lambda _package: {
-            "section": "gnome",
-            "depends": "libc6, libgtk-3-0",
-        }
-        self.mod.package_desktop_files = lambda _package: [
-            "/usr/share/applications/example.desktop"
-        ]
-        signals = self.mod.trove_gui_signals(
-            {"slug": "example", "categories": []},
-            {"package": "example", "status": "installed"},
         )
-        text = "\n".join(signals)
-        self.assertIn("apt section: gnome", text)
-        self.assertIn("depends on libgtk", text)
-        self.assertIn("desktop launcher", text)
+        self.assertIsNone(app)
 
-    def test_trove_details_show_the_desktop_warning(self):
-        tool = {
-            "slug": "example",
-            "name": "example",
-            "summary": "an example",
-            "description": "",
-            "categories": [],
-            "platforms": ["linux"],
-            "install": {},
-            "apt": {"package": "example", "command": "apt install example"},
-        }
-        lines = self.mod.trove_details_lines(
-            tool,
-            {"package": "example", "status": "available", "version": ""},
-            None,
-            60,
-            gui_signals=["apt section: gnome"],
-        )
-        text = "\n".join(lines)
-        self.assertIn("may be a desktop app", text)
-        self.assertIn("apt section: gnome", text)
-
-    def test_find_trove_tool_falls_back_to_managed_apt_apps(self):
-        self.mod.load_trove_index = lambda: {"tools": []}
-        self.mod.read_trove_apps = lambda: {
-            "nano": {
-                "slug": "nano",
-                "name": "nano",
-                "package": "nano",
-            }
-        }
-        tool = self.mod.find_trove_tool("nano")
-        self.assertIsNotNone(tool)
-        self.assertEqual(tool["slug"], "nano")
-        self.assertEqual(tool["apt"]["package"], "nano")
-        self.assertEqual(tool["_record"]["package"], "nano")
-        self.assertIsNone(self.mod.find_trove_tool("missing"))
-
-    def test_tool_payload_includes_managed_apps_without_catalog_rows(self):
-        self.mod.load_trove_index = lambda: {"tools": []}
-        self.mod.read_trove_apps = lambda: {
-            "nano": {
-                "slug": "nano",
-                "name": "nano",
-                "package": "nano",
-            }
-        }
-        self.mod.executable_names = lambda: {"nano"}
-        self.mod.managed_trove_command = lambda _record, _available: "nano"
-        self.mod.trove_apt_names = lambda: {"nano"}
-        payload = self.mod.list_tools_payload()
-        tools = {tool["slug"]: tool for tool in payload["tools"]}
-        self.assertEqual(tools["nano"]["command"], "nano")
-        self.assertTrue(tools["nano"]["installed"])
-        self.assertTrue(tools["nano"]["managed"])
-        self.assertEqual(tools["nano"]["apt"], "nano")
-
-    def test_trove_apt_support_filter(self):
-        apt_names = {"tmux", "lazygit", "github-cli"}
-        tools = [
+    def test_hub_tool_list_for_search(self):
+        apps = [
             {
-                "slug": "tmux",
-                "name": "tmux",
-                "apt": {"command": "apt install tmux", "package": "tmux"},
+                "id": "btop",
+                "name": "btop",
+                "summary": "resource monitor",
+                "kind": "apt",
+                "package": "btop",
+                "categories": ["monitor"],
             },
-            {"slug": "lazygit", "name": "lazygit", "apt": {}},
-            {"slug": "github", "name": "GitHub CLI", "apt": {}},
             {
-                "slug": "broken",
-                "name": "broken",
-                "apt": {"command": "apt install not-in-apt", "package": "not-in-apt"},
+                "id": "wifitui",
+                "name": "wifitui",
+                "summary": "Wi-Fi TUI",
+                "kind": "deb",
+                "package": "cpz-app-wifitui",
+                "version": "0.13.0",
+                "categories": ["network"],
             },
         ]
-        supported = [
-            tool["slug"]
-            for tool in self.mod.filter_trove_tools(tools, apt_names=apt_names)
-        ]
-        self.assertEqual(supported, ["tmux", "lazygit", "github"])
-        # A catalog apt command is authoritative: do not silently fall back to
-        # an unrelated package with the same slug/name.
-        self.assertFalse(
-            self.mod.trove_tool_apt_supported(tools[3], apt_names)
-        )
-        self.assertEqual(self.mod.filter_trove_tools(tools, apt_names=set()), [])
-
-    def test_trove_apt_names_parses_commands(self):
-        def fake_run(args, timeout=30):
-            if "pkgnames" in args:
-                return 0, "tmux\nfoo:arm64\nnot a package\n", ""
-            return 0, "htop\n", ""
-
-        self.mod.nm_run = fake_run
-        self.assertEqual(
-            self.mod.trove_apt_names(), {"tmux", "foo", "htop"}
-        )
-
-    def test_trove_apt_names_reads_build_snapshot(self):
-        self.mod.nm_run = lambda args, timeout=30: (1, "", "")
-        path = Path(self.mod.TROVE_APT_SNAPSHOT)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with gzip.open(path, "wt", encoding="utf-8") as handle:
-            handle.write("tmux\nfoo:arm64\nbad name\n")
-        self.assertEqual(self.mod.trove_apt_names(), {"tmux", "foo"})
-
-    def test_resolve_trove_apt_uses_snapshot(self):
-        self.mod.apt_status = lambda package: {
-            "package": package,
-            "status": "missing",
-            "version": "",
+        self.mod.load_hub_index = lambda: {"schema": 1, "apps": apps}
+        self.mod.read_hub_apps = lambda: {
+            "wifitui": {
+                "slug": "wifitui",
+                "name": "wifitui",
+                "kind": "deb",
+                "package": "cpz-app-wifitui",
+                "version": "0.13.0",
+            }
         }
-        self.mod.apt_lists_present = lambda: False
-        tool = {
-            "slug": "tmux",
-            "name": "tmux",
-            "apt": {"command": "apt install tmux", "package": "tmux"},
+        self.mod.dpkg_installed = lambda: {"btop": "1.4.0"}
+        self.mod.executable_names = lambda: {"btop", "wifitui"}
+
+        payload = self.mod.list_tools_payload()
+        tools = {tool["slug"]: tool for tool in payload["tools"]}
+        self.assertEqual(tools["btop"]["command"], "btop")
+        self.assertTrue(tools["btop"]["installed"])
+        self.assertFalse(tools["btop"]["managed"])
+        self.assertEqual(tools["btop"]["package"], "btop")
+        self.assertTrue(tools["wifitui"]["installed"])
+        self.assertTrue(tools["wifitui"]["managed"])
+        self.assertEqual(tools["wifitui"]["kind"], "deb")
+
+    def test_hub_tool_list_includes_removed_catalog_apps(self):
+        self.mod.load_hub_index = lambda: {"schema": 1, "apps": []}
+        self.mod.read_hub_apps = lambda: {
+            "oldapp": {
+                "slug": "oldapp",
+                "name": "Old App",
+                "kind": "apt",
+                "package": "oldapp",
+                "version": "1.0",
+            }
         }
-        resolved = self.mod.resolve_trove_apt(tool, {"tmux"})
-        self.assertEqual(resolved["status"], "available")
-        self.assertEqual(resolved["needs_update"], "1")
-        self.assertEqual(self.mod.resolve_trove_apt(tool, set())["status"], "missing")
+        self.mod.dpkg_installed = lambda: {"oldapp": "1.0"}
+        self.mod.executable_names = lambda: set()
+        payload = self.mod.list_tools_payload()
+        self.assertEqual(payload["tools"][0]["slug"], "oldapp")
+        self.assertTrue(payload["tools"][0]["installed"])
 
     def test_cli_install_tool_records_the_app(self):
-        index = {
+        self.mod.load_hub_index = lambda: {
             "schema": 1,
-            "tools": [
+            "apps": [
                 {
-                    "slug": "btop",
+                    "id": "btop",
                     "name": "btop",
-                    "summary": "resource monitor",
-                    "apt": {"command": "apt install btop", "package": "btop"},
+                    "summary": "",
+                    "kind": "apt",
+                    "package": "btop",
+                    "categories": [],
                 }
             ],
         }
-        path = Path(self.mod.trove_cache_path())
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(index), encoding="utf-8")
-        self.mod.trove_apt_names = lambda: {"btop"}
-        self.mod.resolve_trove_apt = lambda tool, names: {
-            "package": "btop",
-            "status": "available",
-            "version": "",
-        }
-        self.mod.apt_status = lambda package: {
-            "package": package,
-            "status": "installed",
-            "version": "1.0",
-        }
-        with mock.patch.object(self.mod.subprocess, "call", return_value=0):
-            with contextlib.redirect_stdout(io.StringIO()):
+        self.mod.dpkg_installed = mock.Mock(
+            side_effect=[{}, {"btop": "1.4"}]
+        )
+        self.mod.apt_lists_present = lambda: True
+        with mock.patch.object(
+            self.mod.subprocess, "call", return_value=0
+        ) as run:
+            with mock.patch("builtins.print"):
                 self.assertEqual(self.mod.cli_install_tool("btop"), 0)
-        apps = self.mod.read_trove_apps()
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        self.assertIn("apt-get", command)
+        self.assertIn("btop", command)
+        apps = self.mod.read_hub_apps()
         self.assertEqual(apps["btop"]["package"], "btop")
-        self.assertEqual(apps["btop"]["version"], "1.0")
+        self.assertEqual(apps["btop"]["version"], "1.4")
 
-    def test_cli_install_tool_rejects_unknown_slugs(self):
-        self.assertEqual(self.mod.cli_install_tool("missing"), 2)
+    def test_cli_install_tool_rejects_unknown_ids(self):
+        self.mod.load_hub_index = lambda: {"schema": 1, "apps": []}
+        self.mod.read_hub_apps = lambda: {}
+        with mock.patch("builtins.print"):
+            self.assertEqual(self.mod.cli_install_tool("missing"), 2)
 
-    def test_trove_install_tool_records_the_app(self):
-        tool = {
+    def test_hub_install_tool_records_the_app(self):
+        app = {
+            "id": "btop",
+            "name": "btop",
+            "summary": "",
+            "kind": "apt",
+            "package": "btop",
+            "categories": [],
+        }
+        self.mod.read_hub_apps = lambda: {}
+        self.mod.dpkg_installed = mock.Mock(
+            side_effect=[{}, {"btop": "1.4.0"}]
+        )
+        self.mod.apt_lists_present = lambda: True
+        self.mod.confirm = lambda *args, **kwargs: True
+        self.mod.run_privileged = mock.Mock(return_value=0)
+        message = self.mod.hub_install_tool(mock.Mock(), app)
+        self.assertIn("Installed btop", message)
+        command = self.mod.run_privileged.call_args.args[1]
+        self.assertIn("apt-get", command)
+        self.assertIn("btop", command)
+
+    def test_hub_deb_install_uses_the_verified_file(self):
+        app = {
+            "id": "wifitui",
+            "name": "wifitui",
+            "summary": "",
+            "kind": "deb",
+            "package": "cpz-app-wifitui",
+            "version": "0.13.0",
+            "categories": [],
+            "deb": {"url": "https://example.com/wifitui.deb", "sha256": "a" * 64},
+        }
+        self.mod.read_hub_apps = lambda: {}
+        self.mod.dpkg_installed = mock.Mock(
+            side_effect=[{}, {"cpz-app-wifitui": "0.13.0"}]
+        )
+        self.mod.fetch_hub_deb = lambda _app: ("/tmp/wifitui.deb", "")
+        self.mod.apt_lists_present = lambda: True
+        self.mod.draw_loading = lambda *args: None
+        self.mod.confirm = lambda *args, **kwargs: True
+        self.mod.run_privileged = mock.Mock(return_value=0)
+        message = self.mod.hub_install_tool(mock.Mock(), app)
+        self.assertIn("Installed wifitui", message)
+        command = self.mod.run_privileged.call_args.args[1]
+        self.assertIn("/tmp/wifitui.deb", command)
+
+    def test_hub_deb_download_verifies_the_checksum(self):
+        payload = b"fake deb payload"
+        digest = __import__("hashlib").sha256(payload).hexdigest()
+        app = {
+            "id": "tool",
+            "name": "Tool",
+            "kind": "deb",
+            "package": "cpz-app-tool",
+            "version": "1.0",
+            "deb": {
+                "url": "https://example.com/tool.deb",
+                "sha256": digest,
+            },
+        }
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, _limit):
+                return payload
+
+        with mock.patch.object(
+            self.mod.urllib.request, "urlopen", return_value=Response()
+        ):
+            path, error = self.mod.fetch_hub_deb(app)
+        self.assertEqual(error, "")
+        self.assertEqual(self.mod.file_sha256(path), digest)
+
+        app["deb"]["sha256"] = "0" * 64
+        with mock.patch.object(
+            self.mod.urllib.request, "urlopen", return_value=Response()
+        ):
+            path, error = self.mod.fetch_hub_deb(app)
+        self.assertEqual(path, "")
+        self.assertEqual(error, "checksum mismatch")
+
+    def test_hub_details_show_status_and_commands(self):
+        app = {
+            "id": "btop",
+            "name": "btop",
+            "summary": "resource monitor",
+            "kind": "apt",
+            "package": "btop",
+            "categories": ["monitor"],
+            "license": "Apache-2.0",
+        }
+        available = self.mod.hub_details_lines(app, None, {}, 60)
+        self.assertIn("Install: apt install btop", "\n".join(available))
+        system = self.mod.hub_details_lines(app, None, {"btop": "1.0"}, 60)
+        self.assertIn(
+            "Installed outside the manager; not tracked here.",
+            "\n".join(system),
+        )
+        record = {
             "slug": "btop",
             "name": "btop",
-            "apt": {"command": "apt install btop", "package": "btop"},
-        }
-        self.mod.resolve_trove_apt = lambda _tool, _names: {
             "package": "btop",
-            "status": "available",
-            "version": "",
+            "version": "1.0",
         }
-        self.mod.trove_gui_signals = lambda _tool, _apt: []
-        self.mod.confirm = lambda *_args, **_kwargs: True
-        self.mod.run_privileged = lambda *_args, **_kwargs: 0
-        self.mod.apt_status = lambda package: {
-            "package": package,
-            "status": "installed",
-            "version": "1.4.0",
-        }
-        self.mod.trove_install_tool(mock.Mock(), tool, {"btop"})
-        apps = self.mod.read_trove_apps()
-        self.assertIn("btop", apps)
-        self.assertEqual(apps["btop"]["package"], "btop")
-        self.assertEqual(apps["btop"]["version"], "1.4.0")
+        managed = self.mod.hub_details_lines(app, record, {"btop": "1.0"}, 60)
+        self.assertIn("Remove: apt-get purge btop", "\n".join(managed))
 
-    def test_search_tool_target_opens_the_app_details(self):
-        """CPZ Search's --tool target must land on the app page, not the list."""
-        tool = {"slug": "lazygit", "name": "lazygit"}
-        self.mod.draw_loading = lambda *_args, **_kwargs: None
-        self.mod.load_trove_index = lambda: {
-            "tools": [tool],
-            "categories": [],
-            "languages": [],
-        }
-        self.mod.read_trove_apps = lambda: {"lazygit": {"slug": "lazygit"}}
-        self.mod.trove_apt_names = lambda: {"lazygit"}
-        with mock.patch.object(self.mod, "trove_details_screen") as details:
-            self.mod.trove_apps_screen(mock.Mock(), "lazygit")
-        details.assert_called_once()
-        self.assertEqual(details.call_args.args[1]["slug"], "lazygit")
-        self.assertEqual(details.call_args.args[2], {"slug": "lazygit"})
-
-    def test_trove_managed_state_round_trip(self):
+    def test_hub_state_round_trip(self):
         apps = {
-            "tmux": {
-                "slug": "tmux",
-                "name": "tmux",
-                "package": "tmux",
-                "version": "3.4",
-                "installed_at": "2026-11-17T12:00:00",
-                "install_command": "apt install tmux",
-                "uninstall_command": "apt-get purge tmux",
-            }
-        }
-        self.mod.write_trove_apps(apps)
-        self.assertEqual(self.mod.read_trove_apps(), apps)
-        path = Path(self.mod.trove_state_path())
-        self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
-
-    def test_installed_tab_lists_only_manager_records(self):
-        """apt/system packages must not leak into the Installed tab."""
-        index = {
-            "tools": [
-                {"slug": "tmux", "name": "tmux", "apt": {"package": "tmux"}},
-                {"slug": "btop", "name": "btop", "apt": {"package": "btop"}},
-            ]
-        }
-        managed = {
             "btop": {
                 "slug": "btop",
                 "name": "btop",
+                "kind": "apt",
                 "package": "btop",
                 "version": "1.4.0",
-                "installed_at": "2026-11-19T00:00:00",
+                "installed_at": "2026-11-20T00:00:00",
                 "install_command": "apt install btop",
                 "uninstall_command": "apt-get purge btop",
             }
         }
-        shown = self.mod.trove_installed_tools(index, managed)
-        self.assertEqual([tool["slug"] for tool in shown], ["btop"])
-        # tmux is in the catalog and may be installed system-wide, but it has
-        # no manager record, so it stays out of Installed.
-        self.assertNotIn("tmux", [tool["slug"] for tool in shown])
+        self.mod.write_hub_apps(apps)
+        self.assertEqual(self.mod.read_hub_apps(), apps)
+        path = Path(self.mod.hub_state_path())
+        self.assertTrue(path.is_file())
+        self.assertEqual(json.loads(path.read_text())["schema"], 1)
 
-    def test_trove_details_show_manual_instructions(self):
-        tool = {
-            "slug": "foo",
-            "name": "foo",
-            "summary": "a terminal foo",
-            "description": "",
-            "language": "rust",
-            "language_label": "Rust",
-            "categories": ["tui"],
-            "platforms": ["linux"],
-            "install": {
-                "linux": {"ubuntu / debian": "snap install foo"},
-                "macos": "brew install foo",
-            },
-            "apt": {},
-            "url": "https://terminaltrove.com/foo/",
-            "website": "https://example.com/foo",
+    def test_legacy_trove_state_is_migrated_to_hub_scope(self):
+        self.mod.load_hub_index = lambda: {
+            "schema": 1,
+            "apps": [
+                {
+                    "id": "btop",
+                    "name": "btop",
+                    "kind": "apt",
+                    "package": "btop",
+                    "categories": [],
+                }
+            ],
         }
-        lines = self.mod.trove_details_lines(
-            tool,
-            {"package": "", "status": "missing", "version": "", "source": "slug"},
-            None,
-            60,
+        legacy = Path(self.mod.legacy_hub_state_path())
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "apps": [
+                        {
+                            "slug": "btop",
+                            "name": "btop",
+                            "package": "btop",
+                            "version": "1.4.0",
+                        },
+                        {
+                            "slug": "outsider",
+                            "name": "Outside",
+                            "package": "outsider",
+                            "version": "1.0",
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
         )
-        text = "\n".join(lines)
-        self.assertIn("Not available in apt", text)
-        self.assertIn("snap install foo", text)
-        self.assertIn("brew install foo", text)
-        self.assertIn("Catalog: https://terminaltrove.com/foo/", text)
-        self.assertIn("Website: https://example.com/foo", text)
+        apps = self.mod.read_hub_apps()
+        self.assertEqual(set(apps), {"btop"})
+        self.assertTrue(Path(self.mod.hub_state_path()).is_file())
 
-    def test_trove_details_do_not_offer_system_packages(self):
-        tool = {
-            "slug": "htop",
-            "name": "htop",
-            "summary": "process viewer",
-            "description": "",
-            "language": "c",
-            "language_label": "C",
-            "categories": ["tui"],
-            "platforms": ["linux"],
-            "install": {},
-            "apt": {},
-            "url": "https://terminaltrove.com/htop/",
-            "website": "",
+    def test_hub_uninstall_removes_the_record(self):
+        record = {
+            "slug": "btop",
+            "name": "btop",
+            "kind": "apt",
+            "package": "btop",
+            "version": "1.4.0",
         }
-        lines = self.mod.trove_details_lines(
-            tool,
-            {
-                "package": "htop",
-                "status": "installed",
-                "version": "3.4",
-                "source": "catalog",
-            },
-            None,
-            60,
+        self.mod.read_hub_apps = mock.Mock(
+            side_effect=[{"btop": record}, {"btop": record}]
         )
-        text = "\n".join(lines)
-        self.assertIn("installed (system)", text)
-        self.assertIn("outside the manager", text)
-        self.assertNotIn("Install: apt-get install", text)
+        self.mod.write_hub_apps = mock.Mock()
+        self.mod.dpkg_installed = lambda: {"btop": "1.4.0"}
+        self.mod.simulate_removal = lambda _package: ["btop"]
+        self.mod.confirm = lambda *args, **kwargs: True
+        self.mod.run_privileged = mock.Mock(return_value=0)
+        message = self.mod.hub_uninstall_tool(mock.Mock(), record)
+        self.assertIn("Removed btop", message)
+        self.mod.write_hub_apps.assert_called_once_with({})
+
+    def test_hub_uninstall_refuses_core_packages(self):
+        record = {
+            "slug": "tmux",
+            "name": "tmux",
+            "kind": "apt",
+            "package": "tmux",
+        }
+        message = self.mod.hub_uninstall_tool(mock.Mock(), record)
+        self.assertIn("system package", message)
 
     def test_newer_system_index_wins_over_stale_cache(self):
-        old = {
-            "schema": 1,
-            "generated_at": "2026-01-01T00:00:00+00:00",
-            "tools": [{"slug": "old", "name": "old"}],
-        }
-        new = {
-            "schema": 1,
-            "generated_at": "2026-02-01T00:00:00+00:00",
-            "tools": [{"slug": "new", "name": "new"}],
-        }
-        cache = Path(self.mod.trove_cache_path())
+        cache = Path(self.mod.hub_cache_path())
         cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(__import__("json").dumps(old), encoding="utf-8")
-        system = Path(self.mod.TROVE_INDEX_SYSTEM)
+        cache.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "generated_at": "2026-01-01T00:00:00+00:00",
+                    "apps": [{"id": "old", "name": "Old", "kind": "apt", "package": "old"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        system = Path(self.mod.HUB_INDEX_SYSTEM)
         system.parent.mkdir(parents=True, exist_ok=True)
-        system.write_text(__import__("json").dumps(new), encoding="utf-8")
-        self.assertEqual(self.mod.load_trove_index()["tools"][0]["slug"], "new")
+        system.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "generated_at": "2026-11-20T00:00:00+00:00",
+                    "apps": [{"id": "new", "name": "New", "kind": "apt", "package": "new"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        loaded = self.mod.load_hub_index()
+        self.assertEqual([app["id"] for app in loaded["apps"]], ["new"])
 
-    def test_trove_index_without_catalog_is_empty(self):
-        loaded = self.mod.load_trove_index()
-        self.assertEqual(loaded["tools"], [])
-        self.assertEqual(loaded["count"], 0)
+    def test_hub_index_without_catalog_is_empty(self):
+        loaded = self.mod.load_hub_index()
+        self.assertEqual(loaded["apps"], [])
+        self.assertEqual(loaded["path"], "")
 
 
 class ModalChrome(unittest.TestCase):

@@ -39,7 +39,7 @@ most parsing and forks from hot paths.
 | --- | --- | --- |
 | `stage0` | debootstrap, kernel/firmware download | `stage0/prerun.sh`, `stage0/02-firmware/01-run.sh` |
 | `stage1..2` | one large `apt-get install`, module compilation | `stage2/01-sys-tweaks/00-packages`, `stage2/05-cardputerzero/01-run.sh` |
-| `stage3` | separate `apt` for graphics and for session; Trove download; cleanup | `stage3/00-graphics/00-run.sh`, `stage3/01-session/00-packages`, `stage3/01-session/01-run.sh`, `stage3/03-cleanup/00-run.sh` |
+| `stage3` | separate `apt` for graphics and for session; Hub index download; cleanup | `stage3/00-graphics/00-run.sh`, `stage3/01-session/00-packages`, `stage3/01-session/01-run.sh`, `stage3/03-cleanup/00-run.sh` |
 | `export` | `apt-get update && dist-upgrade` after all stages, `update-initramfs`, xz | `export-image/02-set-sources/01-run.sh`, `export-image/05-finalise/01-run.sh` |
 
 ### 2.2 Boot to the first frame
@@ -228,8 +228,8 @@ from the critical path.
 Do not touch them at all for `--list-tools`/`--list-pages`.
 
 **Additional**: cache the `--list-tools` payload in
-`~/.cache/cpz/trove-tools.json`, invalidated by the Trove index mtime and a
-`PATH` hash; currently every call rereads the whole index and scans `PATH`.
+`~/.cache/cpz/hub-tools.json`, invalidated by the Hub index mtime and a `PATH`
+hash; currently every call rereads the whole index and scans `PATH`.
 
 ---
 
@@ -312,9 +312,9 @@ behavior; measure with `systemd-analyze critical-chain getty@tty1.service`.
   separate `apt-get install` calls; merge them into one transaction (just add
   the graphics packages to `00-packages`) to save ~15–40 s on every stage3
   rebuild.
-- `stage3/01-session/01-run.sh:131-150` — the build downloads the Trove index
+- `stage3/01-session/01-run.sh` — the build downloads the Hub index
   (up to 120 s timeout). Offline/fast builds need an explicit switch
-  (`CPZ_TROVE_INDEX_URL=none` or `CPZ_OFFLINE=1`).
+  (`CPZ_HUB_INDEX_URL=none`, `CPZ_HUB_INDEX_PATH` or `CPZ_OFFLINE=1`).
 - `export-image/02-set-sources/01-run.sh:7-8` — after all stages, another
   `apt-get update` plus a full `dist-upgrade`. That is correct for a release,
   but for local fast builds it costs 10–60 s and makes the result
@@ -657,7 +657,7 @@ Already done:
   relies on cage's own retry loop. The factory-password prompt moved from
   before `tmux attach` to a client-attached popup.
 - Build: graphics packages are merged with session in one apt transaction;
-  `CPZ_OFFLINE`/`CPZ_TROVE_INDEX_URL=none` disable the network Trove download;
+  `CPZ_OFFLINE`/`CPZ_HUB_INDEX_URL=none` disable the network Hub download;
   `CPZ_EXPORT_DIST_UPGRADE=0` skips the final dist-upgrade; kernel
   headers/kbuild are removed in cleanup.
 

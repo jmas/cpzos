@@ -146,46 +146,59 @@ stat -c %Y "${ROOTFS_DIR}/etc/shadow" >"${ROOTFS_DIR}/etc/cpz/shadow-mtime"
 install -m 0644 files/themes/*.conf files/themes/*.palette \
 	"${ROOTFS_DIR}/etc/cpz/themes/"
 
-# Terminal Trove catalog snapshot. Applications reads this local index, so
-# discovery works without the network. Settings can refresh it later. The
-# index is built by the separate terminal-trove-index project.
+# CPZ Hub application index. Applications reads this local snapshot, so
+# opening the screen never waits for the network. Settings refreshes the user
+# copy in the background. The index is built by the separate cpzos-hub
+# project; CPZ_HUB_INDEX_PATH can point at a local checkout for development.
 #
-# Builds must stay usable offline: CPZ_OFFLINE=1 (or an explicit
-# CPZ_TROVE_INDEX_URL=none) skips the download instead of waiting for the
-# 120 s timeout. Settings can fetch the catalog later on the device.
-trove_default="https://raw.githubusercontent.com/jmas/terminal-trove-index/main/index/trove.json.gz"
-trove_url="${CPZ_TROVE_INDEX_URL:-$trove_default}"
-trove_download=1
-case "$trove_url" in
+# A normal image build requires the index: an image without it would show an
+# empty Applications screen. CPZ_OFFLINE=1 skips the download for developer
+# builds and leaves the screen empty until the user presses u.
+hub_default="https://raw.githubusercontent.com/jmas/cpzos-hub/main/index/hub.json"
+hub_url="${CPZ_HUB_INDEX_URL:-$hub_default}"
+hub_download=1
+case "$hub_url" in
 	none | off | 0 | '')
-		# Keep the hosted URL in the image so Settings can refresh later.
-		trove_url=$trove_default
-		trove_download=0
+		hub_url=$hub_default
+		hub_download=0
 		;;
 esac
 case "${CPZ_OFFLINE:-0}" in
-	1 | yes | on | true) trove_download=0 ;;
+	1 | yes | on | true) hub_download=0 ;;
 esac
 install -d -m 0755 "${ROOTFS_DIR}/etc/cpz" "${ROOTFS_DIR}/usr/share/cpz"
-printf '%s\n' "$trove_url" >"${ROOTFS_DIR}/etc/cpz/trove-index.url"
-if [ "$trove_download" = 1 ]; then
-	trove_tmp="$(mktemp)"
-	if curl --fail --location --silent --show-error --retry 3 --max-time 120 \
-		--max-filesize 20971520 "$trove_url" -o "$trove_tmp"; then
-		if gzip -t "$trove_tmp" 2>/dev/null; then
-			gzip -dc "$trove_tmp" >"${ROOTFS_DIR}/usr/share/cpz/trove-index.json"
-		else
-			cp "$trove_tmp" "${ROOTFS_DIR}/usr/share/cpz/trove-index.json"
-		fi
-		chmod 0644 "${ROOTFS_DIR}/usr/share/cpz/trove-index.json"
-		if ! grep -q '"tools"' "${ROOTFS_DIR}/usr/share/cpz/trove-index.json"; then
-			echo "stage3: invalid Terminal Trove index; removing snapshot" >&2
-			rm -f "${ROOTFS_DIR}/usr/share/cpz/trove-index.json"
-		fi
+printf '%s\n' "$hub_url" >"${ROOTFS_DIR}/etc/cpz/hub.url"
+hub_target="${ROOTFS_DIR}/usr/share/cpz/hub.json"
+if [ -n "${CPZ_HUB_INDEX_PATH:-}" ]; then
+	if [ -f "${CPZ_HUB_INDEX_PATH}" ]; then
+		cp "${CPZ_HUB_INDEX_PATH}" "$hub_target"
+		chmod 0644 "$hub_target"
 	else
-		echo "stage3: warning: cannot download Terminal Trove index from $trove_url" >&2
+		echo "stage3: error: CPZ_HUB_INDEX_PATH does not exist" >&2
+		exit 1
 	fi
-	rm -f "$trove_tmp"
+elif [ "$hub_download" = 1 ]; then
+	hub_tmp="$(mktemp)"
+	if curl --fail --location --silent --show-error --retry 3 --max-time 120 \
+		--max-filesize 8388608 "$hub_url" -o "$hub_tmp"; then
+		if gzip -t "$hub_tmp" 2>/dev/null; then
+			gzip -dc "$hub_tmp" >"$hub_target"
+		else
+			cp "$hub_tmp" "$hub_target"
+		fi
+		chmod 0644 "$hub_target"
+	else
+		echo "stage3: error: cannot download CPZ Hub index from $hub_url" >&2
+		exit 1
+	fi
+	rm -f "$hub_tmp"
+fi
+if [ -f "$hub_target" ] && ! grep -q '"apps"' "$hub_target"; then
+	echo "stage3: error: invalid CPZ Hub index" >&2
+	exit 1
+fi
+if [ "$hub_download" = 0 ] && [ -z "${CPZ_HUB_INDEX_PATH:-}" ]; then
+	echo "stage3: warning: CPZ Hub index skipped (offline build)" >&2
 fi
 install -m 0644 files/cpz-session-save.service files/cpz-session-save.timer \
 	files/cpz-conn-status.service files/cpz-conn-status.timer \
@@ -390,17 +403,6 @@ setupcon --force --save-only 2>/dev/null || true
 visudo -cf /etc/sudoers.d/50-cpz-layout
 visudo -cf /etc/sudoers.d/50-cpz-locale
 visudo -cf /etc/sudoers.d/50-cpz-backlight
-
-# Snapshot apt package names before export-image deletes /var/lib/apt/lists.
-# Applications uses this offline snapshot to default to apt-backed tools.
-if command -v apt-cache >/dev/null 2>&1; then
-	install -d -m 0755 /usr/share/cpz
-	{
-		apt-cache pkgnames 2>/dev/null || true
-		dpkg-query -W -f='${Package}\n' 2>/dev/null || true
-	} | LC_ALL=C sort -u | gzip -9 > /usr/share/cpz/apt-packages.txt.gz
-	chmod 0644 /usr/share/cpz/apt-packages.txt.gz
-fi
 
 # Generate the tmux key cache at build time. tmux.conf sources it, and the
 # conditional cpz-keys fallback is a Python start on the boot path; the file

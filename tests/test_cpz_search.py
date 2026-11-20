@@ -87,7 +87,7 @@ class SearchItems(unittest.TestCase):
                 "managed,installed,runnable",
             )
         ]
-        self.mod.trove_items = lambda: [
+        self.mod.hub_items = lambda: [
             self.mod.make_item(
                 "tool",
                 "fzf",
@@ -137,7 +137,7 @@ class SearchItems(unittest.TestCase):
     def test_default_does_not_scan_path_for_generic_apps(self):
         # Search uses the catalog and the manager state, never the whole PATH.
         self.mod.managed_app_items = lambda: []
-        self.mod.trove_items = lambda: []
+        self.mod.hub_items = lambda: []
         with mock.patch.object(self.mod, "scan_apps") as scan:
             self.mod.default_items()
         scan.assert_not_called()
@@ -180,7 +180,7 @@ class SearchItems(unittest.TestCase):
         with mock.patch.multiple(
             self.mod,
             managed_app_items=mock.DEFAULT,
-            trove_items=mock.DEFAULT,
+            hub_items=mock.DEFAULT,
             settings_items=mock.DEFAULT,
             scan_apps=mock.DEFAULT,
             list_settings_pages=mock.DEFAULT,
@@ -232,7 +232,7 @@ class SearchItems(unittest.TestCase):
                 "managed,installed,runnable",
             )
         ]
-        parsed = [self.mod.parse_item(line) for line in self.mod.trove_items()]
+        parsed = [self.mod.parse_item(line) for line in self.mod.hub_items()]
         self.assertEqual(
             parsed,
             [
@@ -390,7 +390,7 @@ class SearchItems(unittest.TestCase):
         else:
             os.environ[name] = old
 
-    def test_parse_trove_payload(self):
+    def test_parse_hub_payload(self):
         payload = {
             "schema": 1,
             "tools": [
@@ -401,7 +401,7 @@ class SearchItems(unittest.TestCase):
                     "categories": ["git", "tui"],
                     "command": "",
                     "installed": False,
-                    "apt": "lazygit",
+                    "package": "lazygit",
                 },
                 {
                     "slug": "tmux",
@@ -424,7 +424,7 @@ class SearchItems(unittest.TestCase):
                     "summary": "no apt package",
                     "command": "",
                     "installed": False,
-                    "apt": "",
+                    "package": "",
                 },
                 {
                     "slug": "not-in-apt",
@@ -432,7 +432,7 @@ class SearchItems(unittest.TestCase):
                     "summary": "missing package",
                     "command": "",
                     "installed": False,
-                    "apt": "missing",
+                    "package": "missing",
                     "available": False,
                 },
                 {
@@ -444,7 +444,7 @@ class SearchItems(unittest.TestCase):
         }
         items = [
             self.mod.parse_item(line)
-            for line in self.mod.parse_trove_payload(json.dumps(payload))
+            for line in self.mod.parse_hub_payload(json.dumps(payload))
         ]
         self.assertEqual(
             {item[1] for item in items if item},
@@ -456,7 +456,7 @@ class SearchItems(unittest.TestCase):
         )
         full = [
             self.mod.parse_item(line)
-            for line in self.mod.parse_trove_payload(
+            for line in self.mod.parse_hub_payload(
                 json.dumps(payload), available_only=False
             )
         ]
@@ -501,7 +501,7 @@ class SearchItems(unittest.TestCase):
             full,
         )
         self.assertEqual(len(full), 5)
-        self.assertEqual(self.mod.parse_trove_payload("not json"), [])
+        self.assertEqual(self.mod.parse_hub_payload("not json"), [])
 
     def test_search_roots_uses_the_override_and_existing_directories(self):
         missing = self.root / "missing"

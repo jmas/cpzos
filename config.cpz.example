@@ -36,12 +36,14 @@ CPZ_DTOVERLAYS_REF="4f7aeee9fc103ebb03d22cac476bb191ecfb321e"
 # Example: CPZ_HDMI_VIDEO="HDMI-A-1:1920x1080@60"
 CPZ_HDMI_VIDEO=""
 
-# Terminal Trove catalog index used by Settings -> Applications. Leave empty
-# for the hosted default, or point at a local/alternate JSON or JSON.gz file.
-# Set to "none" to skip the build-time download; Settings can fetch it later.
-CPZ_TROVE_INDEX_URL=""
+# CPZ Hub catalog index used by Settings -> Applications. Leave empty for the
+# hosted default, or point at an alternate JSON or JSON.gz file. Set to "none"
+# to skip the build-time download; the screen can refresh it later.
+CPZ_HUB_INDEX_URL=""
+# Optional local cpzos-hub index for offline or pre-release builds.
+CPZ_HUB_INDEX_PATH=""
 
-# Skip every build-time network download (currently the Trove catalog). Useful
+# Skip every build-time network download (currently the Hub catalog). Useful
 # for offline or reproducible local builds.
 CPZ_OFFLINE=0
 

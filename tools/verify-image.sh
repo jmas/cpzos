@@ -335,8 +335,8 @@ for file in usr/local/bin/cpz-first-login \
     etc/profile.d/cpz-session.sh etc/tmux.conf \
     etc/mc/mc.ini etc/mc/skins/cpz.ini \
     etc/cpz/settings.conf etc/cpz/shadow-mtime etc/default/console-setup \
-    etc/cpz/trove-index.url \
-    usr/share/cpz/apt-packages.txt.gz \
+    etc/cpz/hub.url \
+    usr/share/cpz/hub.json \
     etc/cpz/themes/cpz-campbell.palette \
     etc/cpz/themes/cpz-homebrew.palette \
     etc/cpz/themes/cpz-ocean.palette \
@@ -512,16 +512,16 @@ else
     fail "etc/sudoers.d/50-cpz-bt MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Terminal Trove"; then
-    pass "cpz-settings: Applications (Terminal Trove)"
+if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "CPZ Hub"; then
+    pass "cpz-settings: Applications (CPZ Hub)"
 else
     fail "cpz-settings: Applications entry MISSING"
 fi
 
-if debugfs -R "stat usr/share/cpz/trove-index.json" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
-    pass "Terminal Trove catalog snapshot present"
+if debugfs -R "stat usr/share/cpz/hub.json" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
+    pass "CPZ Hub catalog snapshot present"
 else
-    echo "WARN: Terminal Trove catalog snapshot missing (Applications will offer a download)"
+    fail "CPZ Hub catalog snapshot missing"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q 'run_interactive(screen, \["htop"\])'; then
@@ -584,10 +584,10 @@ else
     fail "cpz-search: fzf providers MISSING"
 fi
 
-if debugfs -R "cat usr/local/bin/cpz-search" "$TMPDIR/root.ext4" 2>/dev/null | grep -q -- "--trove"; then
-    pass "cpz-search: Terminal Trove provider present"
+if debugfs -R "cat usr/local/bin/cpz-search" "$TMPDIR/root.ext4" 2>/dev/null | grep -q -- "--apps"; then
+    pass "cpz-search: Hub applications provider present"
 else
-    fail "cpz-search: Terminal Trove provider MISSING"
+    fail "cpz-search: Hub applications provider MISSING"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q -- "--list-tools"; then
