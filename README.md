@@ -37,6 +37,8 @@ open over the terminal and return you to the same tab when they close.
   Xwayland.
 - **Panel and HDMI** — automatic output switching, per-output text size,
   themes, a selectable typeface and 12–32 px text.
+- **Screensaver lock** — an optional idle timeout blanks the panel and locks
+  the screen; `Tab` then `Enter` unlocks it.
 - **Battery aware** — low-battery warnings and a clean shutdown before the
   pack collapses.
 - **Eleven languages** — the same set as the website for both the UI and the
@@ -141,7 +143,9 @@ renders the new `foot.ini` and the session supervisor replaces only the visible
 terminal, with an idle anchor window keeping the DRM mode alive. tmux is a
 separate service, so tabs, panes and programs survive. Display-mode changes
 apply through a systemd path unit; changing the target card restarts the
-session. Keyboard-layout changes also restart it.
+session, and the panel stays dark until the new terminal is ready so the
+switch does not flash an old frame. Keyboard-layout changes rebuild only the
+XKB keymap: cage, foot and tmux stay up and the screen does not refresh.
 
 **Settings → Display → Font** selects the typeface for the whole terminal
 interface — the shell, tmux, Settings and every app in a tab. The change
@@ -454,7 +458,7 @@ tools/verify-stage.sh        host-side structural checks (no root)
 tools/verify-image.sh        full image content checks (Linux, root)
 tests/                       unit tests and linter entry points
 .github/workflows/           build/publish, CI and os-list workflows
-docs/                        UI rules, cage session, graphics, storage, M5 Imager, release
+docs/                        UI rules, cage session, graphics, storage, state, M5 Imager, release
 ```
 
 ## Upstream

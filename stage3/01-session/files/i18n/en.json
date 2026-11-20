@@ -529,5 +529,9 @@
   "Wi-Fi on": "Wi-Fi on",
   "Wi-Fi off": "Wi-Fi off",
   "Bluetooth on": "Bluetooth on",
-  "Bluetooth off": "Bluetooth off"
+  "Bluetooth off": "Bluetooth off",
+  "Screen Timeout": "Screen Timeout",
+  "Screen locked": "Screen locked",
+  "Press Tab, then Enter to unlock": "Press Tab, then Enter to unlock",
+  "1 min": "1 min"
 }

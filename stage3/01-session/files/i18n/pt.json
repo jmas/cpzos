@@ -529,5 +529,9 @@
   "Wi-Fi on": "Wi-Fi ativo",
   "Wi-Fi off": "Wi-Fi desativado",
   "Bluetooth on": "Bluetooth ativo",
-  "Bluetooth off": "Bluetooth desativado"
+  "Bluetooth off": "Bluetooth desativado",
+  "Screen Timeout": "Tempo de tela",
+  "Screen locked": "Tela bloqueada",
+  "Press Tab, then Enter to unlock": "Pressione Tab e depois Enter para desbloquear",
+  "1 min": "1 min"
 }

@@ -29,6 +29,7 @@ class OutputPolicyTest(unittest.TestCase):
         enabled="enabled",
         seed=None,
         layout_state=None,
+        backlight_level="128",
     ):
         """Run cpz-cage-output against a fake display/settings tree."""
         with tempfile.TemporaryDirectory() as temporary:
@@ -58,7 +59,9 @@ class OutputPolicyTest(unittest.TestCase):
             backlight = root / "sys" / "class" / "backlight" / "panel"
             backlight.mkdir(parents=True)
             (backlight / "max_brightness").write_text("255\n", encoding="utf-8")
-            (backlight / "brightness").write_text("128\n", encoding="utf-8")
+            (backlight / "brightness").write_text(
+                backlight_level + "\n", encoding="utf-8"
+            )
             (backlight / "bl_power").write_text("4\n", encoding="utf-8")
 
             cmdline = root / "proc" / "cmdline"
@@ -99,23 +102,6 @@ class OutputPolicyTest(unittest.TestCase):
             logger = root / "bin" / "logger"
             logger.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             logger.chmod(0o755)
-            localectl = root / "bin" / "localectl"
-            localectl.write_text(
-                "#!/bin/sh\n"
-                "printf 'System Locale: LANG=C.UTF-8\\n'\n"
-                "printf '    X11 Layout: us\\n'\n",
-                encoding="utf-8",
-            )
-            localectl.chmod(0o755)
-            # xkb_settings wraps localectl in `timeout`. macOS has no timeout(1),
-            # so without this shim the layout silently disappears from the
-            # generated environment and the test would pass for the wrong
-            # reason (an env change instead of the HDMI failure path).
-            timeout = root / "bin" / "timeout"
-            timeout.write_text(
-                "#!/bin/sh\nshift\nexec \"$@\"\n", encoding="utf-8"
-            )
-            timeout.chmod(0o755)
 
             script = root / "cpz-cage-output"
             text = OUTPUT.read_text(encoding="utf-8")
@@ -171,17 +157,33 @@ class OutputPolicyTest(unittest.TestCase):
             )
             return result, state, env_text, brightness, bl_power
 
-    def test_published_xkb_layout_reaches_the_cage_environment(self):
-        # cpz-keyboard-layout publishes the active layout because Debian's
-        # dbus policy denies SetX11Keyboard to localed. localectl still reports
-        # "us" in this harness; the published file must win, otherwise the
-        # internal keyboard loses the CPZ Sym overlay.
+    def test_layout_changes_do_not_rewrite_the_cage_environment(self):
+        # cage reads /run/cpz-layout.xkb at startup and cpz-xkb-layout.so
+        # rereads it when a keyboard is re-added. If the layout leaked into
+        # session.env, every change would look like an environment change and
+        # restart the compositor.
         _result, _state, env_text, _brightness, _bl_power = self.run_output(
             ["--prepare"],
             display="panel",
             layout_state="layout=cpz_us\n",
         )
-        self.assertIn("XKB_DEFAULT_LAYOUT='cpz_us'", env_text)
+        self.assertNotIn("XKB_DEFAULT_LAYOUT", env_text)
+
+    def test_layout_change_does_not_change_the_cage_environment(self):
+        # A changed env is what made cpz-cage-output restart the compositor.
+        # The keymap shim reads /run/cpz-layout.xkb directly, so switching
+        # layouts must leave session.env byte-for-byte identical.
+        _result, _state, first, _brightness, _bl_power = self.run_output(
+            ["--prepare"],
+            display="panel",
+            layout_state="layout=us\n",
+        )
+        _result, _state, second, _brightness, _bl_power = self.run_output(
+            ["--prepare"],
+            display="panel",
+            layout_state="layout=cpz_ua\n",
+        )
+        self.assertEqual(first, second)
 
     def test_panel_setting_wins_with_auto(self):
         result, state, env_text, brightness, bl_power = self.run_output(
@@ -192,6 +194,31 @@ class OutputPolicyTest(unittest.TestCase):
         self.assertIn("WLR_RENDERER='pixman'", env_text)
         self.assertNotEqual(brightness, "0")
         self.assertEqual(bl_power, "0")
+
+    def test_locked_screen_keeps_the_panel_dark(self):
+        # cpz-lock already switched the backlight off before the reconciler
+        # runs. It must not treat the dark panel as a stale brightness value
+        # and light it again.
+        _result, state, _env_text, brightness, _bl_power = self.run_output(
+            ["--force"],
+            display="panel",
+            seed={"screen.locked": "123\n", "backlight.level": "off\n"},
+            backlight_level="0",
+        )
+        self.assertIn("target=panel", state)
+        self.assertEqual(brightness, "0")
+
+    def test_locked_screen_does_not_blank_a_woken_lock(self):
+        # The first key press wakes the lock screen without removing the
+        # marker. A later reconciler tick must leave that light level alone.
+        _result, state, _env_text, brightness, _bl_power = self.run_output(
+            ["--force"],
+            display="panel",
+            seed={"screen.locked": "123\n", "backlight.level": "on:40\n"},
+            backlight_level="102",
+        )
+        self.assertIn("target=panel", state)
+        self.assertEqual(brightness, "102")
 
     def test_auto_selects_hdmi_with_readable_edid(self):
         result, state, env_text, brightness, bl_power = self.run_output(
@@ -236,6 +263,22 @@ class OutputPolicyTest(unittest.TestCase):
         self.assertIn("set +a", loader)
         self.assertIn("export WLR_DRM_DEVICES", text)
         self.assertIn("export WLR_RENDERER WLR_DRM_NO_MODIFIERS", text)
+
+    def test_cage_loads_the_xkb_layout_shim(self):
+        text = (FILES / "cpz-cage").read_text(encoding="utf-8")
+        self.assertIn("/usr/local/lib/cpz-xkb-layout.so", text)
+        self.assertIn("LD_PRELOAD", text)
+
+    def test_layout_reload_reopens_keyboards_instead_of_cage(self):
+        text = (FILES / "cpz-keyboard-layout").read_text(encoding="utf-8")
+        self.assertIn("cpz-pointer --reload-keymap", text)
+        self.assertIn("cpz-xkb-layout.so", text)
+        self.assertIn("xkb_changed", text)
+        apply = (FILES / "cpz-layout-apply").read_text(encoding="utf-8")
+        self.assertIn("cpz-layout.request", apply)
+        shim = (FILES / "cpz-xkb-layout.c").read_text(encoding="utf-8")
+        self.assertIn("/run/cpz-layout.xkb", shim)
+        self.assertIn("xkb_keymap_new_from_names", shim)
 
     def test_hdmi_switch_waits_for_a_stable_connector(self):
         # Leaving HDMI must survive one HPD pulse; entering HDMI is confirmed
@@ -290,7 +333,6 @@ class OutputPolicyTest(unittest.TestCase):
                     "WLR_DRM_DEVICES='/dev/dri/card0'\n"
                     "WLR_RENDERER='pixman'\n"
                     "WLR_DRM_NO_MODIFIERS='1'\n"
-                    "XKB_DEFAULT_LAYOUT='us'\n"
                 ),
             },
         )

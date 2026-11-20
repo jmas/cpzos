@@ -1,0 +1,198 @@
+#!/usr/bin/python3
+"""Blank the panel and lock the screen after the configured idle time.
+
+The value lives in Settings > Display > Screen Timeout (`screen_timeout` in
+settings.conf, minutes, 0 = never). cage has no compositor-side DPMS timer, so
+this daemon reads the evdev devices directly, just like cpz-media-keys. Any
+input event counts as activity: key presses, pointer motion and touch.
+
+When the timer expires, cpz-lock is started in its own fullscreen foot window.
+The lock window covers graphical clients as well as the terminal and owns the
+backlight until Tab followed by Enter releases it.
+"""
+
+from __future__ import annotations
+
+import glob
+import os
+import select
+import struct
+import subprocess
+import sys
+import time
+
+EVENT = struct.Struct("llHHi")  # struct input_event, 64-bit timeval
+RESCAN = 2.0
+LOCK_MARKER = "/run/cpz-cage/screen.locked"
+BRIGHTNESS = "/usr/local/bin/cpz-brightness"
+LOCK = "/usr/local/bin/cpz-lock"
+FOOT = "/usr/bin/foot"
+RUN = "/usr/local/bin/cpz-run"
+FOOT_CONFIG = "/run/cpz-cage/foot.ini"
+CLIENT_ENV = "/run/cpz-cage/client.env"
+
+
+def log(message):
+    print(f"cpz-idle: {message}", file=sys.stderr, flush=True)
+
+
+def settings_paths():
+    config = os.environ.get("XDG_CONFIG_HOME")
+    if not config:
+        config = os.path.join(os.environ.get("HOME") or "/home/cpz", ".config")
+    return [
+        os.path.join(config, "cpz", "settings.conf"),
+        "/etc/cpz/settings.conf",
+    ]
+
+
+def timeout_seconds():
+    """Return the configured idle delay in seconds; 0 disables the lock."""
+    for path in settings_paths():
+        value = None
+        try:
+            with open(path, encoding="utf-8") as handle:
+                for line in handle:
+                    if line.startswith("screen_timeout="):
+                        value = line.split("=", 1)[1].strip()
+        except OSError:
+            continue
+        if not value:
+            continue
+        try:
+            minutes = int(value)
+        except ValueError:
+            return 0
+        if minutes <= 0:
+            return 0
+        return minutes * 60
+    return 0
+
+
+def should_lock(last_activity, now, timeout):
+    return timeout > 0 and now - last_activity >= timeout
+
+
+def rescan(open_fds):
+    for path in sorted(glob.glob("/dev/input/event*")):
+        if path in open_fds:
+            continue
+        try:
+            open_fds[path] = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            continue
+
+
+def close_all(open_fds):
+    for fd in open_fds.values():
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    open_fds.clear()
+
+
+def consume(handle, open_fds):
+    """Drain one device. Return True when an event was read."""
+    try:
+        data = os.read(handle, EVENT.size * 64)
+    except OSError:
+        data = b""
+    if not data:
+        # Device unplugged or unreadable: drop it and wait for the rescan.
+        for path, fd in list(open_fds.items()):
+            if fd == handle:
+                del open_fds[path]
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+                break
+        return False
+    return True
+
+
+def run(command, quiet=True):
+    try:
+        subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.DEVNULL if quiet else None,
+            stderr=subprocess.DEVNULL if quiet else None,
+        )
+    except OSError as error:
+        log(f"cannot run {command[0]}: {error}")
+
+
+def lock_screen():
+    """Start the fullscreen lock and wait until the user unlocks it."""
+    if os.path.exists(LOCK_MARKER):
+        # Another lock survived a daemon restart; do not stack a second one.
+        return
+    if not os.path.exists(CLIENT_ENV):
+        # cage or foot has not published the session yet (early boot).
+        return
+    command = [
+        RUN,
+        FOOT,
+        "--config=" + FOOT_CONFIG,
+        "--app-id=cpz-lock",
+        "--",
+        LOCK,
+    ]
+    try:
+        subprocess.run(command, check=False)
+    except OSError as error:
+        log(f"cannot start the lock screen: {error}")
+    finally:
+        # cpz-lock removes the marker itself. If foot failed to start or the
+        # lock script crashed after blanking, make sure the panel cannot stay
+        # dark forever.
+        locked = os.path.exists(LOCK_MARKER)
+        try:
+            os.unlink(LOCK_MARKER)
+        except OSError:
+            pass
+        if locked:
+            run([BRIGHTNESS, "wake"])
+
+
+def main():
+    fds = {}
+    last_activity = time.monotonic()
+    log("watching for idle screens")
+    while True:
+        rescan(fds)
+        timeout = timeout_seconds()
+        now = time.monotonic()
+        if timeout <= 0:
+            last_activity = now
+            wait = RESCAN
+        elif should_lock(last_activity, now, timeout):
+            lock_screen()
+            last_activity = time.monotonic()
+            continue
+        else:
+            wait = min(RESCAN, timeout - (now - last_activity))
+
+        if not fds:
+            time.sleep(max(0.01, min(wait, 1.0)))
+            continue
+        try:
+            ready, _, _ = select.select(
+                list(fds.values()), [], [], max(0.01, wait)
+            )
+        except OSError:
+            close_all(fds)
+            time.sleep(0.2)
+            continue
+        for handle in ready:
+            if consume(handle, fds):
+                last_activity = time.monotonic()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

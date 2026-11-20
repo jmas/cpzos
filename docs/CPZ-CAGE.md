@@ -201,11 +201,17 @@ second instead of waiting for a compositor restart. The size is stored per outpu
 and a display switch renders the saved size of the output that starts. A
 legacy single `font_size` is migrated into both on the first read.
 
-`cpz-keyboard-layout` still publishes the XKB layout through systemd-localed.
-`cpz-cage-output` watches the published layout and restarts the compositor
-when it changes, so the next foot/tmux frame uses the new layout. This is a
-restart rather than kmscon's in-place keymap swap, and the only remaining
-common action that blanks the screen.
+`cpz-keyboard-layout` publishes the XKB layout to `/run/cpz-layout.xkb`.
+`cpz-xkb-layout.so`, loaded into cage through `LD_PRELOAD`, reads that file
+whenever cage creates a keyboard. `cpz-pointer --reload-keymap` then sends a
+udev remove/add pair for every keyboard device; the wlroots keyboard group is
+rebuilt with the new layout. The compositor, foot, tmux, the DRM mode and the
+screen stay untouched, so a layout change costs a few dozen milliseconds
+instead of a full-screen refresh. `session.env` deliberately no longer carries
+`XKB_DEFAULT_*`: a changed environment would make `cpz-cage-output` restart
+cage, which is exactly what the shim avoids. If the shim is missing or the
+device reload fails, the helper falls back to `cpz-cage-output --force`; a new
+cage reads the published file during startup.
 
 ## Language
 
@@ -328,11 +334,23 @@ effective pointer state.
 
 ## Screen timeout
 
-The `screen_timeout` setting is persisted, but the cage session does not yet
-have a compositor-side DPMS timer. kmscon handled this with `dpms-timeout`;
-the equivalent needs an idle helper for cage (`swayidle`/`wlopm` compatibility
-has not been proven on the panel). Until that is added, the setting is
-reserved and does not blank the screen.
+`Settings > Display > Screen Timeout` stores the idle delay in
+`screen_timeout` (0 = never, otherwise 1, 5, 10 or 30 minutes). `cpz-idle`
+watches the evdev devices directly because cage has no compositor-side DPMS
+timer; any key press, pointer motion or touch counts as activity.
+
+When the timer expires, `cpz-idle` starts `cpz-lock` in a new fullscreen foot
+window. The lock window covers the tmux terminal and any graphical client that
+was on screen. `cpz-lock` draws the unlock prompt, switches the panel backlight
+off and drops `/run/cpz-cage/screen.locked`. The first key press restores the
+saved brightness (at least 10%), and Tab followed by Enter removes the lock;
+foot exits and cage returns focus to the previous view.
+
+The marker also tells `cpz-cage-output` not to relight or blank the panel
+behind an active lock. `cpz-media-keys` skips its own 0 → 10% wake while the
+marker exists, so the lock screen owns the first key press. The panel backlight
+is the only output this can switch off; an HDMI monitor keeps showing the lock
+window.
 
 ## Boot and hotplug latency
 
@@ -345,6 +363,7 @@ The session no longer waits for HDMI at boot:
   powering up does not trigger a restart loop;
 - the hotplug unit waits briefly for EDID before deciding;
 - font and theme changes replace only the visible foot;
+- keyboard layout changes rebuild only the XKB keymap;
 - display-mode changes apply through a path unit immediately;
 - the boot-time battery check and DRM/EDID preparation run concurrently, so
   their bounded waits overlap instead of adding up;
@@ -416,6 +435,10 @@ systemd logs are visible.
 /usr/local/bin/cpz-getty            # tty1 autologin wrapper
 /usr/local/bin/cpz-getty-prepare    # concurrent battery + DRM boot checks
 /usr/local/bin/cpz-first-login-popup # factory-password popup after the first frame
+/usr/local/bin/cpz-idle            # idle timer; starts cpz-lock
+/usr/local/bin/cpz-lock            # fullscreen screensaver lock window
+/usr/local/lib/cpz-pointer-speed.so # libinput acceleration shim
+/usr/local/lib/cpz-xkb-layout.so   # runtime XKB keymap for cage
 /usr/local/bin/cpz-locale-apply     # writes the system locale; sudo allowlist
 /usr/local/bin/cpz-run              # applies Wayland/X11 env, then execs
 /usr/local/bin/cpz-tmux             # foot command; attaches tmux
@@ -431,6 +454,7 @@ systemd logs are visible.
 /etc/systemd/system/cpz-cage-output.timer
 /etc/systemd/system/cpz-cage-output.path
 /etc/systemd/system/cpz-cage-output-hotplug.service
+/etc/systemd/system/cpz-idle.service
 /etc/udev/rules.d/99-cpz-cage-output.rules
 /etc/systemd/system-sleep/cpz-cage
 /run/cpz-cage/session.env           # WLR_* and XKB_* for cage
@@ -439,6 +463,7 @@ systemd logs are visible.
 /run/cpz-cage/output.request        # Settings -> immediate output reconcile
 /run/cpz-cage/cage-session.pid      # supervisor for a foot-only reload
 /run/cpz-cage/client.env            # WAYLAND_DISPLAY/DISPLAY/XAUTHORITY
+/run/cpz-cage/screen.locked         # active screensaver lock marker
 ```
 
 ## Known limitations
@@ -447,11 +472,17 @@ systemd logs are visible.
   app to return to foot. Use `sway` if a real window manager is needed.
 - **Theme and font changes replace only foot.** The visible terminal is
   swapped in place; cage, the DRM mode and tmux stay up. A display target
-  change (HDMI ↔ panel) restarts the compositor, because the target is the
-  primary DRM device; the blank lasts about as long as a compositor start.
-- **Keyboard layout changes restart the compositor.** kmscon's in-place keymap
-  swap is gone; this is the remaining common action that blanks the screen.
-- **Screen timeout is not implemented yet.**
+  change is covered by the output switch below.
+- **Keyboard layout changes rebuild only the keymap.** `cpz-xkb-layout.so`
+  and a udev keyboard re-add keep cage, foot and tmux alive; the screen does
+  not refresh. Plugging a new keyboard still reloads all keyboards once.
+- **Switching output restarts the compositor.** The target is the primary DRM
+  render device, so HDMI ↔ panel cannot be changed in place. The panel stays
+  dark until `cpz-cage-session` reports the first new foot, which removes the
+  stale-frame flash from the switch.
+- **The screensaver lock is an input lock, not a security boundary.** It covers
+  the screen and restores the backlight only for the unlock prompt, but anyone
+  at the keyboard can release it with Tab then Enter; there is no password.
 - **Panel performance needs a hardware check.** cage uses pixman and dumb
   buffers on the SPI panel; foot uses `wl_shm`. Doom and other software
   renderers should fit, but measure CPU and memory on the CM0.

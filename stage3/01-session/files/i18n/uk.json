@@ -529,5 +529,9 @@
   "Wi-Fi on": "Wi-Fi увімкнено",
   "Wi-Fi off": "Wi-Fi вимкнено",
   "Bluetooth on": "Bluetooth увімкнено",
-  "Bluetooth off": "Bluetooth вимкнено"
+  "Bluetooth off": "Bluetooth вимкнено",
+  "Screen Timeout": "Тайм-аут екрана",
+  "Screen locked": "Екран заблоковано",
+  "Press Tab, then Enter to unlock": "Натисніть Tab, потім Enter, щоб розблокувати",
+  "1 min": "1 хв"
 }

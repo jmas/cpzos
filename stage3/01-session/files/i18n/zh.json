@@ -529,5 +529,9 @@
   "Wi-Fi on": "Wi-Fi 开启",
   "Wi-Fi off": "Wi-Fi 关闭",
   "Bluetooth on": "蓝牙开启",
-  "Bluetooth off": "蓝牙关闭"
+  "Bluetooth off": "蓝牙关闭",
+  "Screen Timeout": "屏幕超时",
+  "Screen locked": "屏幕已锁定",
+  "Press Tab, then Enter to unlock": "按 Tab，然后按 Enter 解锁",
+  "1 min": "1 分钟"
 }

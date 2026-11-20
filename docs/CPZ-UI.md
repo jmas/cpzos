@@ -598,9 +598,10 @@ Rules for exceptions:
 | --- | --- | --- |
 | **Settings** | the TUI and its main page | Preferences, Control Panel |
 | **Connections** | Wi-Fi, Bluetooth, Ethernet, VPN page | Network (for the page), Connectivity |
-| **Display** | theme, brightness, screen output, font, text size, status bar | Display & Brightness |
+| **Display** | theme, brightness, screen output, font, text size, screen timeout, status bar | Display & Brightness |
 | **Font** | foot typeface for the whole terminal interface | Font Family, Typeface |
 | **Text Size** | foot font size, 12–32 px | Font Size |
+| **Screen Timeout** | idle delay that blanks the panel and starts the lock screen | Screensaver, Sleep, Screen Blank |
 | **Keys** | key reference | Key Bindings, Key reference |
 | **pane** | a tmux split | split, window |
 | **tab** | a tmux window | window (in user text) |

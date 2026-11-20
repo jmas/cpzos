@@ -32,11 +32,11 @@
 # show it in the status bar.
 #
 # cage uses libxkbcommon and does not read the console keymap. This script
-# publishes the X11 layout through localectl; cpz-cage-output notices the
-# changed layout and restarts the compositor, so the next foot/tmux frame uses
-# it. For the internal keyboard the CPZ overlay is generated on top of the
-# selected language, with one layout name per language (cpz_us, cpz_ua, ...) so
-# a language change is visible to localed even though the prefix stays "cpz".
+# publishes the XKB layout to /run/cpz-layout.xkb and then reopens the keyboard
+# devices. cpz-xkb-layout.so makes cage rebuild its keymap from that file, so
+# the compositor and the screen stay untouched. For the internal keyboard the
+# CPZ overlay is generated on top of the selected language, with one layout
+# name per language (cpz_us, cpz_ua, ...).
 # The overlay is language-aware: the driver's Sym layer reuses ordinary
 # punctuation keycodes, and national layouts put their extra letters on exactly
 # those keycodes. cpz-layout-map keeps the layout's letters on the Sym layer
@@ -64,6 +64,7 @@ bluetooth_bustype=0005
 ps2_bustype=0011
 external_keyboard=0
 applied_layout=
+xkb_changed=0
 
 log() {
 	[ -d "${log_file%/*}" ] || return 0
@@ -244,10 +245,16 @@ fi
 # A single unplug removes several devices (event node, input device, HID
 # interface) as separate udev events. Wait until the queue is empty so the
 # first run already sees the final keyboard set instead of a half-removed
-# keyboard that still looks external. The boot service sets
-# CPZ_LAYOUT_SETTLE=0: sysinit normally has the device set ready, and the
-# should not wait for a redundant settle before its first frame. If no input
-# node exists yet, fall back to the full settle.
+# keyboard that still looks external. A user-initiated switch leaves
+# /run/cpz-layout.request and skips both waits: the device set is unchanged.
+if [ -e /run/cpz-layout.request ]; then
+	rm -f /run/cpz-layout.request 2>/dev/null || true
+	CPZ_LAYOUT_SETTLE=0
+	export CPZ_LAYOUT_SETTLE
+fi
+# The boot service sets CPZ_LAYOUT_SETTLE=0: sysinit normally has the device
+# set ready, and the should not wait for a redundant settle before its first
+# frame. If no input node exists yet, fall back to the full settle.
 if [ "${CPZ_LAYOUT_SETTLE:-1}" = 0 ] &&
 	! ls /dev/input/event* >/dev/null 2>&1; then
 	CPZ_LAYOUT_SETTLE=1
@@ -260,7 +267,7 @@ fi
 # guaranteed: the primary keyboard node can disappear before its media
 # interface (or before the keyboard endpoint of a mouse). Deciding on such a
 # half-removed set flips the layout twice (us -> cpz_us -> us), and every flip
-# restarts the compositor. Wait until the event node list stops changing, then
+# reopens the keyboards. Wait until the event node list stops changing, then
 # decide once.
 if [ "${CPZ_LAYOUT_SETTLE:-1}" = 1 ]; then
 	snapshot_prev=
@@ -444,21 +451,54 @@ prepare_cpz_maps() {
 	return 1
 }
 
-# Publish the layout for cpz-cage-output. cage reads XKB_DEFAULT_LAYOUT from
-# its session environment; it does not consult localed. This file is therefore
-# the authoritative channel and is written even when localed refuses the call.
-# Do not read /etc/default/keyboard here: Debian links /etc/vconsole.conf to
-# it, localed replaces that link on its first write, and the two then diverge
-# from the layout localed actually has.
+# Publish the layout for cage. cage reads this file at startup and
+# cpz-xkb-layout.so rereads it whenever a keyboard is re-added; neither path
+# consults localed. Do not read /etc/default/keyboard here: Debian links
+# /etc/vconsole.conf to it, localed replaces that link on its first write, and
+# the two then diverge from the layout localed actually has.
 publish_xkb_state() {
-	# Cache the XKB code for cpz-cage-output. Reading this file on the output
-	# timer avoids a localectl D-Bus round trip every second on the CM0.
+	# Cache the XKB code for cage and for --status diagnostics. The previous
+	# value decides whether the keyboard devices must be reopened.
 	code=$1
 	[ -d /run ] || return 0
+	previous=$(sed -n 's/^layout=//p' /run/cpz-layout.xkb 2>/dev/null |
+		tail -n 1)
 	tmp=/run/.cpz-layout.xkb.$$
 	printf 'layout=%s\n' "$code" >"$tmp" 2>/dev/null || return 0
 	chmod 0644 "$tmp" 2>/dev/null || true
 	mv "$tmp" /run/cpz-layout.xkb 2>/dev/null || rm -f "$tmp"
+	if [ "$previous" = "$code" ]; then
+		xkb_changed=0
+	else
+		xkb_changed=1
+	fi
+}
+
+reload_keyboards() {
+	# cpz-xkb-layout.so makes cage rebuild its keymap from the published file
+	# when a keyboard is re-added. Reopening all keyboard devices destroys the
+	# wlroots keyboard group, so the next xkb_keymap_new_from_names() call
+	# reads the new layout. Nothing on screen is replaced.
+	if ! pgrep -x cage >/dev/null 2>&1; then
+		return 0
+	fi
+	cage_pid=$(pgrep -x cage | head -n 1)
+	if [ ! -r /usr/local/lib/cpz-xkb-layout.so ] ||
+		! grep -q 'cpz-xkb-layout.so' "/proc/$cage_pid/maps" 2>/dev/null; then
+		# An upgraded image can have the shim on disk while the running cage
+		# was started before it. The keymap would not be reloaded in place.
+		log "xkb shim not active; restarting the compositor"
+		/usr/local/bin/cpz-cage-output --force >/dev/null 2>&1 || true
+		return 0
+	fi
+	if [ -x /usr/local/bin/cpz-pointer ] &&
+		/usr/local/bin/cpz-pointer --reload-keymap >/dev/null 2>&1; then
+		log "keyboard keymap reloaded in place"
+		return 0
+	fi
+	# Fallback: a new cage reads /run/cpz-layout.xkb during startup.
+	log "keymap reload failed; restarting the compositor"
+	/usr/local/bin/cpz-cage-output --force >/dev/null 2>&1 || true
 }
 
 publish_xkb() {
@@ -466,20 +506,14 @@ publish_xkb() {
 	case "$code" in
 		'' | *[!a-zA-Z0-9_-]*) return 1 ;;
 	esac
-	# Always publish for cage, before touching localed. Debian ships
+	# /run/cpz-layout.xkb is the authoritative channel: cage reads it at
+	# startup and cpz-xkb-layout.so rereads it when a keyboard is re-added.
+	# localectl is deliberately not called here. Debian ships
 	# /usr/share/dbus-1/system.d/systemd-localed-read-only.conf, which denies
-	# org.freedesktop.locale1.SetX11Keyboard to every caller including root
-	# ("keymap/locales are not set via localed"). Making the localectl call a
-	# precondition left X11 Layout at "us", so cage never loaded cpz_us and
-	# Sym produced the base US symbols.
+	# SetX11Keyboard to every caller including root, and the synchronous
+	# D-Bus timeout delayed the visible layout switch for no benefit.
 	publish_xkb_state "$code"
-	if command -v localectl >/dev/null 2>&1 &&
-		timeout 5 localectl --no-convert set-x11-keymap "$code" \
-			>/dev/null 2>&1; then
-		log "xkb layout: $code"
-	else
-		log "localed not writable; xkb layout $code published for cage"
-	fi
+	log "xkb layout: $code"
 	return 0
 }
 
@@ -627,3 +661,7 @@ while :; do
 	log "keyboard set changed during apply; selecting again"
 	external_keyboard=$new_external
 done
+
+if [ "$xkb_changed" = 1 ]; then
+	reload_keyboards
+fi

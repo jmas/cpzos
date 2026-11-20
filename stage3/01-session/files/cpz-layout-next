@@ -4,8 +4,8 @@
 #
 # The enabled layouts live in keyboard_layouts; this updates
 # keyboard_layout_active in the user's settings and asks cpz-layout-apply (via
-# a narrow sudoers rule) to apply the layout. cage follows systemd-localed,
-# so the keymap changes in place without restarting the session.
+# a narrow sudoers rule) to apply the layout. cpz-xkb-layout.so lets cage
+# rebuild only the keymap, so the screen does not refresh.
 set -u
 
 home=${HOME:-/root}

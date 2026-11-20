@@ -82,7 +82,8 @@ esac
 # cpz-keyboard-layout publishes the active layout for the compositor. Prefer
 # it over localectl: Debian's dbus policy denies SetX11Keyboard to localed, so
 # localectl can report a stale "us" layout even while the CPZ overlay is
-# active. This mirrors cpz-cage-output's fast path.
+# active. cpz-xkb-layout.so uses the same file when a keyboard is re-added, so
+# neither path needs a compositor restart.
 if [ -z "${XKB_DEFAULT_LAYOUT:-}" ] && [ -r /run/cpz-layout.xkb ]; then
 	layout=$(sed -n 's/^layout=//p' /run/cpz-layout.xkb | tail -n 1)
 	case "$layout" in
@@ -155,8 +156,15 @@ fi
 
 # Apply the Settings > Input > Mouse Speed value. cage 0.3.1 has no pointer
 # acceleration API, so the shim configures each libinput device as it appears.
-if [ -r /usr/local/lib/cpz-pointer-speed.so ]; then
-	LD_PRELOAD=/usr/local/lib/cpz-pointer-speed.so
+# The XKB shim reads /run/cpz-layout.xkb when cage creates a keyboard, which
+# lets a layout change rebuild only the keymap instead of the whole session.
+preload=
+for shim in /usr/local/lib/cpz-pointer-speed.so /usr/local/lib/cpz-xkb-layout.so; do
+	[ -r "$shim" ] || continue
+	preload="${preload}${preload:+ }$shim"
+done
+if [ -n "$preload" ]; then
+	LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD }$preload"
 	export LD_PRELOAD
 fi
 

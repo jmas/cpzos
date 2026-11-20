@@ -5,7 +5,7 @@
 install -d -m 0755 "${ROOTFS_DIR}/usr/local/bin"
 install -m 0755 files/cpz-cage files/cpz-cage-output files/cpz-cage-session \
 	files/cpz-session-supervise files/cpz-open files/cpz-music \
-	files/cpz-media-keys files/cpz-track \
+	files/cpz-media-keys files/cpz-track files/cpz-idle files/cpz-lock \
 	files/cpz-panel-backlight \
 	files/cpz-foot-config files/cpz-foot-reload \
 	files/cpz-getty files/cpz-getty-prepare files/cpz-run \
@@ -25,6 +25,8 @@ install -d -m 0755 "${ROOTFS_DIR}/usr/local/lib" \
 	"${ROOTFS_DIR}/usr/local/share/cpz"
 install -m 0644 files/cpz-pointer-speed.c \
 	"${ROOTFS_DIR}/usr/local/share/cpz/cpz-pointer-speed.c"
+install -m 0644 files/cpz-xkb-layout.c \
+	"${ROOTFS_DIR}/usr/local/share/cpz/cpz-xkb-layout.c"
 
 # Wi-Fi is intentionally soft-blocked in the factory image and is enabled
 # from Settings. The stock login-shell check then prints "Wi-Fi is currently
@@ -189,6 +191,7 @@ install -m 0644 files/cpz-session-save.service files/cpz-session-save.timer \
 	files/cpz-conn-status.service files/cpz-conn-status.timer \
 	files/cpz-pointer.service files/cpz-pointer.path \
 	files/cpz-pointer-cursor.service files/cpz-media-keys.service \
+	files/cpz-idle.service \
 	"${ROOTFS_DIR}/etc/systemd/system/"
 
 # wifitui is the Wi-Fi manager behind Settings > Connections. It is not in
@@ -421,7 +424,7 @@ fi
 systemctl daemon-reload || true
 CHROOT
 
-# Build the pointer-speed shim while build-essential is still in the image.
+# Build the LD_PRELOAD shims while build-essential is still in the image.
 on_chroot << 'CHROOT'
 set -e
 cc -O2 -fPIC -shared -Wall -Wextra \
@@ -429,4 +432,9 @@ cc -O2 -fPIC -shared -Wall -Wextra \
 	/usr/local/share/cpz/cpz-pointer-speed.c -ldl
 chmod 0644 /usr/local/lib/cpz-pointer-speed.so
 rm -f /usr/local/share/cpz/cpz-pointer-speed.c
+cc -O2 -fPIC -shared -Wall -Wextra \
+	-o /usr/local/lib/cpz-xkb-layout.so \
+	/usr/local/share/cpz/cpz-xkb-layout.c -ldl
+chmod 0644 /usr/local/lib/cpz-xkb-layout.so
+rm -f /usr/local/share/cpz/cpz-xkb-layout.c
 CHROOT

@@ -529,5 +529,9 @@
   "Wi-Fi on": "Wi-Fi açık",
   "Wi-Fi off": "Wi-Fi kapalı",
   "Bluetooth on": "Bluetooth açık",
-  "Bluetooth off": "Bluetooth kapalı"
+  "Bluetooth off": "Bluetooth kapalı",
+  "Screen Timeout": "Ekran zaman aşımı",
+  "Screen locked": "Ekran kilitli",
+  "Press Tab, then Enter to unlock": "Kilidi açmak için Tab, sonra Enter'a basın",
+  "1 min": "1 dk"
 }

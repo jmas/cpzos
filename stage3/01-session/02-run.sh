@@ -170,6 +170,7 @@ if [ -f /etc/cpz-debug-boot ]; then
 	# would be hidden.
 	systemctl disable cpz-tmux.service 2>/dev/null || true
 	systemctl mask cpz-tmux.service || true
+	systemctl disable cpz-idle.service 2>/dev/null || true
 	systemctl disable cpz-cage-output.timer cpz-cage-output.path 2>/dev/null || true
 	systemctl unmask getty@tty1.service getty@tty2.service getty@tty3.service || true
 	systemctl enable getty@tty1.service getty@tty2.service getty@tty3.service || true
@@ -185,6 +186,9 @@ else
 	# Headphone volume buttons are plain evdev keys that cage never
 	# forwards to foot; a small user daemon turns them into wpctl calls.
 	systemctl enable cpz-media-keys.service
+	# cage has no compositor idle protocol; cpz-idle watches evdev and starts
+	# the fullscreen lock after Settings > Display > Screen Timeout.
+	systemctl enable cpz-idle.service
 	systemctl unmask getty@tty2.service getty@tty3.service || true
 	systemctl enable getty@tty2.service getty@tty3.service
 	# tty2/tty3 are not drawn while fbcon=map:off, and foot renders with

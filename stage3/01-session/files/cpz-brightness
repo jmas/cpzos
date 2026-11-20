@@ -20,19 +20,20 @@ percent=$(get brightness)
 case "$percent" in
 	'' | *[!0-9]*) percent=100 ;;
 esac
-[ "$percent" -ge 10 ] || percent=10
+[ "$percent" -ge 0 ] || percent=0
 [ "$percent" -le 100 ] || percent=100
 
 action=${1:-apply}
+blank=0
 case "$action" in
-	up | down)
+	up | down | wake)
 		previous=$percent
-		if [ "$action" = up ]; then
-			percent=$((percent + 10))
-		else
-			percent=$((percent - 10))
-		fi
-		[ "$percent" -ge 10 ] || percent=10
+		case "$action" in
+			up) percent=$((percent + 10)) ;;
+			down) percent=$((percent - 10)) ;;
+			wake) [ "$percent" -ge 10 ] || percent=10 ;;
+		esac
+		[ "$percent" -ge 0 ] || percent=0
 		[ "$percent" -le 100 ] || percent=100
 		# Keep the stored level in step with the key, even when HDMI is the
 		# active output and the panel is currently dark.
@@ -57,9 +58,14 @@ case "$action" in
 			mv "$tmp" "$user_settings" 2>/dev/null || { rm -f "$tmp"; exit 1; }
 		fi
 		;;
+	blank)
+		# The screensaver lock blanks the panel without touching the saved
+		# level; wake restores that level on the first key press.
+		blank=1
+		;;
 	apply) ;;
 	*)
-		printf 'usage: %s [up|down]\n' "${0##*/}" >&2
+		printf 'usage: %s [up|down|wake|blank]\n' "${0##*/}" >&2
 		exit 2
 		;;
 esac
@@ -69,6 +75,22 @@ esac
 # returns to the panel. Writing brightness here would wake the panel.
 if [ -r /run/cpz-cage/output.state ] &&
 	[ "$(sed -n 's/^target=//p' /run/cpz-cage/output.state | tail -n 1)" = hdmi ]; then
+	exit 0
+fi
+
+if [ "$blank" = 1 ]; then
+	if [ -x /usr/local/bin/cpz-panel-backlight ]; then
+		if [ "$(id -u)" = 0 ]; then
+			/usr/local/bin/cpz-panel-backlight off >/dev/null 2>&1 && exit 0
+		else
+			sudo -n /usr/local/bin/cpz-panel-backlight off \
+				>/dev/null 2>&1 && exit 0
+		fi
+	fi
+	for backlight in /sys/class/backlight/*; do
+		[ -w "$backlight/brightness" ] || continue
+		printf '0' >"$backlight/brightness" 2>/dev/null || true
+	done
 	exit 0
 fi
 
@@ -90,7 +112,6 @@ for backlight in /sys/class/backlight/*; do
 	max=$(cat "$backlight/max_brightness" 2>/dev/null || echo 0)
 	[ "$max" -gt 0 ] 2>/dev/null || continue
 	value=$((percent * max / 100))
-	[ "$value" -ge 1 ] || value=1
 	printf '%s' "$value" >"$backlight/brightness" 2>/dev/null || true
 	break
 done

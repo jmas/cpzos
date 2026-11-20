@@ -49,7 +49,21 @@ class BrightnessStep(unittest.TestCase):
         _, high = self.run_step(100, "up")
         self.assertEqual(high, 100)
         _, low = self.run_step(10, "down")
-        self.assertEqual(low, 10)
+        self.assertEqual(low, 0)
+        _, floor = self.run_step(0, "down")
+        self.assertEqual(floor, 0)
+
+    def test_wake_restores_at_least_ten_percent(self):
+        _, zero = self.run_step(0, "wake")
+        self.assertEqual(zero, 10)
+        _, five = self.run_step(5, "wake")
+        self.assertEqual(five, 10)
+        _, bright = self.run_step(40, "wake")
+        self.assertEqual(bright, 40)
+
+    def test_blank_keeps_the_saved_brightness(self):
+        _, saved = self.run_step(40, "blank")
+        self.assertEqual(saved, 40)
 
     def test_unknown_action_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

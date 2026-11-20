@@ -30,17 +30,23 @@ pull request (`.github/workflows/ci.yml`).
   filtering and the Terminal Trove catalog filters/apt parsing/manager state.
 - `test_cpz_output.py` runs a copy of `cpz-cage-output` against a fake
   sysfs/settings tree and checks that `display=panel` is honoured both by the
-  systemd unit, the generated cage environment and the panel backlight.
+  systemd unit, the generated cage environment and the panel backlight,
+  including while the screensaver lock owns the panel.
+- `test_cpz_idle.py` checks the screensaver timeout parser and the idle
+  threshold used by `cpz-idle`.
+- `test_cpz_lock.py` checks the Tab-then-Enter unlock sequence, the localized
+  lock prompt and the backlight marker hand-off to `cpz-brightness`.
 - `test_cpz_i18n.py` checks the English/Ukrainian/German catalogs, fallback,
   placeholders, language normalization and the Settings Language selector.
 - `test_cpz_pointer.py` runs `cpz-pointer` against a fake sysfs input tree and
   checks that phantom HDMI/keyboard pointer bits are stripped, that a real USB
   mouse keeps its cursor only when Mouse Support is on, that touchscreens stay
   usable, and that a settings change reopens pointer devices once without
-  restarting cage.
+  restarting cage. It also checks that a keymap reload reopens only keyboards.
 - `test_cpz_cage_session.py` runs the session supervisor against a fake foot
   and checks that a reload replaces only the visible terminal while the anchor
-  keeps the session alive, and that shutdown removes the pid files.
+  keeps the session alive, that the ready marker is published, and that
+  shutdown removes the pid files.
 - `test_cpz_run.py` checks that `cpz-run` applies the Wayland/X11 environment
   published by the foot client and still works without it.
 - `test_cpz_foot.py` renders the foot configuration against a fake theme and
@@ -70,6 +76,9 @@ pull request (`.github/workflows/ci.yml`).
 - `test_cpz_layout_map.py` checks the language-aware CPZ Sym overlay: letter
   detection (Unicode/ASCII/function keysyms), the unchanged Latin table, the
   removed letter keycodes and the relocated ASCII punctuation on Shift+Sym.
+- `test_state_contract.py` scans runtime shell helpers for writes to `/etc`
+  and `/var`, and keeps the known-deviation allowlist current. The normative
+  rules are in `docs/STATE.md`.
 - `test_update_os_list.py` checks the os-list naming rules used by the release
   workflow: SemVer tags (`v0.1.0`), prerelease suffixes and legacy timestamp
   tags.

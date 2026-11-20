@@ -300,6 +300,27 @@ class PointerPolicyTest(unittest.TestCase):
         self.assertIn("--action=remove", lines[0])
         self.assertIn(str(keyboard), lines[0])
 
+    def test_reload_keymap_reopens_keyboards_only(self):
+        mouse = self.add_device("event1", rel=REL_XY, key=BTN_LEFT)
+        first = self.add_device(
+            "event2",
+            name="Internal Keyboard",
+            bus="0018",
+            key=FULL_KEYBOARD,
+        )
+        second = self.add_device(
+            "event3",
+            name="USB Keyboard",
+            bus="0003",
+            key=FULL_KEYBOARD,
+        )
+        self.run_pointer(["--reload-keymap"], settings="mouse=1\n")
+        lines = self.udev_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 4)
+        for device in (first, second):
+            self.assertTrue(any(str(device) in line for line in lines))
+        self.assertFalse(any(str(mouse) in line for line in lines))
+
     def test_nudge_does_not_touch_input_when_the_cursor_is_visible(self):
         self.add_device("event1", rel=REL_XY, key=BTN_LEFT)
         self.add_device(

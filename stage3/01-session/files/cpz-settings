@@ -49,7 +49,7 @@ _POINTER_STATUS: tuple[float, dict[str, str]] | None = None
 HISTORY_CHOICES = (2000, 5000, 10000)
 DATE_FORMATS = ("short", "iso", "eu", "us")
 DISPLAY_MODES = ("auto", "panel", "hdmi")
-SCREEN_TIMEOUTS = (0, 5, 10, 30)
+SCREEN_TIMEOUTS = (0, 1, 5, 10, 30)
 MODE_KEYS = ("vi", "emacs")
 STATUS_INTERVALS = (1, 2, 5)
 VOLUME_PERCENTS = tuple(range(0, 101))
@@ -443,6 +443,7 @@ DISPLAY_LABELS = {
 
 SCREEN_TIMEOUT_LABELS = {
     0: "Never",
+    1: "1 min",
     5: "5 min",
     10: "10 min",
     30: "30 min",
@@ -805,7 +806,7 @@ def load_settings() -> dict:
         brightness = int(data["brightness"])
     except (TypeError, ValueError):
         brightness = DEFAULTS["brightness"]
-    data["brightness"] = max(10, min(100, brightness))
+    data["brightness"] = max(0, min(100, brightness))
     try:
         mouse_speed = int(data["mouse_speed"])
     except (TypeError, ValueError):
@@ -1074,9 +1075,6 @@ def apply_live(data: dict, key: str) -> None:
     elif key == "brightness":
         set_backlight_percent(data["brightness"])
     elif key == "screen_timeout":
-        # The value is persisted. The cage session has no compositor-side
-        # DPMS timer; an idle helper can consume this setting later without
-        # changing the storage format.
         apply_screen_timeout(data["screen_timeout"])
     elif key == "display":
         # The path unit runs cpz-cage-output immediately; the five-second
@@ -1157,7 +1155,7 @@ def output_is_hdmi() -> bool:
 
 
 def set_backlight_percent(percent: int) -> bool:
-    percent = max(1, min(100, percent))
+    percent = max(0, min(100, percent))
     # The panel is dark while HDMI is active; the value is stored in the
     # settings and restored by cpz-cage-output on the next switch.
     if output_is_hdmi():
@@ -1168,7 +1166,7 @@ def set_backlight_percent(percent: int) -> bool:
                 maximum = int(fh.read().strip())
             if maximum <= 0:
                 continue
-            value = max(1, percent * maximum // 100)
+            value = percent * maximum // 100
             with open(os.path.join(path, "brightness"), "w", encoding="utf-8") as fh:
                 fh.write(str(value))
             return True
@@ -1178,11 +1176,11 @@ def set_backlight_percent(percent: int) -> bool:
 
 
 def apply_screen_timeout(minutes: int) -> None:
-    """Persist the requested screen timeout.
+    """Persist the requested screensaver timeout.
 
-    The value is stored in settings.conf. The cage session does not expose a
-    compositor DPMS timer, so an idle helper can consume the same key later
-    without changing the settings format or the Settings page.
+    cpz-idle re-reads the value from settings.conf, so there is nothing to
+    signal here. The daemon blanks the panel and starts cpz-lock after the
+    requested number of idle minutes.
     """
 
 
@@ -6264,8 +6262,15 @@ def page_items(name: str, data: dict, screen) -> list[dict[str, Any]]:
                 "label": "Brightness",
                 "kind": "scale",
                 "key": "brightness",
-                "values": tuple(range(10, 101, 5)),
-                "labels": {value: f"{value}%" for value in range(10, 101, 5)},
+                "values": tuple(range(0, 101, 5)),
+                "labels": {value: f"{value}%" for value in range(0, 101, 5)},
+            },
+            {
+                "label": "Screen Timeout",
+                "kind": "picker",
+                "key": "screen_timeout",
+                "values": SCREEN_TIMEOUTS,
+                "labels": SCREEN_TIMEOUT_LABELS,
             },
             {
                 "label": "Display Output",

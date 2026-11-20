@@ -3,10 +3,12 @@
 #
 # The session is cage + foot, not kmscon. cage owns DRM/KMS and drives the
 # selected output; this helper writes the environment that cpz-cage reads and
-# restarts the tty1 getty only when the DRM/keyboard environment changes. A
-# display target change (HDMI plug/unplug) is an environment change: cage runs
-# on a single DRM card at a time. A foot-config change replaces just the visible
-# terminal. It also keeps the panel backlight in step with the output policy.
+# restarts the tty1 getty only when the DRM environment changes. A display
+# target change (HDMI plug/unplug) is an environment change: cage runs on a
+# single DRM card at a time. A foot-config change replaces just the visible
+# terminal. Keyboard layouts no longer pass through this helper; the XKB shim
+# reloads the keymap in place. It also keeps the panel backlight in step with
+# the output policy.
 #
 # Why one card at a time:
 #   The panel is an SPI DRM card without a render node and the vc4 HDMI card is
@@ -206,43 +208,6 @@ hdmi_probe() {
 	fi
 }
 
-xkb_settings() {
-	layout=""
-	variant=""
-	model=""
-	options=""
-	# cpz-keyboard-layout caches the code it successfully published. This is
-	# the fast path for the one-second output timer.
-	if [ -r /run/cpz-layout.xkb ]; then
-		layout=$(sed -n 's/^layout=//p' /run/cpz-layout.xkb | tail -n 1)
-		variant=$(sed -n 's/^variant=//p' /run/cpz-layout.xkb | tail -n 1)
-	fi
-	if [ -z "$layout" ] && command -v localectl >/dev/null 2>&1; then
-		status=$(timeout 5 localectl --no-pager status 2>/dev/null || true)
-		layout=$(printf '%s\n' "$status" |
-			sed -n 's/^[[:space:]]*X11 Layout:[[:space:]]*//p' | head -n 1)
-		variant=$(printf '%s\n' "$status" |
-			sed -n 's/^[[:space:]]*X11 Variant:[[:space:]]*//p' | head -n 1)
-		model=$(printf '%s\n' "$status" |
-			sed -n 's/^[[:space:]]*X11 Model:[[:space:]]*//p' | head -n 1)
-		options=$(printf '%s\n' "$status" |
-			sed -n 's/^[[:space:]]*X11 Options:[[:space:]]*//p' | head -n 1)
-	fi
-	case "$layout" in
-		*[!a-zA-Z0-9_,-]*) layout="" ;;
-	esac
-	if [ -z "$layout" ] && [ -r /etc/default/keyboard ]; then
-		layout=$(sed -n 's/^XKBLAYOUT="\([^"]*\)".*/\1/p' /etc/default/keyboard |
-			head -n 1)
-		variant=$(sed -n 's/^XKBVARIANT="\([^"]*\)".*/\1/p' /etc/default/keyboard |
-			head -n 1)
-		model=$(sed -n 's/^XKBMODEL="\([^"]*\)".*/\1/p' /etc/default/keyboard |
-			head -n 1)
-		options=$(sed -n 's/^XKBOPTIONS="\([^"]*\)".*/\1/p' /etc/default/keyboard |
-			head -n 1)
-	fi
-}
-
 choose_devices() {
 	# Sets target and devices. The panel is card1/SPI-1 on the CPZ image; HDMI
 	# is on the vc4 card. Do not assume the numbers: find the connectors.
@@ -294,13 +259,6 @@ render_env() {
 		printf "WLR_RENDERER='%s'\n" "${renderer:-pixman}"
 		[ "${no_modifiers:-0}" = 1 ] &&
 			printf "WLR_DRM_NO_MODIFIERS='1'\n"
-		[ -n "${layout:-}" ] &&
-			printf "XKB_DEFAULT_LAYOUT='%s'\n" "$layout"
-		[ -n "${variant:-}" ] &&
-			printf "XKB_DEFAULT_VARIANT='%s'\n" "$variant"
-		[ -n "${model:-}" ] && printf "XKB_DEFAULT_MODEL='%s'\n" "$model"
-		[ -n "${options:-}" ] &&
-			printf "XKB_DEFAULT_OPTIONS='%s'\n" "$options"
 	} >"$tmp"
 	if [ "$(id -u)" = 0 ]; then
 		chown 1000:1000 "$tmp" 2>/dev/null || true
@@ -377,6 +335,24 @@ panel_off() {
 }
 
 panel_on() {
+	# The screensaver lock owns the backlight. It either keeps the panel dark
+	# or has just woken it for the unlock prompt; the five-second reconciler
+	# must not change either state behind it.
+	if [ -e "$run_dir/screen.locked" ]; then
+		return 0
+	fi
+	if [ "${wait_ready:-0}" = 1 ] && [ -e "$run_dir/client.env" ]; then
+		# cpz-cage-session writes this marker after starting the visible foot.
+		# Keeping the panel dark until then hides the stale framebuffer that a
+		# card switch leaves behind; the first visible frame is the new
+		# terminal instead of an intermediate refresh.
+		tries=0
+		while [ ! -e "$run_dir/session.ready" ] && [ "$tries" -lt 30 ]; do
+			sleep 0.1
+			tries=$((tries + 1))
+		done
+		wait_ready=0
+	fi
 	percent=$(get_setting brightness)
 	case "$percent" in
 		'' | *[!0-9]*) percent=100 ;;
@@ -384,7 +360,7 @@ panel_on() {
 	# Canonical decimal: a hand-written "050" must match the helper's cache
 	# key "on:50", otherwise every tick starts Python again.
 	percent=$((percent + 0))
-	[ "$percent" -ge 1 ] || percent=1
+	[ "$percent" -ge 0 ] || percent=0
 	[ "$percent" -le 100 ] || percent=100
 	state="on:$percent"
 	if [ "$force" = 0 ] &&
@@ -409,7 +385,6 @@ panel_on() {
 			'' | *[!0-9]* | 0) continue ;;
 		esac
 		value=$((percent * max / 100))
-		[ "$value" -ge 1 ] || value=1
 		if [ "$(cat "$light/brightness" 2>/dev/null || true)" != "$value" ]; then
 			printf '%s' "$value" >"$light/brightness" 2>/dev/null ||
 				continue
@@ -750,8 +725,6 @@ if [ "$status_mode" = 1 ]; then
 	exit 0
 fi
 
-xkb_settings
-
 if [ "$prepare" = 1 ]; then
 	# Input devices are enumerated before the console user's settings are
 	# available. Re-evaluate the pointer policy once per boot, before cage
@@ -869,6 +842,7 @@ fi
 now=$(date +%s 2>/dev/null || printf 0)
 
 need_restart=0
+wait_ready=0
 restart_reason=
 if [ "$force" = 1 ]; then
 	need_restart=1
@@ -973,7 +947,11 @@ if [ "$need_restart" = 1 ]; then
 	# starts, and cpz-foot-config picks the per-output font size from this
 	# state. Without it the first frame after a switch would use the old size.
 	write_state
+	rm -f "$run_dir/session.ready" 2>/dev/null || true
 	if restart_session; then
+		if [ "$target" = panel ]; then
+			wait_ready=1
+		fi
 		hdmi_probe
 		if [ "$target" = hdmi ]; then
 			# Give the freshly started cage a moment to enable the connector

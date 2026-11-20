@@ -3,9 +3,17 @@
 #
 # Installed with a narrow sudoers rule so the Alt+Space binding can switch
 # layouts without a password prompt. The helper takes no arguments and only
-# starts the cpz-keyboard-layout unit; that unit loads the console keymap and
-# publishes the XKB layout to systemd-localed, where cage picks it up at
-# runtime (no session restart).
+# starts the cpz-keyboard-layout unit; that unit loads the console keymap,
+# publishes /run/cpz-layout.xkb and reloads the keyboard devices so cage
+# rebuilds its keymap without a compositor restart.
 set -eu
 
-/usr/bin/systemctl start cpz-keyboard-layout.service
+# A user-initiated switch knows the device set has not changed. Skip the
+# udev settle and the 0.2 s stability loop that exist for hotplug events.
+request=/run/cpz-layout.request
+: >"$request" 2>/dev/null || true
+if ! /usr/bin/systemctl start cpz-keyboard-layout.service; then
+	rm -f "$request" 2>/dev/null || true
+	exit 1
+fi
+rm -f "$request" 2>/dev/null || true

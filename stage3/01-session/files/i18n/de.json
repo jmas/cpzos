@@ -529,5 +529,9 @@
   "Wi-Fi on": "WLAN an",
   "Wi-Fi off": "WLAN aus",
   "Bluetooth on": "Bluetooth an",
-  "Bluetooth off": "Bluetooth aus"
+  "Bluetooth off": "Bluetooth aus",
+  "Screen Timeout": "Bildschirm-Timeout",
+  "Screen locked": "Bildschirm gesperrt",
+  "Press Tab, then Enter to unlock": "Zum Entsperren Tab, dann Enter drücken",
+  "1 min": "1 Min."
 }

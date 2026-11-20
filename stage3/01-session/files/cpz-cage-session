@@ -87,6 +87,11 @@ while :; do
 	fi
 	foot_pid=$!
 	write_pid "$foot_pid_file" "$foot_pid"
+	# cpz-cage-output waits for this marker before lighting the panel after an
+	# output switch, so the user sees the new terminal frame instead of the
+	# stale framebuffer that was left on the panel card.
+	printf '%s\n' "$(date +%s 2>/dev/null || printf 0)" \
+		>"$run_dir/session.ready" 2>/dev/null || true
 
 	status=0
 	while :; do

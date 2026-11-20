@@ -1,0 +1,219 @@
+#!/usr/bin/python3
+"""CPZ screensaver lock screen.
+
+cpz-idle starts this program in a new foot window, so it covers the tmux
+terminal and any graphical client that was on screen. The panel backlight is
+switched off after the first frame is drawn. Any key press restores the saved
+brightness; Tab followed by Enter removes the lock, foot closes, and cage
+returns focus to the previous view.
+"""
+
+from __future__ import annotations
+
+import os
+import select
+import subprocess
+import sys
+import termios
+import tty
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
+
+MARKER = "/run/cpz-cage/screen.locked"
+BRIGHTNESS = "/usr/local/bin/cpz-brightness"
+
+CLEAR = "\033[2J\033[H"
+HIDE_CURSOR = "\033[?25l"
+SHOW_CURSOR = "\033[?25h"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+REVERSE = "\033[7m"
+RESET = "\033[0m"
+
+_I18N = None
+_LANGUAGE = None
+
+
+def i18n_module():
+    global _I18N
+    if _I18N is not None:
+        return _I18N
+    candidates = [
+        os.environ.get("CPZ_I18N_SCRIPT", ""),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "cpz-i18n"),
+        "/usr/local/bin/cpz-i18n",
+    ]
+    for path in candidates:
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            loader = SourceFileLoader("cpz_i18n", path)
+            spec = spec_from_loader(loader.name, loader)
+            if spec is None:
+                continue
+            module = module_from_spec(spec)
+            loader.exec_module(module)
+        except (ImportError, OSError):
+            continue
+        _I18N = module
+        return module
+    return None
+
+
+def tr(text: object) -> str:
+    global _LANGUAGE
+    module = i18n_module()
+    if module is None:
+        return str(text)
+    try:
+        if _LANGUAGE is None:
+            _LANGUAGE = module.current_language()
+        return str(module.translate(str(text), _LANGUAGE))
+    except AttributeError:
+        return str(text)
+
+
+def run(command, quiet=True):
+    try:
+        subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.DEVNULL if quiet else None,
+            stderr=subprocess.DEVNULL if quiet else None,
+        )
+    except OSError:
+        pass
+
+
+class UnlockSequence:
+    """Tab arms the lock, Enter releases it; anything else clears the arm."""
+
+    def __init__(self):
+        self.armed = False
+
+    def feed(self, char: bytes) -> bool:
+        if char == b"\t":
+            self.armed = True
+            return False
+        if char in (b"\r", b"\n"):
+            unlocked = self.armed
+            self.armed = False
+            return unlocked
+        self.armed = False
+        return False
+
+
+def centered(text: str, visible: int, columns: int) -> str:
+    padding = max(0, (columns - visible) // 2)
+    return " " * padding + text
+
+
+def draw(sequence: UnlockSequence) -> None:
+    try:
+        columns, rows = os.get_terminal_size()
+    except OSError:
+        columns, rows = 80, 24
+    columns = max(20, columns)
+    rows = max(8, rows)
+
+    title = tr("Screen locked")
+    hint = tr("Press Tab, then Enter to unlock")
+    tab_plain = "[ Tab ]"
+    enter_plain = "[ Enter ]"
+    keys_plain = tab_plain + "  " + enter_plain
+    if sequence.armed:
+        tab = REVERSE + tab_plain + RESET
+        enter = DIM + enter_plain + RESET
+    else:
+        tab = DIM + tab_plain + RESET
+        enter = enter_plain
+
+    lines = [
+        "",
+        "",
+        centered(BOLD + title + RESET, len(title), columns),
+        "",
+        centered(hint, len(hint), columns),
+        "",
+        centered(tab + "  " + enter, len(keys_plain), columns),
+        "",
+    ]
+    if rows < len(lines):
+        # A 32 px font leaves only a few rows on the panel; drop the blank
+        # spacing instead of scrolling the prompt off the screen.
+        lines = [
+            centered(BOLD + title + RESET, len(title), columns),
+            centered(hint, len(hint), columns),
+            centered(tab + "  " + enter, len(keys_plain), columns),
+        ]
+    start = max(0, (rows - len(lines)) // 2)
+    sys.stdout.write(CLEAR + "\r\n" * start + "\r\n".join(lines))
+    sys.stdout.flush()
+
+
+def blank() -> None:
+    """Mark the lock and switch the panel backlight off."""
+    try:
+        with open(MARKER, "w", encoding="ascii") as handle:
+            handle.write("%d\n" % os.getpid())
+    except OSError:
+        pass
+    run([BRIGHTNESS, "blank"])
+
+
+def restore() -> None:
+    """Drop the lock marker and apply at least the 10% wake level."""
+    try:
+        os.unlink(MARKER)
+    except OSError:
+        pass
+    run([BRIGHTNESS, "wake"])
+
+
+def main() -> int:
+    try:
+        handle = sys.stdin.fileno()
+        previous = termios.tcgetattr(handle)
+        tty.setraw(handle)
+    except (OSError, termios.error):
+        return 1
+
+    sequence = UnlockSequence()
+    blanked = False
+    try:
+        os.write(sys.stdout.fileno(), HIDE_CURSOR.encode())
+        draw(sequence)
+        blank()
+        blanked = True
+        while True:
+            ready, _, _ = select.select([handle], [], [])
+            if not ready:
+                continue
+            try:
+                data = os.read(handle, 1)
+            except OSError:
+                break
+            if not data:
+                break
+            if blanked:
+                restore()
+                blanked = False
+            if sequence.feed(data):
+                break
+            draw(sequence)
+    finally:
+        if blanked:
+            restore()
+        try:
+            os.write(sys.stdout.fileno(), SHOW_CURSOR.encode())
+        except OSError:
+            pass
+        try:
+            termios.tcsetattr(handle, termios.TCSADRAIN, previous)
+        except (OSError, termios.error):
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

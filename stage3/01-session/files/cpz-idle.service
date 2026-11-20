@@ -1,0 +1,21 @@
+[Unit]
+Description=CPZ idle screen lock
+# The daemon reads evdev directly because cage has no compositor idle
+# protocol. It needs the user's Wayland runtime directory to start the lock
+# window, and it must wait until the session publishes client.env.
+Requires=user-runtime-dir@1000.service
+After=multi-user.target user-runtime-dir@1000.service cpz-tmux.service cpz-media-keys.service
+
+[Service]
+User=1000
+Environment=HOME=/home/cpz
+Environment=LANG=C.UTF-8
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/local/bin/cpz-idle
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

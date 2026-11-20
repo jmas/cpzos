@@ -213,7 +213,7 @@ class SettingsTUI(unittest.TestCase):
             "mode_keys=weird\n"
             "screen_timeout=7\n"
             "status_interval=3\n"
-            "brightness=1\n"
+            "brightness=-5\n"
             "keyboard_layout=sideways\n"
         )
 
@@ -227,7 +227,7 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(data["mode_keys"], "vi")
         self.assertEqual(data["screen_timeout"], 0)
         self.assertEqual(data["status_interval"], 5)
-        self.assertEqual(data["brightness"], 10)
+        self.assertEqual(data["brightness"], 0)
         self.assertEqual(data["keyboard_layout"], "auto")
 
     def test_unknown_keys_are_ignored(self):
@@ -539,6 +539,19 @@ class SettingsTUI(unittest.TestCase):
         self.assertEqual(set(item["labels"]), set(item["values"]))
         self.assertEqual(item["labels"]["jetbrains"], "JetBrains Mono")
         self.assertEqual(data["font_family"], "terminus")
+
+    def test_display_page_offers_the_screen_timeout(self):
+        data = dict(self.mod.DEFAULTS)
+        items = {
+            item["label"]: item
+            for item in self.mod.page_items("display", data, None)
+        }
+        item = items["Screen Timeout"]
+        self.assertEqual(item["kind"], "picker")
+        self.assertEqual(item["key"], "screen_timeout")
+        self.assertEqual(tuple(item["values"]), self.mod.SCREEN_TIMEOUTS)
+        self.assertIn(1, item["values"])
+        self.assertEqual(item["labels"][1], "1 min")
 
     def test_shortcut_filter_matches_label_or_binding(self):
         items = [

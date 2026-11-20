@@ -76,11 +76,15 @@ class CageSessionTest(unittest.TestCase):
 
                 pid_file = run_dir / "cage-session.pid"
                 foot_pid_file = run_dir / "foot.pid"
+                ready_file = run_dir / "session.ready"
                 deadline = time.monotonic() + 5
                 while (
-                    not pid_file.exists() or not foot_pid_file.exists()
+                    not pid_file.exists()
+                    or not foot_pid_file.exists()
+                    or not ready_file.exists()
                 ) and time.monotonic() < deadline:
                     time.sleep(0.02)
+                self.assertTrue(ready_file.exists())
                 supervisor = int(pid_file.read_text(encoding="utf-8").strip())
                 self.assertEqual(supervisor, process.pid)
 

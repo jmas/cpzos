@@ -529,5 +529,9 @@
   "Wi-Fi on": "Wi-Fi オン",
   "Wi-Fi off": "Wi-Fi オフ",
   "Bluetooth on": "Bluetooth オン",
-  "Bluetooth off": "Bluetooth オフ"
+  "Bluetooth off": "Bluetooth オフ",
+  "Screen Timeout": "画面タイムアウト",
+  "Screen locked": "画面はロックされています",
+  "Press Tab, then Enter to unlock": "ロックを解除するには Tab の後に Enter を押します",
+  "1 min": "1 分"
 }

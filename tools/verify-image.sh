@@ -278,6 +278,7 @@ for file in usr/local/bin/cpz-first-login \
     usr/local/bin/cpz-cage usr/local/bin/cpz-cage-output \
     usr/local/bin/cpz-cage-session usr/local/bin/cpz-foot-reload \
     usr/local/bin/cpz-pointer usr/local/bin/cpz-i18n \
+    usr/local/bin/cpz-idle usr/local/bin/cpz-lock \
     usr/share/cpz/i18n/en.json usr/share/cpz/i18n/uk.json \
     usr/share/cpz/i18n/pl.json usr/share/cpz/i18n/de.json \
     usr/share/cpz/i18n/fr.json usr/share/cpz/i18n/es.json \
@@ -321,6 +322,7 @@ for file in usr/local/bin/cpz-first-login \
     etc/systemd/system/cpz-pointer.service \
     etc/systemd/system/cpz-pointer.path \
     etc/systemd/system/cpz-pointer-cursor.service \
+    etc/systemd/system/cpz-idle.service \
     etc/systemd/system-sleep/cpz-cage \
     etc/systemd/system/cpz-session-save.service \
     etc/systemd/system/cpz-session-save.timer \
@@ -409,10 +411,37 @@ else
     fail "usr/local/lib/cpz-pointer-speed.so MISSING"
 fi
 
+if debugfs -R "stat usr/local/lib/cpz-xkb-layout.so" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "Size:"; then
+    pass "xkb-layout shim installed"
+else
+    fail "usr/local/lib/cpz-xkb-layout.so MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-cage" "$TMPDIR/root.ext4" 2>/dev/null |
+    grep -q "cpz-xkb-layout.so"; then
+    pass "cage preloads the xkb-layout shim"
+else
+    fail "cpz-cage does not preload cpz-xkb-layout.so"
+fi
+
 if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Mouse Speed"; then
     pass "cpz-settings: Mouse Speed"
 else
     fail "cpz-settings: Mouse Speed entry MISSING"
+fi
+
+if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Screen Timeout"; then
+    pass "cpz-settings: Screen Timeout"
+else
+    fail "cpz-settings: Screen Timeout entry MISSING"
+fi
+
+if debugfs -R "stat etc/systemd/system/multi-user.target.wants/cpz-idle.service" \
+    "$TMPDIR/root.ext4" 2>/dev/null | grep -q "Size:"; then
+    pass "cpz-idle.service enabled"
+else
+    fail "cpz-idle.service not enabled"
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-settings" "$TMPDIR/root.ext4" 2>/dev/null | grep -q "cpz-wifi"; then
@@ -914,10 +943,10 @@ else
 fi
 
 if debugfs -R "cat usr/local/bin/cpz-keyboard-layout" "$TMPDIR/root.ext4" 2>/dev/null |
-    grep -q "set-x11-keymap"; then
-    pass "keyboard layout is pushed to systemd-localed"
+    grep -q "cpz-pointer --reload-keymap"; then
+    pass "keyboard layout reloads the keymap in place"
 else
-    fail "systemd-localed layout update MISSING"
+    fail "keyboard keymap reload hook MISSING"
 fi
 
 if debugfs -R "cat usr/local/share/cpz/xkb/cpz.template" "$TMPDIR/root.ext4" 2>/dev/null |

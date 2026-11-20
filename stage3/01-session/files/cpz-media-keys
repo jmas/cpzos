@@ -32,6 +32,7 @@ TRACK = "/usr/local/bin/cpz-track"
 RESCAN = 2.0
 DOUBLE_PRESS = 0.35
 KEYBOARD = "tca8418c"
+LOCK_MARKER = "/run/cpz-cage/screen.locked"
 
 ACTIONS = {
     113: [VOLUME, "mute"],  # KEY_MUTE
@@ -64,6 +65,55 @@ def device_name(path):
             return handle.read().strip()
     except OSError:
         return ""
+
+
+def brightness_level():
+    """Return the saved panel brightness, or None when it is unreadable.
+
+    cpz-brightness keeps the user's override in the same file Settings writes;
+    the system file is only the fallback. Reading it here avoids starting a
+    shell helper on every key press.
+    """
+    config = os.environ.get("XDG_CONFIG_HOME")
+    if not config:
+        config = os.path.join(os.environ.get("HOME") or "/home/cpz", ".config")
+    for path in (
+        os.path.join(config, "cpz", "settings.conf"),
+        "/etc/cpz/settings.conf",
+    ):
+        value = None
+        try:
+            with open(path, encoding="utf-8") as handle:
+                for line in handle:
+                    if line.startswith("brightness="):
+                        value = line.split("=", 1)[1].strip()
+        except OSError:
+            continue
+        if value is not None:
+            if not value:
+                continue
+            try:
+                return int(value)
+            except ValueError:
+                return None
+    return None
+
+
+def wake_panel(code):
+    """Restore a dim backlight on the first key press after 0%.
+
+    A user who sets brightness to 0 can still type, but the panel looks dead;
+    the first press brings it back to the 10% step. The brightness keys are
+    excluded so Fn+I can keep the panel dark instead of turning it back on.
+    """
+    if code in (224, 225):  # KEY_BRIGHTNESSDOWN / KEY_BRIGHTNESSUP
+        return
+    # The lock screen restores the backlight itself. Letting both processes
+    # react to the same key could apply the 0 -> 10% wake twice.
+    if os.path.exists(LOCK_MARKER):
+        return
+    if brightness_level() == 0:
+        run([BRIGHTNESS, "up"])
 
 
 def rescan(open_fds, names):
@@ -127,6 +177,7 @@ def consume(handle, open_fds, names, pending, now):
         if etype != EV_KEY or value != 1:
             # Only presses: releases and autorepeat are ignored.
             continue
+        wake_panel(code)
         press(code, device, pending, now)
 
 

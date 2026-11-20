@@ -23,8 +23,11 @@ punctuation, and cage has a single keymap for the seat, so
   standard layout; otherwise the CPZ overlay is used.
 - **cpz** / **standard** force one of the two.
 
-The switch is published to localed and `cpz-cage-output` restarts the
-compositor (~2 s). Keyboard interfaces that belong to a pointer are ignored: a
+The switch is published to `/run/cpz-layout.xkb`. `cpz-xkb-layout.so` makes
+cage rebuild only its keymap when the keyboard devices are reopened, so the
+layout changes in place without a compositor restart or screen refresh. The
+fallback is a forced compositor restart if the shim or the device reload is
+unavailable. Keyboard interfaces that belong to a pointer are ignored: a
 gaming mouse often exposes a second HID endpoint advertising a full keyboard
 bitmap for macro keys, and treating it as a keyboard would keep the standard
 layout forever while the mouse is plugged in. A node counts as a keyboard only
@@ -83,10 +86,21 @@ land on a blank screen. Tab numbers remain the fastest way to jump directly.
 Settings → Sound; `Alt+0` toggles mute. Both paths use `wpctl`, so the
 status-bar volume token stays in sync.
 
-`Fn+I` / `Fn+O` step the panel backlight down / up by 10% (10–100) and persist
-the value in Settings → Display → Brightness. The keyboard's Fn layer reports
-the standard `KEY_BRIGHTNESSDOWN` / `KEY_BRIGHTNESSUP` codes; `cpz-media-keys`
-handles them like the headset volume rocker.
+`Fn+I` / `Fn+O` step the panel backlight down / up by 10% (0–100) and persist
+the value in Settings → Display → Brightness. At 0 the panel backlight is fully
+off; the next key press restores it to 10% so the device cannot be left dark,
+and `Fn+O` steps it up further. `Fn+I` is exempt, so it can keep 0. The
+keyboard's Fn layer reports the standard `KEY_BRIGHTNESSDOWN` /
+`KEY_BRIGHTNESSUP` codes; `cpz-media-keys` handles them like the headset
+volume rocker.
+
+### Screensaver lock
+
+`Settings → Display → Screen Timeout` locks the screen after 1, 5, 10 or 30
+idle minutes (or never). The panel backlight switches off and a fullscreen
+lock prompt covers the terminal or graphical application. Any key restores
+the saved brightness; `Tab` arms the unlock prompt and `Enter` releases it.
+`Ctrl+C` and other keys do not bypass the lock.
 
 ### Copy mode
 

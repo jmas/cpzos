@@ -9,6 +9,7 @@ import unittest
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ROOT / "stage3" / "01-session" / "files"
@@ -157,6 +158,47 @@ class TrackButtonTest(unittest.TestCase):
             [[module.BRIGHTNESS, "up"], [module.BRIGHTNESS, "down"]],
         )
         self.assertEqual(pending, {})
+
+    def test_first_key_press_after_zero_restores_ten_percent(self):
+        module, calls = self.load_media_keys()
+        module.brightness_level = lambda: 0
+        module.wake_panel(30)  # a letter key
+        self.assertEqual(calls, [[module.BRIGHTNESS, "up"]])
+
+    def test_key_press_above_zero_leaves_brightness_alone(self):
+        module, calls = self.load_media_keys()
+        module.brightness_level = lambda: 10
+        module.wake_panel(30)
+        self.assertEqual(calls, [])
+
+    def test_brightness_keys_do_not_force_the_panel_on(self):
+        # Fn+I at 0 must stay at 0; Fn+O already steps up through ACTIONS.
+        module, calls = self.load_media_keys()
+        module.brightness_level = lambda: 0
+        module.wake_panel(224)
+        module.wake_panel(225)
+        self.assertEqual(calls, [])
+
+    def test_lock_screen_owns_the_wake_while_locked(self):
+        module, calls = self.load_media_keys()
+        module.brightness_level = lambda: 0
+        with mock.patch.object(module.os.path, "exists", return_value=True):
+            module.wake_panel(30)
+        self.assertEqual(calls, [])
+
+    def test_brightness_level_reads_the_last_user_value(self):
+        module, _ = self.load_media_keys()
+        with tempfile.TemporaryDirectory() as temporary:
+            config = Path(temporary) / "config"
+            directory = config / "cpz"
+            directory.mkdir(parents=True)
+            (directory / "settings.conf").write_text(
+                "brightness=40\nbrightness=0\n", encoding="utf-8"
+            )
+            with mock.patch.dict(
+                os.environ, {"XDG_CONFIG_HOME": str(config)}, clear=False
+            ):
+                self.assertEqual(module.brightness_level(), 0)
 
     def test_single_centre_press_toggles_after_the_window(self):
         module, calls = self.load_media_keys()

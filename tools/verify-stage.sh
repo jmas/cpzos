@@ -747,10 +747,15 @@ contains stage3/01-session/files/99-cpz-xkb-data.pref 'Package: xkb-data'
 contains stage3/01-session/files/99-cpz-xkb-data.pref 'Pin-Priority: -1'
 contains stage3/01-session/01-run.sh '99-cpz-xkb-data.pref'
 contains stage3/01-session/files/cpz-keyboard-layout 'publish cpz'
-contains stage3/01-session/files/cpz-keyboard-layout 'localectl'
-contains stage3/01-session/files/cpz-keyboard-layout 'set-x11-keymap'
+contains stage3/01-session/files/cpz-keyboard-layout 'cpz-pointer --reload-keymap'
+contains stage3/01-session/files/cpz-keyboard-layout 'cpz-xkb-layout.so'
+contains stage3/01-session/files/cpz-keyboard-layout 'xkb_changed'
 contains stage3/01-session/files/cpz-keyboard-layout 'cpz_xkb_template'
 contains stage3/01-session/files/cpz-keyboard-layout 'write_cpz_xkb'
+have stage3/01-session/files/cpz-xkb-layout.c
+contains stage3/01-session/files/cpz-xkb-layout.c 'xkb_keymap_new_from_names'
+contains stage3/01-session/files/cpz-cage 'cpz-xkb-layout.so'
+contains stage3/01-session/01-run.sh 'cpz-xkb-layout.so'
 have stage3/01-session/files/cpz-font
 contains stage3/01-session/files/cpz-font 'font_size'
 have stage3/01-session/files/cpz-volume
