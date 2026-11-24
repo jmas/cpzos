@@ -456,6 +456,9 @@ rm -f "$ROOT/boot"/start4*.elf "$ROOT/boot"/start_*db.elf "$ROOT/boot"/start_cd.
       "$ROOT/boot"/fixup4*.dat "$ROOT/boot"/fixup_*db.dat "$ROOT/boot"/fixup_cd.dat \
       "$ROOT/boot"/fixup_x.dat
 
+# The build chroot is not the running system: do not ship test state or tmp files.
+rm -rf "$ROOT/run"/* "$ROOT/tmp"/* 2>/dev/null || true
+
 log "removing documentation and unused locales"
 rm -rf "$ROOT"/usr/share/{doc,man,info,locale,help} \
        "$ROOT"/var/cache/pacman/pkg/* "$ROOT"/var/lib/pacman/sync
