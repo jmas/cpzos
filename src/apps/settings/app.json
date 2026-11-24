@@ -1,0 +1,74 @@
+{
+  "id": "settings",
+  "name": "Налаштування",
+  "menu": [
+    {
+      "id": "settings",
+      "label": "Налаштування",
+      "detail": "вихід, живлення",
+      "parent": "root",
+      "order": 300,
+      "icon": "icon.png"
+    },
+    {
+      "id": "settings.output.auto",
+      "label": "Екран: авто",
+      "detail": "за виходом",
+      "parent": "settings",
+      "order": 100,
+      "action": { "run": ["/usr/local/bin/cpz-sessionctl", "output", "auto"],
+        "busy": "Перемикання екрана…" }
+    },
+    {
+      "id": "settings.output.panel",
+      "label": "Екран: панель",
+      "detail": "SPI",
+      "parent": "settings",
+      "order": 110,
+      "action": { "run": ["/usr/local/bin/cpz-sessionctl", "output", "panel"],
+        "busy": "Перемикання екрана…" }
+    },
+    {
+      "id": "settings.output.hdmi",
+      "label": "Екран: HDMI",
+      "detail": "vc4",
+      "parent": "settings",
+      "order": 120,
+      "action": { "run": ["/usr/local/bin/cpz-sessionctl", "output", "hdmi"],
+        "busy": "Перемикання екрана…" }
+    },
+    {
+      "id": "settings.output.choose",
+      "label": "Екран: вибір",
+      "detail": "список виходів",
+      "parent": "settings",
+      "order": 130,
+      "action": { "choice": [
+        { "label": "Авто", "detail": "за виходом",
+          "action": { "run": ["/usr/local/bin/cpz-sessionctl", "output", "auto"] } },
+        { "label": "Панель", "detail": "SPI",
+          "action": { "run": ["/usr/local/bin/cpz-sessionctl", "output", "panel"] } },
+        { "label": "HDMI", "detail": "vc4",
+          "action": { "run": ["/usr/local/bin/cpz-sessionctl", "output", "hdmi"] } }
+      ] }
+    },
+    {
+      "id": "settings.reboot",
+      "label": "Перезавантажити",
+      "parent": "settings",
+      "order": 200,
+      "confirm": "Перезавантажити пристрій?",
+      "action": { "run": ["/usr/local/bin/cpz-sessionctl", "reboot"],
+        "busy": "Перезавантаження…" }
+    },
+    {
+      "id": "settings.poweroff",
+      "label": "Вимкнути",
+      "parent": "settings",
+      "order": 210,
+      "confirm": "Вимкнути пристрій?",
+      "action": { "run": ["/usr/local/bin/cpz-sessionctl", "poweroff"],
+        "busy": "Вимкнення…" }
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "id": "games",
+  "name": "Ігри",
+  "menu": [
+    {
+      "id": "games",
+      "label": "Ігри",
+      "detail": "дрібниці",
+      "parent": "root",
+      "order": 230,
+      "icon": "icon.png"
+    },
+    {
+      "id": "games.snake",
+      "label": "Snake",
+      "parent": "games",
+      "order": 100,
+      "action": { "info": { "title": "Snake", "icon": "icon.png",
+        "text": "Гру ще не встановлено.", "severity": "info" } }
+    },
+    {
+      "id": "games.2048",
+      "label": "2048",
+      "parent": "games",
+      "order": 200,
+      "action": { "info": { "title": "2048", "icon": "icon.png",
+        "text": "Гру ще не встановлено.", "severity": "info" } }
+    },
+    {
+      "id": "games.tetris",
+      "label": "Тетріс",
+      "parent": "games",
+      "order": 300,
+      "action": { "info": { "title": "Тетріс", "icon": "icon.png",
+        "text": "Гру ще не встановлено.", "severity": "info" } }
+    }
+  ]
+}

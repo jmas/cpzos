@@ -1,0 +1,20 @@
+{
+  "id": "about",
+  "name": "Про пристрій",
+  "menu": [
+    {
+      "id": "about.item",
+      "label": "Про пристрій",
+      "detail": "версія, екран",
+      "parent": "root",
+      "order": 800,
+      "icon": "icon.png",
+      "action": { "info": {
+        "title": "Про пристрій",
+        "icon": "icon.png",
+        "text": "Cardputer Zero CM0\ncpz-ui 0.12.0\nМеню: cpz-menud\nМережа: cpz-network",
+        "severity": "info"
+      } }
+    }
+  ]
+}

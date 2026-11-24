@@ -1,0 +1,30 @@
+{
+  "id": "photo",
+  "name": "Фото",
+  "menu": [
+    {
+      "id": "photo",
+      "label": "Фото",
+      "detail": "альбоми",
+      "parent": "root",
+      "order": 220,
+      "icon": "icon.png"
+    },
+    {
+      "id": "photo.albums",
+      "label": "Альбоми",
+      "parent": "photo",
+      "order": 100,
+      "action": { "info": { "title": "Альбоми", "icon": "icon.png",
+        "text": "Переглядач фото ще не встановлено.", "severity": "info" } }
+    },
+    {
+      "id": "photo.all",
+      "label": "Усі фото",
+      "parent": "photo",
+      "order": 200,
+      "action": { "info": { "title": "Усі фото", "icon": "icon.png",
+        "text": "Переглядач фото ще не встановлено.", "severity": "info" } }
+    }
+  ]
+}

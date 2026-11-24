@@ -1,0 +1,34 @@
+/*
+ * cpz-spi — free SPI0 chip select 0 for the panel.
+ *
+ * `dtparam=spi=on` enables the SPI0 controller and, on the CM0 device tree,
+ * adds two `spidev@N` children. The vendor board overlay places the ST7789V
+ * panel at `reg = <0>`, which collides with `spidev@0`: the SPI core keeps the
+ * first device on chip select 0 and silently skips the panel, so no DRM card
+ * is ever created.
+ *
+ * The vendor overlay tries to disable the same node through the `spidev0`
+ * symbol. That symbol is not present in this device tree, so the fragment is
+ * dropped. This overlay targets `&spi0` directly and disables the children by
+ * node name instead, which does not depend on symbols.
+ *
+ * Apply after `dtparam=spi=on` and before `dtoverlay=cardputerzero-*-overlay`.
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	fragment@0 {
+		target = <&spi0>;
+		__overlay__ {
+			spidev@0 {
+				status = "disabled";
+			};
+			spidev@1 {
+				status = "disabled";
+			};
+		};
+	};
+};

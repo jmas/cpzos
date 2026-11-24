@@ -1,0 +1,15 @@
+{
+  "id": "terminal",
+  "name": "Термінал",
+  "menu": [
+    {
+      "id": "terminal",
+      "label": "Термінал",
+      "detail": "bash, vim, tmux",
+      "parent": "root",
+      "order": 100,
+      "icon": "icon.png",
+      "action": { "exec": ["/usr/local/bin/cpz-term"] }
+    }
+  ]
+}

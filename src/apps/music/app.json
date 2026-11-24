@@ -1,0 +1,47 @@
+{
+  "id": "music",
+  "name": "Музика",
+  "menu": [
+    {
+      "id": "music",
+      "label": "Музика",
+      "detail": "пісні, альбоми",
+      "parent": "root",
+      "order": 200,
+      "icon": "icon.png"
+    },
+    {
+      "id": "music.songs",
+      "label": "Пісні",
+      "detail": "усі треки",
+      "parent": "music",
+      "order": 100,
+      "action": { "info": { "title": "Пісні", "icon": "icon.png",
+        "text": "Музичний програвач ще не встановлено.", "severity": "info" } }
+    },
+    {
+      "id": "music.artists",
+      "label": "Виконавці",
+      "parent": "music",
+      "order": 200,
+      "action": { "info": { "title": "Виконавці", "icon": "icon.png",
+        "text": "Музичний програвач ще не встановлено.", "severity": "info" } }
+    },
+    {
+      "id": "music.albums",
+      "label": "Альбоми",
+      "parent": "music",
+      "order": 300,
+      "action": { "info": { "title": "Альбоми", "icon": "icon.png",
+        "text": "Музичний програвач ще не встановлено.", "severity": "info" } }
+    },
+    {
+      "id": "music.playlists",
+      "label": "Плейлисти",
+      "parent": "music",
+      "order": 400,
+      "action": { "info": { "title": "Плейлисти", "icon": "icon.png",
+        "text": "Музичний програвач ще не встановлено.", "severity": "info" } }
+    }
+  ]
+}

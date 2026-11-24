@@ -1,0 +1,15 @@
+{
+  "id": "screen",
+  "name": "Тест екрана",
+  "menu": [
+    {
+      "id": "screen",
+      "label": "Тест екрана",
+      "detail": "SDL / DRM",
+      "parent": "root",
+      "order": 110,
+      "icon": "icon.png",
+      "action": { "exec": ["/usr/local/bin/cpz-sdlprobe"] }
+    }
+  ]
+}
