@@ -562,7 +562,7 @@ static void drop_to_user(void)
 		setenv("USER", pw->pw_name, 1);
 		setenv("LOGNAME", pw->pw_name, 1);
 		setenv("XDG_RUNTIME_DIR", "/run/user/1000", 1);
-		setenv("TMUX_TMPDIR", "/run/user/1000", 1);
+		setenv("TMUX_TMPDIR", "/run/cpz", 1);
 	}
 }
 

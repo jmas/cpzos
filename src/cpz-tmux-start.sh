@@ -4,7 +4,7 @@ set -eu
 
 export HOME="${HOME:-/home/cpz}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/1000}"
-export TMUX_TMPDIR="${TMUX_TMPDIR:-/run/user/1000}"
+export TMUX_TMPDIR="${TMUX_TMPDIR:-/run/cpz}"
 mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null || true
 
 if command -v flock >/dev/null 2>&1 && [ -d /run/cpz ]; then

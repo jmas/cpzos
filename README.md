@@ -124,7 +124,7 @@ Artifacts land in `out/`:
 
 Flash the image with Raspberry Pi Imager, balenaEtcher or `dd`. The device
 boots into Home; SSH is `cpz` / `cpz` and serial recovery is
-`console=ttyAMA0,115200`.
+`console=ttyS0,115200`.
 
 ## Using it
 

@@ -49,7 +49,7 @@ need "cmdline quiet"               "mtype -i $BOOTIMG ::/cmdline.txt | grep -q '
 need "cmdline has no resume/initrd" "! mtype -i $BOOTIMG ::/cmdline.txt | grep -qE 'initrd=|resume='"
 need "fbcon off the panel"         "mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'fbcon=map:off'"
 need "panic reboot enabled"        "mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'panic=10'"
-need "serial recovery console"     "mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'console=ttyAMA0,115200'"
+need "serial recovery console"     "mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'console=ttyS0,115200'"
 need "hardware watchdog on"        "mtype -i $BOOTIMG ::/config.txt | grep -q '^dtparam=watchdog=on'"
 if [ "$ENABLE_HDMI" = "1" ]; then
     need "vc4 overlay enabled"     "mtype -i $BOOTIMG ::/config.txt | grep -q '^dtoverlay=vc4-kms-v3d'"
@@ -95,7 +95,7 @@ absent "no old terminal manifest" "debugfs -R 'stat /usr/share/cpz/apps/terminal
 
 log "units"
 need "cpz-shell unit"          "debugfs -R 'cat /etc/systemd/system/cpz-shell.service' $ROOTIMG | grep -q 'ExecStart=/usr/local/bin/cpz-shell'"
-need "cpz-tmux unit"           "debugfs -R 'cat /etc/systemd/system/cpz-tmux.service' $ROOTIMG | grep -q 'RuntimeDirectory=user/1000'"
+need "cpz-tmux unit"           "debugfs -R 'cat /etc/systemd/system/cpz-tmux.service' $ROOTIMG | grep -q 'TMUX_TMPDIR=/run/cpz'"
 need "cpz-session unit"        "debugfs -R 'cat /etc/systemd/system/cpz-session.service' $ROOTIMG | grep -q 'ExecStart=/usr/local/bin/cpz-session --term /usr/local/bin/cpz-term'"
 need "session watchdog"        "debugfs -R 'cat /etc/systemd/system/cpz-session.service' $ROOTIMG | grep -q 'WatchdogSec=10'"
 need "session depends tmux"    "debugfs -R 'cat /etc/systemd/system/cpz-session.service' $ROOTIMG | grep -q 'After=.*cpz-tmux.service'"
@@ -105,7 +105,7 @@ need "tmux enabled"            "debugfs -R 'ls /etc/systemd/system/sysinit.targe
 need "battery unit enabled"    "debugfs -R 'ls /etc/systemd/system/sysinit.target.wants' $ROOTIMG | grep -q cpz-battery"
 need "clock unit enabled"      "debugfs -R 'ls /etc/systemd/system/sysinit.target.wants' $ROOTIMG | grep -q cpz-clock"
 need "getty@tty1 not enabled"  "! debugfs -R 'ls /etc/systemd/system/getty.target.wants' $ROOTIMG 2>/dev/null | grep -q 'getty@tty1'"
-need "serial recovery getty"   "debugfs -R 'ls -l /etc/systemd/system/getty.target.wants' $ROOTIMG 2>/dev/null | grep -q 'serial-getty@ttyAMA0'"
+need "serial recovery getty"   "debugfs -R 'ls -l /etc/systemd/system/getty.target.wants' $ROOTIMG 2>/dev/null | grep -q 'serial-getty@ttyS0'"
 need "tmux config"             "debugfs -R 'cat /etc/tmux.conf' $ROOTIMG | grep -q 'status-interval 0'"
 need "tmux keeps server"       "debugfs -R 'cat /etc/tmux.conf' $ROOTIMG | grep -q 'exit-empty off'"
 need "runtime tmpfiles"        "debugfs -R 'cat /usr/lib/tmpfiles.d/cpz.conf' $ROOTIMG | grep -q '/run/cpz'"

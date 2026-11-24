@@ -47,7 +47,7 @@ static int prov_open(struct provider *p, const char *app)
 		return -1;
 	}
 	snprintf(hello, sizeof(hello),
-		 "{\"v\":2,\"op\":\"hello\",\"app\":\"%s\"}\n", p->app);
+		 "op=hello&app=%s\n", p->app);
 	if (write(p->fd, hello, strlen(hello)) != (ssize_t)strlen(hello)) {
 		close(p->fd);
 		p->fd = -1;

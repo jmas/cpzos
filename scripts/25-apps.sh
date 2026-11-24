@@ -133,7 +133,7 @@ cat > "$ROOT/etc/profile.d/00-cpz.sh" <<'EOF'
 # The economy session is a terminal. Interactive shells get the same runtime
 # directory and tmux socket as the Home session.
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/1000}"
-export TMUX_TMPDIR="${TMUX_TMPDIR:-/run/user/1000}"
+export TMUX_TMPDIR="${TMUX_TMPDIR:-/run/cpz}"
 EOF
 chmod 0644 "$ROOT/etc/profile.d/00-cpz.sh"
 

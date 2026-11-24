@@ -99,7 +99,7 @@ User=cpz
 Group=cpz
 Environment=HOME=/home/cpz
 Environment=XDG_RUNTIME_DIR=/run/user/1000
-Environment=TMUX_TMPDIR=/run/user/1000
+Environment=TMUX_TMPDIR=/run/cpz
 ExecStart=/usr/local/bin/cpz-shell
 Restart=always
 RestartSec=0.2
@@ -123,11 +123,9 @@ Type=oneshot
 RemainAfterExit=yes
 User=cpz
 Group=cpz
-RuntimeDirectory=user/1000
-RuntimeDirectoryMode=0700
 Environment=HOME=/home/cpz
 Environment=XDG_RUNTIME_DIR=/run/user/1000
-Environment=TMUX_TMPDIR=/run/user/1000
+Environment=TMUX_TMPDIR=/run/cpz
 ExecStart=/usr/local/bin/cpz-tmux-start
 ExecStop=/usr/bin/tmux -L cpz kill-server
 KillMode=process
@@ -178,7 +176,7 @@ User=cpz
 Group=cpz
 Environment=HOME=/home/cpz
 Environment=XDG_RUNTIME_DIR=/run/user/1000
-Environment=TMUX_TMPDIR=/run/user/1000
+Environment=TMUX_TMPDIR=/run/cpz
 ExecStart=/usr/local/bin/cpz-$prov --provider
 Restart=always
 RestartSec=2
@@ -197,7 +195,7 @@ in_root "systemctl enable cpz-shell.service cpz-tmux.service cpz-session.service
 in_root "systemctl disable getty@tty1.service >/dev/null 2>&1 || true"
 # Serial recovery shell. The panel has no fbcon, so this is the only local
 # login path if SSH is down.
-in_root "systemctl enable serial-getty@ttyAMA0.service >/dev/null 2>&1 || true"
+in_root "systemctl enable serial-getty@ttyS0.service >/dev/null 2>&1 || true"
 
 # Never start a getty nobody can see.
 for vt in 2 3 4 5 6; do
@@ -338,7 +336,7 @@ fi
 # over serial or SSH.
 FBCON=" fbcon=map:off"
 CMDLINE_EXTRA=" panic=10"
-SERIAL_CONSOLE="console=ttyAMA0,115200"
+SERIAL_CONSOLE="console=ttyS0,115200"
 WATCHDOG_LINE="dtparam=watchdog=on"
 
 cat > "$ROOT/boot/config.txt" <<EOF
