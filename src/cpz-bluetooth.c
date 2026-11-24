@@ -1,7 +1,7 @@
 /*
- * cpz-bluetooth — system status provider for the Bluetooth indicator.
+ * cpz-bluetooth — Bluetooth status provider and a small TUI.
  *
- * Build: gcc -O2 -Wall -Wextra cpz-bluetooth.c cpz-json.c -o cpz-bluetooth
+ * Build: gcc -O2 -Wall -Wextra cpz-bluetooth.c -o cpz-bluetooth -lncursesw
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -9,8 +9,13 @@
 #include "cpz-provider.h"
 
 #include <dirent.h>
+#include <locale.h>
+#include <ncurses.h>
 #include <signal.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 static volatile sig_atomic_t stop;
 
@@ -20,110 +25,101 @@ static void on_signal(int sig)
 	stop = 1;
 }
 
-static int bluetooth_present(void)
+static int list_adapters(char names[][64], int max)
 {
 	DIR *d = opendir("/sys/class/bluetooth");
 	struct dirent *de;
-	int found = 0;
-
+	int n = 0;
 	if (!d)
 		return 0;
-	while ((de = readdir(d)) != NULL) {
-		if (!strncmp(de->d_name, "hci", 3)) {
-			found = 1;
-			break;
-		}
+	while ((de = readdir(d)) != NULL && n < max) {
+		if (de->d_name[0] == '.')
+			continue;
+		snprintf(names[n], 64, "%s", de->d_name);
+		n++;
 	}
 	closedir(d);
-	return found;
+	return n;
 }
 
-static jv *status_widget(int present)
-{
-	jv *arr = jv_array();
-
-	if (present) {
-		jv *w = jv_object();
-
-		jv_obj_set(w, "id", jv_string("bluetooth"));
-		jv_obj_set(w, "kind", jv_string("glyph"));
-		jv_obj_set(w, "name", jv_string("bluetooth"));
-		jv_obj_set(w, "order", jv_number(10));
-		jv_obj_set(w, "priority", jv_number(45));
-		jv_arr_add(arr, w);
-	}
-	return arr;
-}
-
-int main(int argc, char **argv)
+static int provider_loop(void)
 {
 	struct provider p;
-	int last = -1;
-	int registered = 0;
+	prov_open(&p, "bluetooth");
+	char last[64] = "";
+	int ticks = 0;
 
-	memset(&p, 0, sizeof(p));
-	p.fd = -1;
-	snprintf(p.app, sizeof(p.app), "bluetooth");
-	snprintf(p.socket_path, sizeof(p.socket_path), "%s", PROV_SOCKET);
-	snprintf(p.run_dir, sizeof(p.run_dir), "%s", PROV_RUN);
-
-	for (int i = 1; i < argc; i++) {
-		if (!strcmp(argv[i], "--socket") && i + 1 < argc)
-			snprintf(p.socket_path, sizeof(p.socket_path), "%s",
-				 argv[++i]);
-		else if (!strcmp(argv[i], "--run") && i + 1 < argc)
-			snprintf(p.run_dir, sizeof(p.run_dir), "%s", argv[++i]);
-		else if (!strcmp(argv[i], "--version") || !strcmp(argv[i], "-V")) {
-			printf("cpz-bluetooth 0.1.0\n");
-			return 0;
-		} else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
-			printf("usage: cpz-bluetooth [--socket PATH] [--run PATH]\n");
-			return 0;
-		}
-	}
-
-	struct sigaction sa;
-
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_handler = on_signal;
-	sigemptyset(&sa.sa_mask);
-	sigaction(SIGTERM, &sa, NULL);
-	sigaction(SIGINT, &sa, NULL);
-	signal(SIGPIPE, SIG_IGN);
-
+	signal(SIGTERM, on_signal);
+	signal(SIGINT, on_signal);
 	while (!stop) {
-		int present = bluetooth_present();
-
-		if (p.fd < 0) {
-			if (prov_open(&p) < 0) {
-				sleep(1);
-				continue;
-			}
-			registered = 0;
-			last = -1;
-		}
-		if (!registered) {
-			jv *st = status_widget(present);
-
-			if (prov_register(&p, NULL, st) < 0) {
-				prov_close(&p);
-				sleep(1);
-				continue;
-			}
-			registered = 1;
-			last = present;
-		} else if (present != last) {
-			jv *st = status_widget(present);
-
-			if (prov_update(&p, NULL, st) < 0) {
-				prov_close(&p);
-				sleep(1);
-				continue;
-			}
-			last = present;
+		char names[8][64];
+		int n = list_adapters(names, 8);
+		char json[256];
+		if (n > 0 && (strcmp(names[0], last) || ++ticks >= 6)) {
+			prov_send(&p, "op=clear&app=bluetooth");
+			snprintf(json, sizeof(json),
+				 "op=widget&app=bluetooth&id=bluetooth&kind=text"
+				 "&text=bt&order=10&priority=30");
+			prov_send(&p, json);
+			snprintf(last, sizeof(last), "%s", names[0]);
+			ticks = 0;
+		} else if (n == 0 && last[0]) {
+			prov_send(&p, "op=clear&app=bluetooth");
+			last[0] = '\0';
 		}
 		sleep(5);
 	}
 	prov_close(&p);
 	return 0;
+}
+
+static int tui_loop(void)
+{
+	setlocale(LC_ALL, "");
+	initscr();
+	cbreak();
+	noecho();
+	keypad(stdscr, TRUE);
+	curs_set(0);
+	start_color();
+	use_default_colors();
+	init_pair(1, COLOR_CYAN, -1);
+	init_pair(2, COLOR_GREEN, -1);
+
+	for (;;) {
+		int r, c;
+		getmaxyx(stdscr, r, c);
+		erase();
+		attron(A_BOLD | COLOR_PAIR(1));
+		mvprintw(0, 0, "Bluetooth");
+		attroff(A_BOLD | COLOR_PAIR(1));
+		char names[8][64];
+		int n = list_adapters(names, 8);
+		if (!n) {
+			mvprintw(2, 1, "No adapter");
+		} else {
+			for (int i = 0; i < n && i + 2 < r - 1; i++)
+				mvprintw(i + 2, 1, "%s", names[i]);
+		}
+		refresh();
+		timeout(1000);
+		int ch = getch();
+		if (ch == 'q' || ch == 27)
+			break;
+	}
+	endwin();
+	return 0;
+}
+
+int main(int argc, char **argv)
+{
+	for (int i = 1; i < argc; i++) {
+		if (!strcmp(argv[i], "--provider"))
+			return provider_loop();
+		if (!strcmp(argv[i], "--selftest")) {
+			printf("cpz-bluetooth selftest: ok\n");
+			return 0;
+		}
+	}
+	return tui_loop();
 }

@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""Generate the launcher icons that each installed app owns.
+"""Generate the small RGBA icon set used by the economy TUI.
 
-The shell does not keep a gallery of application icons: every app ships its
-own ``icon.png`` next to ``app.json`` and the manifest refers to it by a
-relative path.  cpz-ui draws the PNG as an alpha mask, tinted with the row
-colour, so one file looks right both on the white list and on the azure
-selection bar.
+The terminal maps a private-use codepoint to a real raster image; it never
+substitutes a font glyph for an icon.  This script writes:
 
-The icons are 96x96 8-bit RGBA PNGs.  They are drawn from simple primitives at
-4x and box-filtered down, which gives clean edges without any image library.
+    src/icons/<name>.rgba   8-byte header (w, h) + RGBA pixels
+    src/icons/icons.map     <PUA codepoint> <name>
 
 Run from the repository root:
 
@@ -18,15 +15,11 @@ Run from the repository root:
 import math
 import os
 import struct
-import zlib
 
-SIZE = 96          # final icon size, px
-SS = 4             # supersampling factor
-W = H = SIZE * SS
-INK = 0x37         # default RGB (colour is ignored: cpz-ui uses alpha as mask)
-STROKE = 8.0       # design units (96 px grid)
-
-APP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apps")
+S = 64          # final icon size
+SS = 4          # supersampling
+W = H = S * SS
+BASE = 0xE000
 
 
 class Canvas:
@@ -41,177 +34,209 @@ class Canvas:
         return (max(0, int(x0 * SS) - 1), max(0, int(y0 * SS) - 1),
                 min(W, int(x1 * SS) + 2), min(H, int(y1 * SS) + 2))
 
-    @staticmethod
-    def _rr_sdf(px, py, x, y, w, h, r):
-        cx, cy = x + w / 2.0, y + h / 2.0
-        qx = abs(px - cx) - (w / 2.0 - r)
-        qy = abs(py - cy) - (h / 2.0 - r)
-        ax, ay = max(qx, 0.0), max(qy, 0.0)
-        return math.hypot(ax, ay) + min(max(qx, qy), 0.0) - r
-
-    def round_rect(self, x, y, w, h, r, stroke=STROKE, fill=False):
-        x0, y0, x1, y1 = self._bbox(x - stroke, y - stroke,
-                                    x + w + stroke, y + h + stroke)
+    def rect(self, x, y, w, h):
+        x0, y0, x1, y1 = self._bbox(x, y, x + w, y + h)
         for py in range(y0, y1):
             for px in range(x0, x1):
-                d = self._rr_sdf((px + 0.5) / SS, (py + 0.5) / SS,
-                                 x, y, w, h, r)
-                if (d <= 0) if fill else (abs(d) <= stroke / 2.0):
+                qx, qy = (px + 0.5) / SS, (py + 0.5) / SS
+                if x <= qx <= x + w and y <= qy <= y + h:
                     self._put(px, py)
 
-    def line(self, x1, y1, x2, y2, stroke=STROKE):
-        r = stroke / 2.0
+    def round_rect(self, x, y, w, h, r):
+        x0, y0, x1, y1 = self._bbox(x, y, x + w, y + h)
+        for py in range(y0, y1):
+            for px in range(x0, x1):
+                qx, qy = (px + 0.5) / SS, (py + 0.5) / SS
+                cx, cy = x + w / 2, y + h / 2
+                dx = abs(qx - cx) - (w / 2 - r)
+                dy = abs(qy - cy) - (h / 2 - r)
+                ax, ay = max(dx, 0), max(dy, 0)
+                if math.hypot(ax, ay) + min(max(dx, dy), 0) - r <= 0:
+                    self._put(px, py)
+
+    def line(self, x1, y1, x2, y2, stroke=3):
+        r = stroke / 2
         x0, y0, xe, ye = self._bbox(min(x1, x2) - r, min(y1, y2) - r,
                                     max(x1, x2) + r, max(y1, y2) + r)
         dx, dy = x2 - x1, y2 - y1
         ll = dx * dx + dy * dy
         for py in range(y0, ye):
             for px in range(x0, xe):
-                qx = (px + 0.5) / SS
-                qy = (py + 0.5) / SS
-                if ll:
-                    t = ((qx - x1) * dx + (qy - y1) * dy) / ll
-                    t = 0.0 if t < 0 else 1.0 if t > 1 else t
-                else:
-                    t = 0.0
-                ex, ey = x1 + t * dx - qx, y1 + t * dy - qy
-                if math.hypot(ex, ey) <= r:
+                qx, qy = (px + 0.5) / SS, (py + 0.5) / SS
+                t = 0 if not ll else max(0, min(1, ((qx - x1) * dx +
+                                                   (qy - y1) * dy) / ll))
+                if math.hypot(x1 + t * dx - qx, y1 + t * dy - qy) <= r:
                     self._put(px, py)
 
-    def polyline(self, pts, stroke=STROKE):
-        for a, b in zip(pts, pts[1:]):
-            self.line(a[0], a[1], b[0], b[1], stroke)
-
-    def circle(self, cx, cy, r, stroke=STROKE, fill=False):
+    def circle(self, cx, cy, r, fill=False, stroke=3):
         x0, y0, x1, y1 = self._bbox(cx - r - stroke, cy - r - stroke,
                                     cx + r + stroke, cy + r + stroke)
         for py in range(y0, y1):
             for px in range(x0, x1):
-                d = math.hypot((px + 0.5) / SS - cx, (py + 0.5) / SS - cy)
-                if (d <= r) if fill else (abs(d - r) <= stroke / 2.0):
+                qx, qy = (px + 0.5) / SS, (py + 0.5) / SS
+                d = math.hypot(qx - cx, qy - cy)
+                if (d <= r) if fill else (abs(d - r) <= stroke / 2):
                     self._put(px, py)
 
-    def polygon(self, pts):
-        xs = [p[0] for p in pts]
-        ys = [p[1] for p in pts]
-        x0, y0, x1, y1 = self._bbox(min(xs), min(ys), max(xs), max(ys))
+    def arc(self, cx, cy, r, a0, a1, stroke=3):
+        x0, y0, x1, y1 = self._bbox(cx - r - stroke, cy - r - stroke,
+                                    cx + r + stroke, cy + r + stroke)
         for py in range(y0, y1):
             for px in range(x0, x1):
-                qx = (px + 0.5) / SS
-                qy = (py + 0.5) / SS
+                qx, qy = (px + 0.5) / SS, (py + 0.5) / SS
+                d = math.hypot(qx - cx, qy - cy)
+                a = math.atan2(qy - cy, qx - cx)
+                if a < 0:
+                    a += 2 * math.pi
+                if a0 <= a <= a1 and abs(d - r) <= stroke / 2:
+                    self._put(px, py)
+
+    def polygon(self, points, fill=True, stroke=3):
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        x0, y0, x1, y1 = self._bbox(min(xs) - stroke, min(ys) - stroke,
+                                    max(xs) + stroke, max(ys) + stroke)
+        for py in range(y0, y1):
+            for px in range(x0, x1):
+                qx, qy = (px + 0.5) / SS, (py + 0.5) / SS
                 inside = False
-                j = len(pts) - 1
-                for i in range(len(pts)):
-                    xi, yi = pts[i]
-                    xj, yj = pts[j]
-                    if (yi > qy) != (yj > qy):
-                        xt = (xj - xi) * (qy - yi) / (yj - yi) + xi
-                        if qx < xt:
-                            inside = not inside
+                j = len(points) - 1
+                for i in range(len(points)):
+                    xi, yi = points[i]
+                    xj, yj = points[j]
+                    if ((yi > qy) != (yj > qy) and
+                            qx < (xj - xi) * (qy - yi) / (yj - yi) + xi):
+                        inside = not inside
                     j = i
                 if inside:
                     self._put(px, py)
 
-    def png(self):
-        raw = bytearray()
-        for y in range(SIZE):
-            raw.append(0)                      # filter: none
-            base = y * SS * W
-            for x in range(SIZE):
+    def rgba(self, rgb):
+        out = bytearray()
+        for y in range(S):
+            for x in range(S):
                 total = 0
                 for j in range(SS):
-                    off = base + j * W + x * SS
+                    off = ((y * SS + j) * W + x * SS)
                     total += sum(self.mask[off:off + SS])
                 a = (total + (SS * SS) // 2) // (SS * SS)
-                raw += bytes((INK, INK, INK, a))
-
-        def chunk(tag, data):
-            return (struct.pack(">I", len(data)) + tag + data +
-                    struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff))
-
-        ihdr = struct.pack(">IIBBBBB", SIZE, SIZE, 8, 6, 0, 0, 0)
-        return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) +
-                chunk(b"IDAT", zlib.compress(bytes(raw), 9)) +
-                chunk(b"IEND", b""))
+                out += bytes((rgb[0], rgb[1], rgb[2], a))
+        return bytes(out)
 
 
 def terminal(c):
-    c.round_rect(8, 16, 80, 64, 10)
-    c.polyline([(32, 38), (44, 48), (32, 58)], 9)
-    c.line(52, 58, 68, 58, 9)
+    c.round_rect(4, 10, 56, 44, 6)
+    c.line(18, 24, 28, 32, 3)
+    c.line(18, 40, 28, 32, 3)
+    c.line(34, 40, 46, 40, 3)
 
 
-def screen(c):
-    c.round_rect(8, 14, 80, 50, 8)
-    c.line(48, 64, 48, 78, 9)
-    c.line(36, 80, 60, 80, 9)
+def files(c):
+    c.round_rect(4, 18, 56, 38, 5)
+    c.rect(4, 12, 26, 10)
+    c.line(12, 30, 52, 30, 2)
+    c.line(12, 38, 44, 38, 2)
 
 
-def music(c):
-    c.circle(30, 72, 9, fill=True)
-    c.circle(64, 64, 9, fill=True)
-    c.line(39, 72, 39, 26)
-    c.line(73, 64, 73, 18)
-    c.polyline([(35, 26), (77, 18)], 9)
-
-
-def video(c):
-    c.round_rect(8, 22, 80, 52, 10)
-    c.polygon([(40, 36), (66, 48), (40, 60)])
-
-
-def photo(c):
-    c.round_rect(8, 18, 80, 60, 10)
-    c.polyline([(16, 70), (36, 44), (50, 60), (64, 42), (80, 70)])
-    c.circle(66, 32, 5, fill=True)
-
-
-def games(c):
-    c.round_rect(6, 32, 84, 38, 19)
-    c.line(24, 51, 40, 51)
-    c.line(32, 43, 32, 59)
-    c.circle(64, 47, 4, fill=True)
-    c.circle(74, 55, 4, fill=True)
+def editor(c):
+    c.round_rect(12, 4, 40, 56, 4)
+    c.line(20, 18, 44, 18, 2)
+    c.line(20, 26, 44, 26, 2)
+    c.line(20, 34, 44, 34, 2)
+    c.line(20, 42, 36, 42, 2)
 
 
 def settings(c):
     for i in range(8):
         a = i * math.pi / 4
-        c.line(48 + math.cos(a) * 26, 48 + math.sin(a) * 26,
-               48 + math.cos(a) * 39, 48 + math.sin(a) * 39, 11)
-    c.circle(48, 48, 28)
-    c.circle(48, 48, 10)
+        c.line(32 + math.cos(a) * 18, 32 + math.sin(a) * 18,
+               32 + math.cos(a) * 27, 32 + math.sin(a) * 27, 4)
+    c.circle(32, 32, 20, stroke=4)
+    c.circle(32, 32, 7, stroke=3)
 
 
-def about(c):
-    c.circle(48, 48, 36)
-    c.circle(48, 31, 5, fill=True)
-    c.line(48, 44, 48, 68, 9)
+def battery(c):
+    c.round_rect(4, 20, 46, 24, 4)
+    c.rect(52, 27, 7, 10)
+    c.rect(10, 26, 24, 12)
+
+
+def network(c):
+    c.arc(32, 44, 8, math.pi * 1.1, math.pi * 1.9, 3)
+    c.arc(32, 44, 18, math.pi * 1.1, math.pi * 1.9, 3)
+    c.arc(32, 44, 28, math.pi * 1.1, math.pi * 1.9, 3)
+    c.circle(32, 44, 2, fill=True)
+
+
+def bluetooth(c):
+    c.line(32, 8, 48, 22, 3)
+    c.line(48, 22, 16, 46, 3)
+    c.line(16, 46, 48, 56, 3)
+    c.line(48, 56, 32, 64, 3)
+    c.line(32, 8, 32, 64, 3)
+
+
+def volume(c):
+    c.polygon([(8, 24), (20, 24), (32, 12), (32, 52), (20, 40), (8, 40)])
+    c.arc(36, 32, 12, -0.8, 0.8, 3)
+    c.arc(36, 32, 22, -0.8, 0.8, 3)
+
+
+def help(c):
+    c.circle(32, 32, 26, stroke=4)
+    c.arc(24, 24, 9, -1.2, 1.8, 3)
+    c.line(32, 33, 32, 40, 3)
+    c.circle(32, 49, 3, fill=True)
+
+
+def system(c):
+    c.line(8, 54, 56, 54, 3)
+    c.line(14, 54, 14, 36, 3)
+    c.line(28, 54, 28, 22, 3)
+    c.line(42, 54, 42, 30, 3)
+    c.line(56, 54, 56, 14, 3)
+
+
+def music(c):
+    c.circle(20, 48, 7, fill=True)
+    c.circle(46, 42, 7, fill=True)
+    c.line(27, 48, 27, 14, 3)
+    c.line(53, 42, 53, 10, 3)
+    c.line(26, 14, 54, 10, 3)
 
 
 ICONS = {
-    "terminal": terminal,
-    "screen": screen,
-    "music": music,
-    "video": video,
-    "photo": photo,
-    "games": games,
-    "settings": settings,
-    "about": about,
+    "terminal": (terminal, (78, 162, 255)),
+    "files": (files, (229, 192, 123)),
+    "editor": (editor, (152, 195, 121)),
+    "settings": (settings, (190, 190, 200)),
+    "battery": (battery, (152, 195, 121)),
+    "network": (network, (97, 175, 239)),
+    "bluetooth": (bluetooth, (86, 182, 194)),
+    "volume": (volume, (198, 120, 221)),
+    "help": (help, (229, 192, 123)),
+    "system": (system, (224, 108, 117)),
+    "music": (music, (198, 120, 221)),
 }
 
 
 def main():
-    for app, draw in ICONS.items():
+    root = os.path.dirname(os.path.abspath(__file__))
+    out = os.path.join(root, "icons")
+    os.makedirs(out, exist_ok=True)
+    lines = []
+    for i, (name, (draw, color)) in enumerate(ICONS.items()):
         c = Canvas()
         draw(c)
-        data = c.png()
-        path = os.path.join(APP_DIR, app, "icon.png")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data = c.rgba(color)
+        path = os.path.join(out, name + ".rgba")
         with open(path, "wb") as f:
+            f.write(struct.pack("<II", S, S))
             f.write(data)
-        print("%-10s %5d bytes  %s" % (app, len(data),
-                                       os.path.relpath(path)))
+        lines.append("%04X %s" % (BASE + i, name))
+        print("%-10s %5d bytes" % (name, len(data) + 8))
+    with open(os.path.join(out, "icons.map"), "w") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":

@@ -76,14 +76,72 @@ for unit in systemd-timesyncd.service systemd-binfmt.service; do
     in_root "systemctl mask $unit >/dev/null 2>&1 || true"
 done
 
-# The session engine. cpz-session boots into cpz-ui: one SDL2 launcher, one
-# active output, no login prompt on the panel.
-cat > "$ROOT/etc/systemd/system/cpz-session.service" <<EOF
+# The session engine. cpz-session is the DRM broker and starts the
+# unprivileged cpz-term renderer. There is no compositor and no login prompt.
+rm -f "$ROOT/etc/systemd/system/cpz-menud.service"
+install -d "$ROOT/usr/lib/tmpfiles.d"
+cat > "$ROOT/usr/lib/tmpfiles.d/cpz.conf" <<'EOF'
+d /run/cpz 0755 cpz cpz -
+EOF
+install -m 0644 src/tmux.conf "$ROOT/etc/tmux.conf"
+install -m 0755 src/cpz-tmux-start.sh "$ROOT/usr/local/bin/cpz-tmux-start"
+
+cat > "$ROOT/etc/systemd/system/cpz-shell.service" <<'EOF'
 [Unit]
-Description=Cardputer Zero appliance session (SDL2/KMSDRM)
+Description=Cardputer Zero UI registry and provider broker
 DefaultDependencies=no
-After=systemd-modules-load.service systemd-udevd.service cpz-menud.service
-Wants=cpz-menud.service
+After=systemd-udevd.service systemd-tmpfiles-setup.service
+Before=cpz-tmux.service cpz-session.service
+StartLimitIntervalSec=0
+
+[Service]
+User=cpz
+Group=cpz
+Environment=HOME=/home/cpz
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=TMUX_TMPDIR=/run/user/1000
+ExecStart=/usr/local/bin/cpz-shell
+Restart=always
+RestartSec=0.2
+KillMode=control-group
+
+[Install]
+WantedBy=sysinit.target
+EOF
+
+cat > "$ROOT/etc/systemd/system/cpz-tmux.service" <<'EOF'
+[Unit]
+Description=Cardputer Zero tmux server
+DefaultDependencies=no
+After=cpz-shell.service
+Wants=cpz-shell.service
+Before=cpz-session.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=cpz
+Group=cpz
+RuntimeDirectory=user/1000
+RuntimeDirectoryMode=0700
+Environment=HOME=/home/cpz
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=TMUX_TMPDIR=/run/user/1000
+ExecStart=/usr/local/bin/cpz-tmux-start
+ExecStop=/usr/bin/tmux -L cpz kill-server
+KillMode=process
+
+[Install]
+WantedBy=sysinit.target
+EOF
+
+cat > "$ROOT/etc/systemd/system/cpz-session.service" <<'EOF'
+[Unit]
+Description=Cardputer Zero DRM terminal session
+DefaultDependencies=no
+After=systemd-modules-load.service systemd-udevd.service cpz-tmux.service
+Wants=cpz-tmux.service
 Before=basic.target getty.target
 Conflicts=getty@tty1.service
 StartLimitIntervalSec=0
@@ -93,10 +151,7 @@ Type=notify
 NotifyAccess=main
 WatchdogSec=10
 Environment=TERM=linux
-Environment=SDL_VIDEODRIVER=kmsdrm
-Environment=XKB_DEFAULT_LAYOUT=$XKB_LAYOUT
-Environment=XKB_DEFAULT_OPTIONS=$XKB_OPTIONS
-ExecStart=/usr/local/bin/cpz-session --ui /usr/local/bin/cpz-ui
+ExecStart=/usr/local/bin/cpz-session --term /usr/local/bin/cpz-term
 Restart=always
 RestartSec=0.2
 KillMode=control-group
@@ -106,45 +161,25 @@ TimeoutStopSec=5
 WantedBy=sysinit.target
 EOF
 
-# The menu/status model daemon. It is stateless on disk: static manifests plus
-# live provider registrations. The session may restart on every app; this
-# process must not.
-cat > "$ROOT/etc/systemd/system/cpz-menud.service" <<'EOF'
-[Unit]
-Description=Cardputer Zero menu and status model (cpz-menud)
-DefaultDependencies=no
-After=systemd-udevd.service
-Before=cpz-session.service
-StartLimitIntervalSec=0
-
-[Service]
-Type=notify
-NotifyAccess=main
-RuntimeDirectory=cpz/menu
-RuntimeDirectoryMode=0755
-ExecStart=/usr/local/bin/cpz-menud
-Restart=always
-RestartSec=0.2
-KillMode=control-group
-
-[Install]
-WantedBy=sysinit.target
-EOF
-
 # System providers: ordinary daemons on the same protocol, shipped with the
 # image, with reserved priority. They only supply typed widgets.
-for prov in battery clock network bluetooth; do
+for prov in battery clock network bluetooth volume; do
     cat > "$ROOT/etc/systemd/system/cpz-$prov.service" <<EOF
 [Unit]
-Description=Cardputer Zero $prov status provider
+Description=Cardputer Zero $prov provider
 DefaultDependencies=no
-After=cpz-menud.service
-Wants=cpz-menud.service
+After=cpz-shell.service
+Wants=cpz-shell.service
 Before=cpz-session.service
 StartLimitIntervalSec=0
 
 [Service]
-ExecStart=/usr/local/bin/cpz-$prov
+User=cpz
+Group=cpz
+Environment=HOME=/home/cpz
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=TMUX_TMPDIR=/run/user/1000
+ExecStart=/usr/local/bin/cpz-$prov --provider
 Restart=always
 RestartSec=2
 KillMode=control-group
@@ -154,12 +189,12 @@ WantedBy=sysinit.target
 EOF
 done
 
-in_root "systemctl enable cpz-menud.service cpz-battery.service \
-         cpz-clock.service cpz-network.service cpz-bluetooth.service \
+in_root "systemctl enable cpz-shell.service cpz-tmux.service cpz-session.service \
+         cpz-battery.service cpz-clock.service cpz-network.service \
+         cpz-bluetooth.service cpz-volume.service \
          >/dev/null 2>&1 || true"
 
 in_root "systemctl disable getty@tty1.service >/dev/null 2>&1 || true"
-in_root "systemctl enable cpz-session.service >/dev/null 2>&1 || true"
 # Serial recovery shell. The panel has no fbcon, so this is the only local
 # login path if SSH is down.
 in_root "systemctl enable serial-getty@ttyAMA0.service >/dev/null 2>&1 || true"
@@ -365,8 +400,10 @@ EOF
 
 # --- size: drop what is not on the boot path -------------------------------
 log "removing build toolchain: $BUILD_PACKAGES"
-# shellcheck disable=SC2086
-pacman_target -Rns $BUILD_PACKAGES || warn "some build packages are required by others"
+for pkg in $BUILD_PACKAGES; do
+    pacman_target -Q "$pkg" >/dev/null 2>&1 || continue
+    pacman_target -Rns "$pkg" >/dev/null 2>&1 || warn "cannot remove build package $pkg"
+done
 
 # Prune one package at a time: if something depends on it, pacman refuses and
 # the package stays. That keeps this step safe to extend without auditing the

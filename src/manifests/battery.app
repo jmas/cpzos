@@ -1,0 +1,9 @@
+id=battery
+name=Battery
+desc=Charge, voltage, health
+exec=/usr/local/bin/cpz-battery
+type=tui
+icon=battery
+category=System
+order=310
+provider=1

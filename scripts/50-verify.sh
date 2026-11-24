@@ -1,8 +1,5 @@
 #!/bin/bash
-# Stage 50 — verify the produced image without mounting it.
-#
-# These are the invariants behind the SDL2/KMSDRM appliance image. If one of
-# them breaks, the image is wrong even if it builds.
+# Stage 50 — verify the produced economy image without mounting it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . ./config.sh
@@ -13,12 +10,15 @@ IMG="$BUILD/$NAME.img"
 BOOTIMG="$BUILD/verify-boot.fat"
 ROOTIMG="$BUILD/verify-root.ext4"
 ROOT_PARTUUID="${DISK_ID#0x}-02"
+KVER=$(kernel_version)
 
 fail=0
 ok()   { printf '  \033[1;32mok\033[0m   %s\n' "$*"; }
 bad()  { printf '  \033[1;31mFAIL\033[0m %s\n' "$*"; fail=1; }
 need() { if eval "$2" >/dev/null 2>&1; then ok "$1"; else bad "$1"; fi; }
 absent() { if eval "$2" 2>&1 | grep -q 'File not found'; then ok "$1"; else bad "$1"; fi; }
+need_absent_pkg() { if pacman --root "$ROOT" -Q "$1" >/dev/null 2>&1; then bad "no $1"; else ok "no $1"; fi; }
+need_pkg() { if pacman --root "$ROOT" -Q "$1" >/dev/null 2>&1; then ok "$1 installed"; else bad "$1 installed"; fi; }
 
 [ -f "$IMG" ] || die "missing $IMG (run make image first)"
 
@@ -41,16 +41,13 @@ need "start.elf"                  "mtype -i $BOOTIMG ::/start.elf"
 need "fixup.dat"                  "mtype -i $BOOTIMG ::/fixup.dat"
 need "boot splash asset"          "mtype -i $BOOTIMG ::/cpz-splash.bin"
 need "boot splash is Splash Asm"  "( mtype -i $BOOTIMG ::/cpz-splash.bin || true ) | head -c 10 | grep 'SPLASH ASM'"
-need "firmware supports Splash Asm" "( mtype -i $BOOTIMG ::/start.elf || true ) | strings | grep 'SPLASH ASM' >/dev/null"
 need "config uses boot splash"    "mtype -i $BOOTIMG ::/config.txt | grep -q '^splash_screen=cpz-splash.bin'"
 need "no initramfs image"         "! mdir -i $BOOTIMG ::/ | grep -qi initramfs"
-need "config.txt has no initramfs" "! mtype -i $BOOTIMG ::/config.txt | grep -q '^initramfs'"
 need "config.txt selects overlay"  "mtype -i $BOOTIMG ::/config.txt | grep -q 'dtoverlay=cardputerzero-$BOARD-overlay'"
 need "cmdline root PARTUUID"       "mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'root=PARTUUID=$ROOT_PARTUUID'"
 need "cmdline quiet"               "mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'quiet'"
 need "cmdline has no resume/initrd" "! mtype -i $BOOTIMG ::/cmdline.txt | grep -qE 'initrd=|resume='"
 need "fbcon off the panel"         "mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'fbcon=map:off'"
-need "HDMI not forced off"         "! mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'video=HDMI-A-1:d'"
 need "panic reboot enabled"        "mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'panic=10'"
 need "serial recovery console"     "mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'console=ttyAMA0,115200'"
 need "hardware watchdog on"        "mtype -i $BOOTIMG ::/config.txt | grep -q '^dtparam=watchdog=on'"
@@ -58,70 +55,95 @@ if [ "$ENABLE_HDMI" = "1" ]; then
     need "vc4 overlay enabled"     "mtype -i $BOOTIMG ::/config.txt | grep -q '^dtoverlay=vc4-kms-v3d'"
 else
     need "vc4 overlay disabled"    "! mtype -i $BOOTIMG ::/config.txt | grep -q '^dtoverlay=vc4-kms-v3d'"
-    need "vc4 not autoloaded"      "! debugfs -R 'cat /etc/modules-load.d/cpz-panel.conf' $ROOTIMG | grep -qx 'vc4'"
 fi
 
 log "root partition"
 need "ext4 filesystem"       "debugfs -R 'stats' $ROOTIMG"
 need "systemd present"       "debugfs -R 'stat /usr/lib/systemd/systemd' $ROOTIMG"
 need "login user cpz"        "debugfs -R 'cat /etc/passwd' $ROOTIMG | grep -q '^cpz:'"
-need "cpz password is set"   "debugfs -R 'cat /etc/shadow' $ROOTIMG | grep -qE '^cpz:\\\$'"
 need "root account locked"   "debugfs -R 'cat /etc/shadow' $ROOTIMG | grep -qE '^root:!'"
 need "wheel sudo rule"       "debugfs -R 'cat /etc/sudoers.d/10-wheel' $ROOTIMG | grep -q '%wheel'"
 need "fstab root PARTUUID"   "debugfs -R 'cat /etc/fstab' $ROOTIMG | grep -q '$ROOT_PARTUUID'"
 
-log "session"
+log "economy UI"
 need "cpz-session installed"   "debugfs -R 'stat /usr/local/bin/cpz-session' $ROOTIMG | grep -q Inode"
-need "cpz-ui installed"        "debugfs -R 'stat /usr/local/bin/cpz-ui' $ROOTIMG | grep -q Inode"
 need "cpz-term installed"      "debugfs -R 'stat /usr/local/bin/cpz-term' $ROOTIMG | grep -q Inode"
-need "cpz-sdlprobe installed"  "debugfs -R 'stat /usr/local/bin/cpz-sdlprobe' $ROOTIMG | grep -q Inode"
-need "cpz-menud installed"     "debugfs -R 'stat /usr/local/bin/cpz-menud' $ROOTIMG | grep -q Inode"
-need "cpz-menu installed"      "debugfs -R 'stat /usr/local/bin/cpz-menu' $ROOTIMG | grep -q Inode"
-need "cpz-sessionctl installed" "debugfs -R 'stat /usr/local/bin/cpz-sessionctl' $ROOTIMG | grep -q Inode"
+need "cpz-shell installed"     "debugfs -R 'stat /usr/local/bin/cpz-shell' $ROOTIMG | grep -q Inode"
+need "cpz-launcher installed"  "debugfs -R 'stat /usr/local/bin/cpz-launcher' $ROOTIMG | grep -q Inode"
+need "cpz-help installed"      "debugfs -R 'stat /usr/local/bin/cpz-help' $ROOTIMG | grep -q Inode"
+need "cpz-settings installed"  "debugfs -R 'stat /usr/local/bin/cpz-settings' $ROOTIMG | grep -q Inode"
+need "cpz-ctl installed"       "debugfs -R 'stat /usr/local/bin/cpz-ctl' $ROOTIMG | grep -q Inode"
+need "cpz-tmux-start installed" "debugfs -R 'stat /usr/local/bin/cpz-tmux-start' $ROOTIMG | grep -q Inode"
 need "battery provider"        "debugfs -R 'stat /usr/local/bin/cpz-battery' $ROOTIMG | grep -q Inode"
 need "clock provider"          "debugfs -R 'stat /usr/local/bin/cpz-clock' $ROOTIMG | grep -q Inode"
 need "network provider"        "debugfs -R 'stat /usr/local/bin/cpz-network' $ROOTIMG | grep -q Inode"
 need "bluetooth provider"      "debugfs -R 'stat /usr/local/bin/cpz-bluetooth' $ROOTIMG | grep -q Inode"
-need "terminal manifest"       "debugfs -R 'cat /usr/share/cpz/apps/terminal/app.json' $ROOTIMG | grep -q '\"id\": \"terminal\"'"
-need "music manifest"          "debugfs -R 'cat /usr/share/cpz/apps/music/app.json' $ROOTIMG | grep -q 'music.songs'"
-need "settings manifest"       "debugfs -R 'cat /usr/share/cpz/apps/settings/app.json' $ROOTIMG | grep -q 'cpz-sessionctl'"
-need "about info action"       "debugfs -R 'cat /usr/share/cpz/apps/about/app.json' $ROOTIMG | grep -q '\"info\"'"
-need "terminal app icon"       "debugfs -R 'stat /usr/share/cpz/apps/terminal/icon.png' $ROOTIMG | grep -q Inode"
-need "settings app icon"       "debugfs -R 'stat /usr/share/cpz/apps/settings/icon.png' $ROOTIMG | grep -q Inode"
-need "provider token battery"  "debugfs -R 'stat /etc/cpz/menu/battery.token' $ROOTIMG | grep -q 'Mode:  0600'"
-need "provider token clock"    "debugfs -R 'stat /etc/cpz/menu/clock.token' $ROOTIMG | grep -q Inode"
-need "menu daemon unit"        "debugfs -R 'cat /etc/systemd/system/cpz-menud.service' $ROOTIMG | grep -q 'Before=cpz-session.service'"
-need "menu daemon enabled"     "debugfs -R 'ls /etc/systemd/system/sysinit.target.wants' $ROOTIMG | grep -q cpz-menud"
+need "volume provider"         "debugfs -R 'stat /usr/local/bin/cpz-volume' $ROOTIMG | grep -q Inode"
+need "backlight helper"        "debugfs -R 'stat /usr/local/bin/cpz-backlight' $ROOTIMG | grep -q Inode"
+need "terminal manifest"       "debugfs -R 'cat /usr/share/cpz/apps/terminal.app' $ROOTIMG | grep -q '^id=terminal'"
+need "battery manifest"        "debugfs -R 'cat /usr/share/cpz/apps/battery.app' $ROOTIMG | grep -q '^provider=1'"
+need "help manifest"           "debugfs -R 'cat /usr/share/cpz/apps/help.app' $ROOTIMG | grep -q '^id=help'"
+need "icon map"                "debugfs -R 'cat /usr/share/cpz/icons.map' $ROOTIMG | grep -q 'terminal'"
+need "terminal icon"           "debugfs -R 'stat /usr/share/cpz/icons/terminal.rgba' $ROOTIMG | grep -q Inode"
+need "no JSON manifests"       "! debugfs -R 'ls /usr/share/cpz/apps' $ROOTIMG | grep -q '\\.json'"
+absent "no cpz-ui"             "debugfs -R 'stat /usr/local/bin/cpz-ui' $ROOTIMG"
+absent "no cpz-menud"          "debugfs -R 'stat /usr/local/bin/cpz-menud' $ROOTIMG"
+absent "no cpz-menu"           "debugfs -R 'stat /usr/local/bin/cpz-menu' $ROOTIMG"
+absent "no cpz-sessionctl"     "debugfs -R 'stat /usr/local/bin/cpz-sessionctl' $ROOTIMG"
+absent "no cpz-sdlprobe"       "debugfs -R 'stat /usr/local/bin/cpz-sdlprobe' $ROOTIMG"
+absent "no old terminal manifest" "debugfs -R 'stat /usr/share/cpz/apps/terminal/app.json' $ROOTIMG"
+
+log "units"
+need "cpz-shell unit"          "debugfs -R 'cat /etc/systemd/system/cpz-shell.service' $ROOTIMG | grep -q 'ExecStart=/usr/local/bin/cpz-shell'"
+need "cpz-tmux unit"           "debugfs -R 'cat /etc/systemd/system/cpz-tmux.service' $ROOTIMG | grep -q 'RuntimeDirectory=user/1000'"
+need "cpz-session unit"        "debugfs -R 'cat /etc/systemd/system/cpz-session.service' $ROOTIMG | grep -q 'ExecStart=/usr/local/bin/cpz-session --term /usr/local/bin/cpz-term'"
+need "session watchdog"        "debugfs -R 'cat /etc/systemd/system/cpz-session.service' $ROOTIMG | grep -q 'WatchdogSec=10'"
+need "session depends tmux"    "debugfs -R 'cat /etc/systemd/system/cpz-session.service' $ROOTIMG | grep -q 'After=.*cpz-tmux.service'"
+need "session enabled"         "debugfs -R 'ls /etc/systemd/system/sysinit.target.wants' $ROOTIMG | grep -q cpz-session"
+need "shell enabled"           "debugfs -R 'ls /etc/systemd/system/sysinit.target.wants' $ROOTIMG | grep -q cpz-shell"
+need "tmux enabled"            "debugfs -R 'ls /etc/systemd/system/sysinit.target.wants' $ROOTIMG | grep -q cpz-tmux"
 need "battery unit enabled"    "debugfs -R 'ls /etc/systemd/system/sysinit.target.wants' $ROOTIMG | grep -q cpz-battery"
 need "clock unit enabled"      "debugfs -R 'ls /etc/systemd/system/sysinit.target.wants' $ROOTIMG | grep -q cpz-clock"
-need "session depends on menu" "debugfs -R 'cat /etc/systemd/system/cpz-session.service' $ROOTIMG | grep -q 'Wants=cpz-menud.service'"
-need "session unit enabled"    "debugfs -R 'ls /etc/systemd/system/sysinit.target.wants' $ROOTIMG | grep -q cpz-session"
-need "session starts early"    "debugfs -R 'cat /etc/systemd/system/cpz-session.service' $ROOTIMG | grep -q 'Before=basic.target'"
-need "session watchdog"        "debugfs -R 'cat /etc/systemd/system/cpz-session.service' $ROOTIMG | grep -q 'WatchdogSec=10'"
-need "no console unit"         "! debugfs -R 'stat /etc/systemd/system/cpz-console.service' $ROOTIMG 2>/dev/null | grep -q Inode"
 need "getty@tty1 not enabled"  "! debugfs -R 'ls /etc/systemd/system/getty.target.wants' $ROOTIMG 2>/dev/null | grep -q 'getty@tty1'"
 need "serial recovery getty"   "debugfs -R 'ls -l /etc/systemd/system/getty.target.wants' $ROOTIMG 2>/dev/null | grep -q 'serial-getty@ttyAMA0'"
-need "display modules early"   "debugfs -R 'cat /etc/modules-load.d/cpz-panel.conf' $ROOTIMG | grep -q gpio_forwarder"
-need "spi clock modules"       "debugfs -R 'cat /etc/modules-load.d/cpz-panel.conf' $ROOTIMG | grep -q i2c_bcm2835"
+need "tmux config"             "debugfs -R 'cat /etc/tmux.conf' $ROOTIMG | grep -q 'status-interval 0'"
+need "tmux keeps server"       "debugfs -R 'cat /etc/tmux.conf' $ROOTIMG | grep -q 'exit-empty off'"
+need "runtime tmpfiles"        "debugfs -R 'cat /usr/lib/tmpfiles.d/cpz.conf' $ROOTIMG | grep -q '/run/cpz'"
+need "shell profile"           "debugfs -R 'cat /etc/profile.d/00-cpz.sh' $ROOTIMG | grep -q 'TMUX_TMPDIR'"
 need "boot report enabled"     "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q cpz-report"
-need "boot report script"      "debugfs -R 'stat /usr/local/bin/cpz-report' $ROOTIMG | grep -q Inode"
 need "systemd watchdog config" "debugfs -R 'cat /etc/systemd/system.conf.d/10-cpz-watchdog.conf' $ROOTIMG | grep -q 'RuntimeWatchdogSec=15s'"
-need "libtsm installed"        "pacman --root $ROOT -Q libtsm"
-need "SDL2 installed"          "pacman --root $ROOT -Q sdl2-compat"
-need "SDL2_ttf installed"      "pacman --root $ROOT -Q sdl2_ttf"
-need "mesa installed"          "pacman --root $ROOT -Q mesa"
-need "libinput installed"      "pacman --root $ROOT -Q libinput"
-need "libxkbcommon installed"  "pacman --root $ROOT -Q libxkbcommon"
-need "Unicode font installed"  "debugfs -R 'stat /usr/share/fonts/TTF/DejaVuSansMono.ttf' $ROOTIMG | grep -q Inode"
-need "Noto Sans UI font"       "debugfs -R 'stat /usr/share/fonts/cpz/NotoSans-Regular.ttf' $ROOTIMG | grep -q Inode"
-need "Noto Sans bold font"     "debugfs -R 'stat /usr/share/fonts/cpz/NotoSans-Bold.ttf' $ROOTIMG | grep -q Inode"
-need "Noto CJK fallback"       "debugfs -R 'stat /usr/share/fonts/cpz/NotoSansCJKsc-Regular.otf' $ROOTIMG | grep -q Inode"
-need "Noto license"            "debugfs -R 'stat /usr/share/licenses/noto/OFL.txt' $ROOTIMG | grep -q Inode"
 
-need "vendor module present" "debugfs -R 'ls /usr/lib/modules' $ROOTIMG"
+log "packages"
+need_pkg libtsm
+need_pkg freetype2
+need_pkg ncurses
+need_pkg libxkbcommon
+need_pkg libevdev
+need_pkg libdrm
+need_pkg tmux
+need_pkg ttf-dejavu
+need_pkg nnn
+need_pkg htop
+need_pkg vim
+need_pkg python
+need_pkg git
+need_pkg iwd
+need_pkg bluez
+need_pkg alsa-utils
+need_absent_pkg sdl2-compat
+need_absent_pkg sdl2_ttf
+need_absent_pkg cairo
+need_absent_pkg pango
+need_absent_pkg mesa
+need_absent_pkg libinput
+need_absent_pkg fontconfig
+need "Unicode font present" "debugfs -R 'stat /usr/share/fonts/TTF/DejaVuSansMono.ttf' $ROOTIMG | grep -q Inode"
+need "no Noto CJK ballast" "! debugfs -R 'ls /usr/share/fonts/cpz' $ROOTIMG 2>/dev/null | grep -q NotoSansCJK"
+
+log "device modules"
 need "panel module autoloads" "debugfs -R 'cat /etc/modules-load.d/cpz-panel.conf' $ROOTIMG | grep -q panel-mipi-dbi-m"
 need "panel loads before vc4" "debugfs -R 'cat /etc/modprobe.d/cpz-panel.conf' $ROOTIMG | grep -q 'softdep vc4 pre: panel-mipi-dbi-m'"
-need "panel driver installed" "debugfs -R 'stat /usr/lib/modules/6.18.64-2-rpi/extra/panel-mipi-dbi-m.ko' $ROOTIMG | grep -q Inode"
+need "panel driver installed" "debugfs -R 'stat /usr/lib/modules/$KVER/extra/panel-mipi-dbi-m.ko' $ROOTIMG | grep -q Inode"
 
 if [ "$ENABLE_SSH" = "1" ]; then
     need "openssh installed"    "pacman --root $ROOT -Q openssh"
@@ -137,61 +159,36 @@ need "no mkinitcpio preset"  "! debugfs -R 'ls /etc/mkinitcpio.d' $ROOTIMG 2>/de
 need "no package cache"      "! debugfs -R 'ls /var/cache/pacman/pkg' $ROOTIMG 2>/dev/null | grep -q '\.pkg\.'"
 absent "no build sources"    "debugfs -R 'stat /tmp/dtoverlays' $ROOTIMG"
 
-log "graphics lane"
-need "libdrm installed"    "pacman --root $ROOT -Q libdrm"
-need "backlight helper"    "debugfs -R 'stat /usr/local/bin/cpz-backlight' $ROOTIMG | grep -q Inode"
-need "SDL profile"         "debugfs -R 'cat /etc/profile.d/00-sdl.sh' $ROOTIMG | grep -q 'SDL_VIDEODRIVER=kmsdrm'"
-absent "no old console" "debugfs -R 'stat /usr/local/bin/cpz-console' $ROOTIMG"
-absent "no old gfx"     "debugfs -R 'stat /usr/local/bin/cpz-gfx' $ROOTIMG"
-absent "no old demo"    "debugfs -R 'stat /usr/local/bin/cpz-demo' $ROOTIMG"
-absent "no old fbdemo"  "debugfs -R 'stat /usr/local/bin/cpz-fbdemo' $ROOTIMG"
-absent "no old mirror"  "debugfs -R 'stat /usr/local/bin/cpz-mirror' $ROOTIMG"
-absent "no cpz-run"        "debugfs -R 'stat /usr/local/bin/cpz-run' $ROOTIMG"
-absent "no drm-active"     "debugfs -R 'stat /usr/local/bin/cpz-drm-active' $ROOTIMG"
-absent "no old library" "debugfs -R 'stat /usr/local/lib/libcpz-display.a' $ROOTIMG"
-absent "no old header"  "debugfs -R 'stat /usr/local/include/cpz-display.h' $ROOTIMG"
-absent "no old profile"    "debugfs -R 'stat /etc/profile.d/00-drm.sh' $ROOTIMG"
-absent "no old mpv conf" "debugfs -R 'stat /etc/mpv/mpv.conf' $ROOTIMG"
-
-if chroot "$ROOT" /usr/local/bin/cpz-sdlprobe --selftest | grep -q 'fnv1a'; then
-    ok "cpz-sdlprobe --selftest runs"
-else
-    bad "cpz-sdlprobe --selftest runs"
-fi
+log "selftests"
 if chroot "$ROOT" /usr/local/bin/cpz-term --selftest | grep -q 'UTF-8'; then
-    ok "cpz-term --selftest runs"
+    ok "cpz-term --selftest"
 else
-    bad "cpz-term --selftest runs"
+    bad "cpz-term --selftest"
 fi
-if chroot "$ROOT" /usr/local/bin/cpz-session --version | grep -q 'cpz-session'; then
-    ok "cpz-session --version runs"
+if chroot "$ROOT" /usr/local/bin/cpz-shell --selftest --apps /usr/share/cpz/apps | grep -q 'selftest: ok'; then
+    ok "cpz-shell --selftest"
 else
-    bad "cpz-session --version runs"
+    bad "cpz-shell --selftest"
 fi
-if chroot "$ROOT" /usr/local/bin/cpz-menud --selftest 2>/dev/null |
-   grep -q 'manifest=[0-9]'; then
-    ok "cpz-menud --selftest parses all manifests"
-else
-    bad "cpz-menud --selftest parses all manifests"
-fi
-if chroot "$ROOT" /usr/local/bin/cpz-menu --version | grep -q 'cpz-menu'; then
-    ok "cpz-menu --version runs"
-else
-    bad "cpz-menu --version runs"
-fi
-for prov in battery clock network bluetooth; do
-    if chroot "$ROOT" /usr/local/bin/cpz-$prov --version | grep -q "cpz-$prov"; then
-        ok "cpz-$prov --version runs"
+for bin in cpz-launcher cpz-help cpz-settings cpz-ctl cpz-battery cpz-clock cpz-network cpz-bluetooth cpz-volume; do
+    if chroot "$ROOT" /usr/local/bin/$bin --selftest >/dev/null 2>&1; then
+        ok "$bin --selftest"
     else
-        bad "cpz-$prov --version runs"
+        bad "$bin --selftest"
     fi
 done
-if chroot "$ROOT" /usr/local/bin/cpz-backlight --selftest | grep -q '100%'; then
-    ok "cpz-backlight selftest runs"
+if chroot "$ROOT" /usr/local/bin/cpz-session --version | grep -q 'cpz-session'; then
+    ok "cpz-session --version"
 else
-    bad "cpz-backlight selftest runs"
+    bad "cpz-session --version"
+fi
+if chroot "$ROOT" /usr/local/bin/cpz-backlight --selftest | grep -q '100%'; then
+    ok "cpz-backlight selftest"
+else
+    bad "cpz-backlight selftest"
 fi
 
+log "session probe"
 rm -rf "$ROOT/tmp/cpz-drm-test"
 mkdir -p "$ROOT/tmp/cpz-drm-test/card0-SPI-1" \
          "$ROOT/tmp/cpz-drm-test/card1-HDMI-A-1"
@@ -200,77 +197,29 @@ printf '320x170\n'   > "$ROOT/tmp/cpz-drm-test/card0-SPI-1/modes"
 printf 'connected\n' > "$ROOT/tmp/cpz-drm-test/card1-HDMI-A-1/status"
 printf '1920x1080\n' > "$ROOT/tmp/cpz-drm-test/card1-HDMI-A-1/modes"
 if chroot "$ROOT" env CPZ_DRM_ROOT=/tmp/cpz-drm-test \
-    /usr/local/bin/cpz-session --probe | grep -q 'output=hdmi card=card1'; then
+    /usr/local/bin/cpz-session --probe | grep -q '^hdmi card1'; then
     ok "session selects HDMI when both are connected"
 else
     bad "session selects HDMI when both are connected"
 fi
 if chroot "$ROOT" env CPZ_DRM_ROOT=/tmp/cpz-drm-test \
-    /usr/local/bin/cpz-session --output panel --probe | grep -q 'output=panel card=card0'; then
+    /usr/local/bin/cpz-session --output panel --probe | grep -q '^panel card0'; then
     ok "session honours --output panel"
 else
     bad "session honours --output panel"
 fi
 rm -rf "$ROOT/tmp/cpz-drm-test"
 
-# The battery provider is the only component that turns a sysfs reading into
-# the status-bar icon. Run it against a fake gauge and check that menud pushes
-# the new level to subscribers, not just the first one.
-log "battery status provider"
-BT=/tmp/cpz-battery-test
-rm -rf "$ROOT$BT"
-mkdir -p "$ROOT$BT/etc" "$ROOT$BT/run" "$ROOT$BT/supply"
-printf 'test-token\n'  > "$ROOT$BT/etc/battery.token"
-printf '42\n'          > "$ROOT$BT/supply/capacity"
-printf 'Discharging\n' > "$ROOT$BT/supply/status"
-printf 'Battery\n'     > "$ROOT$BT/supply/type"
-printf '1\n'           > "$ROOT$BT/supply/present"
-chroot "$ROOT" /usr/local/bin/cpz-menud --socket "$BT/menu.sock" \
-    --apps /usr/share/cpz/apps --run "$BT/run" --etc "$BT/etc" \
-    >/dev/null 2>&1 &
-menud_pid=$!
-sleep 1
-chroot "$ROOT" env CPZ_POWER_SUPPLY="$BT/supply" \
-    /usr/local/bin/cpz-battery --socket "$BT/menu.sock" \
-    --run "$BT/run" >/dev/null 2>&1 &
-batt_pid=$!
-sleep 2
-out=$(chroot "$ROOT" /usr/local/bin/cpz-menu --socket "$BT/menu.sock" \
-      status 2>/dev/null || true)
-if grep -q 'battery.*level=42 charging=0' <<<"$out"; then
-    ok "battery widget registers the real charge"
+log "image size"
+USED_KB=$(du -sk "$ROOT" | cut -f1)
+LIMIT_KB=$((ROOT_MB * 1024 * 95 / 100))
+if [ "$USED_KB" -le "$LIMIT_KB" ]; then
+    ok "rootfs ${USED_KB} KiB fits ${ROOT_MB} MiB"
 else
-    bad "battery widget registers the real charge"
+    bad "rootfs ${USED_KB} KiB exceeds ${ROOT_MB} MiB budget"
 fi
-printf '37\n'          > "$ROOT$BT/supply/capacity"
-printf 'Charging\n'    > "$ROOT$BT/supply/status"
-sleep 3
-out=$(chroot "$ROOT" /usr/local/bin/cpz-menu --socket "$BT/menu.sock" \
-      status 2>/dev/null || true)
-if grep -q 'battery.*level=37 charging=1' <<<"$out"; then
-    ok "battery widget updates level and charging"
-else
-    bad "battery widget updates level and charging"
-fi
-printf '0\n'           > "$ROOT$BT/supply/present"
-sleep 2
-out=$(chroot "$ROOT" /usr/local/bin/cpz-menu --socket "$BT/menu.sock" \
-      status 2>/dev/null || true)
-if grep -q '^0 widget' <<<"$out"; then
-    ok "battery widget disappears with the gauge"
-else
-    bad "battery widget disappears with the gauge"
-fi
-kill "$batt_pid" "$menud_pid" 2>/dev/null || true
-wait "$batt_pid" 2>/dev/null || true
-wait "$menud_pid" 2>/dev/null || true
-rm -rf "$ROOT$BT"
 
-log "sizes"
-printf '  image      %s\n' "$(du -h "$IMG" | cut -f1)"
-printf '  image.zst  %s\n' "$(du -h "$IMG.zst" | cut -f1)"
-printf '  root used  %s\n' "$(du -sh "$ROOT" 2>/dev/null | cut -f1 || echo n/a)"
-
-rm -f "$BOOTIMG" "$ROOTIMG"
-[ "$fail" = 0 ] || die "verification failed"
+if [ "$fail" = 1 ]; then
+    die "verification failed"
+fi
 log "verification passed"

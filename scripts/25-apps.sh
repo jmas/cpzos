@@ -1,162 +1,126 @@
 #!/bin/bash
-# Stage 25 — build the SDL2/KMSDRM graphics stack.
+# Stage 25 — build the economy DRM/TUI stack.
 #
-# This stage runs while the toolchain from stage 20 is still installed.
+# This stage runs while the toolchain from stage 20 is still installed. No SDL,
+# Mesa, Cairo or Pango is linked into the base UI.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . ./config.sh
 . scripts/lib.sh
 
-mkdir -p "$ROOT/usr/local/bin" "$ROOT/usr/local/lib" "$ROOT/usr/local/include"
+mkdir -p "$ROOT/usr/local/bin" "$ROOT/usr/share/cpz/apps" \
+         "$ROOT/usr/share/cpz/icons"
 rm -rf "$ROOT/tmp/cpz-src"
 mkdir -p "$ROOT/tmp/cpz-src"
 cp -a src/. "$ROOT/tmp/cpz-src/"
 
-log "building cpz-session"
-in_root "cd /tmp/cpz-src && \
-    gcc -O2 -Wall -Wextra cpz-session.c cpz-json.c -o cpz-session -ludev"
+DRM_CFLAGS=$(in_root "pkg-config --cflags libdrm")
+DRM_LIBS=$(in_root "pkg-config --libs libdrm")
+FT_CFLAGS=$(in_root "pkg-config --cflags freetype2")
+FT_LIBS=$(in_root "pkg-config --libs freetype2")
+XKB_CFLAGS=$(in_root "pkg-config --cflags xkbcommon")
+XKB_LIBS=$(in_root "pkg-config --libs xkbcommon")
+NC_CFLAGS=$(in_root "pkg-config --cflags ncursesw")
+NC_LIBS=$(in_root "pkg-config --libs ncursesw")
 
-log "building cpz-menud and cpz-menu"
+log "building cpz-session (DRM broker)"
 in_root "cd /tmp/cpz-src && \
-    gcc -O2 -Wall -Wextra cpz-menud.c cpz-json.c -o cpz-menud"
-in_root "cd /tmp/cpz-src && \
-    gcc -O2 -Wall -Wextra cpz-menu.c cpz-json.c -o cpz-menu"
-in_root "cd /tmp/cpz-src && \
-    gcc -O2 -Wall -Wextra cpz-sessionctl.c -o cpz-sessionctl"
+    gcc -O2 -Wall -Wextra $DRM_CFLAGS cpz-session.c -o cpz-session \
+        -ludev $DRM_LIBS"
 
-log "building system providers: battery, clock, network, bluetooth"
-for prov in battery clock network bluetooth; do
+log "building cpz-term (DRM terminal)"
+in_root "cd /tmp/cpz-src && \
+    gcc -O2 -Wall -Wextra $DRM_CFLAGS $FT_CFLAGS $XKB_CFLAGS \
+        term/cpz-term.c -o cpz-term \
+        -ltsm $DRM_LIBS $FT_LIBS $XKB_LIBS -lutil"
+
+log "building cpz-shell, launcher, help, settings, ctl"
+in_root "cd /tmp/cpz-src && \
+    gcc -O2 -Wall -Wextra cpz-shell.c -o cpz-shell"
+in_root "cd /tmp/cpz-src && \
+    gcc -O2 -Wall -Wextra $NC_CFLAGS cpz-launcher.c -o cpz-launcher $NC_LIBS"
+in_root "cd /tmp/cpz-src && \
+    gcc -O2 -Wall -Wextra $NC_CFLAGS cpz-help.c -o cpz-help $NC_LIBS"
+in_root "cd /tmp/cpz-src && \
+    gcc -O2 -Wall -Wextra $NC_CFLAGS cpz-settings.c -o cpz-settings $NC_LIBS"
+in_root "cd /tmp/cpz-src && \
+    gcc -O2 -Wall -Wextra cpz-ctl.c -o cpz-ctl"
+
+log "building providers"
+for prov in battery clock network bluetooth volume; do
     in_root "cd /tmp/cpz-src && \
-        gcc -O2 -Wall -Wextra cpz-$prov.c cpz-json.c -o cpz-$prov"
+        gcc -O2 -Wall -Wextra $NC_CFLAGS cpz-$prov.c -o cpz-$prov $NC_LIBS"
 done
-
-SDL_CFLAGS=$(in_root "pkg-config --cflags sdl2")
-SDL_LIBS=$(in_root "pkg-config --libs sdl2")
-TTF_CFLAGS=$(in_root "pkg-config --cflags SDL2_ttf")
-TTF_LIBS=$(in_root "pkg-config --libs SDL2_ttf")
-UI_CFLAGS=$(in_root "pkg-config --cflags cairo pangocairo")
-UI_LIBS=$(in_root "pkg-config --libs cairo pangocairo")
-
-log "building cpz-ui (SDL2 + cairo/pango), cpz-term and cpz-sdlprobe"
-in_root "cd /tmp/cpz-src && \
-    gcc -O2 -Wall -Wextra $SDL_CFLAGS $UI_CFLAGS cpz-ui.c cpz-json.c -o cpz-ui \
-        $SDL_LIBS $UI_LIBS -lm"
-in_root "cd /tmp/cpz-src && \
-    gcc -O2 -Wall -Wextra $SDL_CFLAGS $TTF_CFLAGS cpz-sdlprobe.c -o cpz-sdlprobe \
-        $SDL_LIBS $TTF_LIBS"
-in_root "cd /tmp/cpz-src && \
-    gcc -O2 -Wall -Wextra $SDL_CFLAGS $TTF_CFLAGS -I/usr/include cpz-term.c -o cpz-term \
-        $SDL_LIBS $TTF_LIBS -ltsm -lutil"
 
 log "building cpz-backlight"
 in_root "cd /tmp/cpz-src && \
     gcc -O2 -Wall -Wextra cpz-backlight.c -o cpz-backlight"
 
-in_root "install -m 0755 /tmp/cpz-src/cpz-session /tmp/cpz-src/cpz-ui \
-         /tmp/cpz-src/cpz-menud /tmp/cpz-src/cpz-menu \
-         /tmp/cpz-src/cpz-sessionctl \
+in_root "install -m 0755 /tmp/cpz-src/cpz-session /tmp/cpz-src/cpz-term \
+         /tmp/cpz-src/cpz-shell /tmp/cpz-src/cpz-launcher \
+         /tmp/cpz-src/cpz-help /tmp/cpz-src/cpz-settings /tmp/cpz-src/cpz-ctl \
          /tmp/cpz-src/cpz-battery /tmp/cpz-src/cpz-clock \
          /tmp/cpz-src/cpz-network /tmp/cpz-src/cpz-bluetooth \
-         /tmp/cpz-src/cpz-term /tmp/cpz-src/cpz-sdlprobe \
-         /tmp/cpz-src/cpz-backlight /usr/local/bin/"
-in_root "strip /usr/local/bin/cpz-session /usr/local/bin/cpz-ui \
-         /usr/local/bin/cpz-menud /usr/local/bin/cpz-menu \
-         /usr/local/bin/cpz-sessionctl \
+         /tmp/cpz-src/cpz-volume /tmp/cpz-src/cpz-backlight \
+         /usr/local/bin/"
+in_root "strip /usr/local/bin/cpz-session /usr/local/bin/cpz-term \
+         /usr/local/bin/cpz-shell /usr/local/bin/cpz-launcher \
+         /usr/local/bin/cpz-help /usr/local/bin/cpz-settings /usr/local/bin/cpz-ctl \
          /usr/local/bin/cpz-battery /usr/local/bin/cpz-clock \
          /usr/local/bin/cpz-network /usr/local/bin/cpz-bluetooth \
-         /usr/local/bin/cpz-term /usr/local/bin/cpz-sdlprobe \
-         /usr/local/bin/cpz-backlight"
+         /usr/local/bin/cpz-volume /usr/local/bin/cpz-backlight"
 
-# Installed apps: static, root-owned manifests scanned by cpz-menud. The
-# launcher no longer contains any application names.
-log "installing app manifests into /usr/share/cpz/apps"
-install -d -m 0755 "$ROOT/usr/share/cpz/apps"
-for appdir in src/apps/*; do
-    [ -d "$appdir" ] || continue
-    app=$(basename "$appdir")
-    install -d -m 0755 "$ROOT/usr/share/cpz/apps/$app"
-    install -m 0644 "$appdir/app.json" "$ROOT/usr/share/cpz/apps/$app/app.json"
-    if [ -f "$appdir/icon.png" ]; then
-        install -m 0644 "$appdir/icon.png" "$ROOT/usr/share/cpz/apps/$app/icon.png"
-    fi
+log "installing manifests and real-image icons"
+for m in src/manifests/*.app; do
+    install -m 0644 "$m" "$ROOT/usr/share/cpz/apps/$(basename "$m")"
 done
-in_root "chown -R root:root /usr/share/cpz/apps"
-in_root "chmod -R go-w /usr/share/cpz/apps"
+chown -R root:root "$ROOT/usr/share/cpz/apps"
+chmod -R go-w "$ROOT/usr/share/cpz/apps"
+in_root "install -m 0644 /tmp/cpz-src/icons/*.rgba /usr/share/cpz/icons/"
+in_root "install -m 0644 /tmp/cpz-src/icons/icons.map /usr/share/cpz/icons.map"
 
-# Provider tokens. They live in /etc so they survive the tmpfs; cpz-menud
-# copies them into /run/cpz/menu at startup. Only provider apps need one.
-log "creating provider tokens in /etc/cpz/menu"
-install -d -m 0755 "$ROOT/etc/cpz/menu"
-for app in battery clock network bluetooth; do
-    token=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-48)
-    printf '%s\n' "$token" > "$ROOT/etc/cpz/menu/$app.token"
-    chmod 0600 "$ROOT/etc/cpz/menu/$app.token"
-    chown root:root "$ROOT/etc/cpz/menu/$app.token"
-done
-
-# iPod-like UI font: Noto Sans (humanist, open apertures, single-storey g,
-# full Latin/Greek/Cyrillic) plus a fallback chain for symbols, emoji and the
-# major non-Latin scripts. Shipped as files (OFL), not pulled from a package,
-# so the UI does not depend on a distro font update. The CJK file is the
-# largest and is shared by both weights.
-in_root "install -d /usr/share/fonts/cpz /usr/share/licenses/noto"
-in_root "install -m 0644 /tmp/cpz-src/fonts/Noto*.ttf \
-         /tmp/cpz-src/fonts/Noto*.otf /usr/share/fonts/cpz/"
-in_root "install -m 0644 /tmp/cpz-src/fonts/OFL-Noto.txt /usr/share/licenses/noto/OFL.txt"
-in_root "fc-cache -f >/dev/null 2>&1 || true"
 rm -rf "$ROOT/tmp/cpz-src"
 
-# Functional checks that need no display.
-log "session: $(in_root "/usr/local/bin/cpz-session --version")"
-log "menu daemon: $(in_root "/usr/local/bin/cpz-menud --version")"
-log "menu CLI: $(in_root "/usr/local/bin/cpz-menu --version")"
-log "menu model: $(in_root "/usr/local/bin/cpz-menud --selftest" | head -1)"
-log "battery provider: $(in_root "/usr/local/bin/cpz-battery --version")"
-log "clock provider: $(in_root "/usr/local/bin/cpz-clock --version")"
-log "network provider: $(in_root "/usr/local/bin/cpz-network --version")"
-log "bluetooth provider: $(in_root "/usr/local/bin/cpz-bluetooth --version")"
-log "SDL probe selftest: $(in_root "/usr/local/bin/cpz-sdlprobe --selftest" | head -1)"
-log "terminal selftest: $(in_root "/usr/local/bin/cpz-term --selftest" | head -1)"
+log "running build-time selftests"
+log "terminal: $(in_root "/usr/local/bin/cpz-term --selftest" | head -1)"
+log "shell:    $(in_root "/usr/local/bin/cpz-shell --selftest --apps /usr/share/cpz/apps" | head -1)"
+log "launcher: $(in_root "/usr/local/bin/cpz-launcher --selftest" | head -1)"
+log "help:     $(in_root "/usr/local/bin/cpz-help --selftest" | head -1)"
+log "settings: $(in_root "/usr/local/bin/cpz-settings --selftest" | head -1)"
+log "ctl:      $(in_root "/usr/local/bin/cpz-ctl --selftest" | head -1)"
+log "battery:  $(in_root "/usr/local/bin/cpz-battery --selftest" | head -1)"
+log "clock:    $(in_root "/usr/local/bin/cpz-clock --selftest" | head -1)"
+log "network:  $(in_root "/usr/local/bin/cpz-network --selftest" | head -1)"
+log "bt:       $(in_root "/usr/local/bin/cpz-bluetooth --selftest" | head -1)"
+log "volume:   $(in_root "/usr/local/bin/cpz-volume --selftest" | head -1)"
 in_root "/usr/local/bin/cpz-backlight --selftest" >/dev/null
 
-# Boot report. Writes the display/session state to the FAT boot partition so a
-# dark panel can be diagnosed from another machine.
+# Boot report: display/session state, no secrets.
 cat > "$ROOT/usr/local/bin/cpz-report" <<'EOF'
 #!/bin/sh
-# Collect the display/session state after boot. No secrets are written.
 set -u
 out=/var/log/cpz-report.txt
-
 run() { "$@" 2>&1 || true; }
-
 {
     echo "=== cpz-arch report $(date -u 2>/dev/null)"
     echo "--- cmdline";        run cat /proc/cmdline
     echo "--- kernel";         run uname -a
-    echo "--- drm devices";    run ls -l /dev/dri
+    echo "--- drm";            run ls -l /dev/dri
     echo "--- connectors";     for c in /sys/class/drm/card*-*; do [ -e "$c" ] || continue; printf '%s %s\n' "$(basename "$c")" "$(cat "$c/status" 2>/dev/null)"; done
-    echo "--- connector modes"; for c in /sys/class/drm/card*-*; do [ -e "$c" ] || continue; printf '%s: %s\n' "$(basename "$c")" "$(head -1 "$c/modes" 2>/dev/null)"; done
-    echo "--- framebuffers";   for f in /sys/class/graphics/fb*; do [ -e "$f" ] || continue; printf '%s %s blank=%s\n' "$(basename "$f")" "$(cat "$f/name" 2>/dev/null)" "$(cat "$f/blank" 2>/dev/null)"; done
-    echo "--- active vt";      run cat /sys/class/tty/tty0/active
+    echo "--- modes";          for c in /sys/class/drm/card*-*; do [ -e "$c" ] || continue; printf '%s: %s\n' "$(basename "$c")" "$(head -1 "$c/modes" 2>/dev/null)"; done
     echo "--- backlight";      run /usr/local/bin/cpz-backlight status
-    run cat /sys/class/backlight/backlight/brightness
     echo "--- session";        run systemctl --no-pager --full status cpz-session
     echo "--- session probe";  run /usr/local/bin/cpz-session --probe
-    echo "--- session journal"; run journalctl -b -u cpz-session --no-pager
-    echo "--- session socket"; run ls -l /run/cpz
-    echo "--- sdl probe";      run env SDL_VIDEODRIVER=dummy /usr/local/bin/cpz-sdlprobe --selftest
+    echo "--- terminal probe";  run /usr/local/bin/cpz-term --probe
+    echo "--- journal";        run journalctl -b -u cpz-session --no-pager
     echo "--- modules";        run lsmod
     echo "--- network";        run ip -4 addr
     echo "--- routes";         run ip route
     echo "--- sshd";           run systemctl --no-pager --full status sshd
-    echo "--- dmesg (drm/spi/panel)"; run dmesg
 } > "$out" 2>&1
-
 mkdir -p /mnt/cpz-boot
 if mount /dev/mmcblk0p1 /mnt/cpz-boot 2>/dev/null; then
     cp "$out" /mnt/cpz-boot/cpz-report.txt 2>/dev/null || true
-    run cp /boot/config.txt /mnt/cpz-boot/cpz-config.txt
-    run cat /proc/cmdline
     sync
     umount /mnt/cpz-boot 2>/dev/null || true
 fi
@@ -164,16 +128,13 @@ exit 0
 EOF
 chmod 0755 "$ROOT/usr/local/bin/cpz-report"
 
-# SDL2 applications in an interactive shell use the KMS/DRM lane. The session
-# supervisor sets the device index for its children; an interactive shell gets
-# the auto-selected device.
 install -d "$ROOT/etc/profile.d"
-cat > "$ROOT/etc/profile.d/00-sdl.sh" <<'EOF'
-# SDL2/KMSDRM graphics lane. Interactive shells and anything they start inherit it.
-export SDL_VIDEODRIVER=kmsdrm
-export SDL_VIDEO_DRIVER=kmsdrm
-export XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-us,ua}"
-export XKB_DEFAULT_OPTIONS="${XKB_DEFAULT_OPTIONS:-grp:alt_shift_toggle}"
+cat > "$ROOT/etc/profile.d/00-cpz.sh" <<'EOF'
+# The economy session is a terminal. Interactive shells get the same runtime
+# directory and tmux socket as the Home session.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/1000}"
+export TMUX_TMPDIR="${TMUX_TMPDIR:-/run/user/1000}"
 EOF
+chmod 0644 "$ROOT/etc/profile.d/00-cpz.sh"
 
-log "graphics stack installed"
+log "economy TUI stack installed"

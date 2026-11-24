@@ -44,12 +44,12 @@ HOSTNAME="cpz"
 USER_NAME="cpz"
 USER_PASS="cpz"
 # No locale-gen: glibc provides C.UTF-8 without generated locale files. C.UTF-8
-# is enough for UTF-8 terminal output and Cyrillic; the SDL font supplies the
-# glyphs. Switch to e.g. en_US.UTF-8 and add `locales` to EXTRA_PACKAGES if a
+# is enough for UTF-8 terminal output and Cyrillic; DejaVu Sans Mono supplies
+# the glyphs. Switch to e.g. en_US.UTF-8 and add `locales` to EXTRA_PACKAGES if a
 # program insists on a named locale.
 LOCALE="C.UTF-8"
 TIMEZONE="UTC"
-# Physical keyboard layout(s) for the SDL session. fbcon is not used.
+# Physical keyboard layout(s) for the terminal session. fbcon is not used.
 XKB_LAYOUT="us,ua"
 XKB_OPTIONS="grp:alt_shift_toggle"
 
@@ -58,10 +58,10 @@ XKB_OPTIONS="grp:alt_shift_toggle"
 # ---------------------------------------------------------------------------
 BOOT_MB="64"
 # Root size in MiB. `make image` refuses to build if the rootfs does not fit.
-# Mesa (vc4 + kms_swrast), SDL2, fonts and input libraries need room; 896 MiB
-# keeps the raw image below the 1 GiB budget with space for the first
-# applications. Raise it if you add video/game packages.
-ROOT_MB="896"
+# The economy stack (terminal, tmux, TUI apps, Python, git, vim) uses about
+# 771 MiB. 832 MiB leaves room for package updates without wasting a large
+# unallocated tail on the SD card.
+ROOT_MB="832"
 
 # Deterministic MBR disk identifier. PARTUUIDs are derived from it:
 #   <DISK_ID>-01 = boot (FAT32) and -02 = root (ext4)
@@ -76,29 +76,29 @@ DEVICE_PACKAGES="linux-rpi"
 BOOT_PACKAGES="raspberrypi-bootloader"
 TOOLS_PACKAGES="sudo libdrm"
 
-# sdl2-compat provides the SDL2 ABI from current Arch; sdl2_ttf gives SDL2 apps
-# Unicode text (Cyrillic included). Mesa provides the vc4 GLES driver for HDMI
-# and kms_swrast for the render-node-less SPI panel.
-SDL_PACKAGES="sdl2-compat sdl2_ttf sdl2_image"
-UI_PACKAGES="cairo pango"
+# The economy UI has no SDL/Mesa/Pango/Cairo in the base image. The terminal
+# renders into DRM dumb buffers with FreeType; tmux and the TUI apps need
+# ncurses; XKB/evdev provide input; icons are raw RGBA.
+GRAPHICS_PACKAGES="libdrm freetype2 libxkbcommon xkeyboard-config libevdev ncurses libtsm"
 FONT_PACKAGES="ttf-dejavu"
-INPUT_PACKAGES="libinput libxkbcommon"
-AUDIO_PACKAGES="alsa-ucm-conf"
-GRAPHICS_PACKAGES="$SDL_PACKAGES $UI_PACKAGES $FONT_PACKAGES $INPUT_PACKAGES $AUDIO_PACKAGES mesa"
+INPUT_PACKAGES=""
+AUDIO_PACKAGES="alsa-ucm-conf alsa-utils"
+UI_TOOL_PACKAGES="tmux git python vim nnn htop less cmus"
+GRAPHICS_PACKAGES="$GRAPHICS_PACKAGES $FONT_PACKAGES $AUDIO_PACKAGES $UI_TOOL_PACKAGES"
 
-# Applications are installed separately. The image keeps the terminal engine
-# (libtsm) and a JPEG decoder for a future photo viewer.
-APP_PACKAGES="libtsm libjpeg-turbo"
+# Applications are installed separately. The terminal keeps libtsm; media
+# decoders and GUI toolkits are not part of the base economy image.
+APP_PACKAGES=""
 
 if [ "$ENABLE_SSH" = "1" ]; then
-    NETWORK_PACKAGES="openssh"
+    NETWORK_PACKAGES="openssh iwd bluez"
 else
-    NETWORK_PACKAGES=""
+    NETWORK_PACKAGES="iwd bluez"
 fi
 
 # Installed only to build the vendor modules and our binaries, removed before
-# the image is made. pkgconf is needed by the SDL build stage.
-BUILD_PACKAGES="linux-rpi-headers gcc make bc dtc pahole git pkgconf"
+# the image is made. pkgconf is needed by the app build stage.
+BUILD_PACKAGES="linux-rpi-headers gcc make bc dtc pahole pkgconf"
 
 # Removed after the build if nothing needs them. Each entry is tried
 # individually, so a package that turns out to be a dependency is kept and

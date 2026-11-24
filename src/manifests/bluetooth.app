@@ -1,0 +1,9 @@
+id=bluetooth
+name=Bluetooth
+desc=Adapters and devices
+exec=/usr/local/bin/cpz-bluetooth
+type=tui
+icon=bluetooth
+category=System
+order=330
+provider=1
