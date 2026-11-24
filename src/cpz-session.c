@@ -575,6 +575,7 @@ static int spawn_term(struct session *s)
 		return -1;
 
 	export_term_env(s);
+	unlink(TERM_HEARTBEAT);
 	pid = fork();
 	if (pid < 0) {
 		logmsg("cpz-session: fork: %s\n", strerror(errno));

@@ -26,6 +26,7 @@ int main(int argc, char **argv)
 	struct provider p;
 	prov_open(&p, "clock");
 	char last[32] = "";
+	int ticks = 0;
 
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--selftest")) {
@@ -51,12 +52,13 @@ int main(int argc, char **argv)
 		char json[256];
 		localtime_r(&now, &tm);
 		strftime(buf, sizeof(buf), "%H:%M", &tm);
-		if (strcmp(buf, last)) {
+		if (strcmp(buf, last) || ++ticks >= 30) {
 			snprintf(json, sizeof(json),
 				 "op=widget&app=clock&id=clock&kind=text&text=%s"
 				 "&order=30&priority=40", buf);
 			prov_send(&p, json);
 			snprintf(last, sizeof(last), "%s", buf);
+			ticks = 0;
 		}
 		sleep(1);
 	}
