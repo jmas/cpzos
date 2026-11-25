@@ -30,30 +30,31 @@ connected() {
     [ -r "$1/status" ] && [ "$(cat "$1/status")" = connected ]
 }
 
+CARD=""
 CARD_KIND=""
 find_card() {
     # HDMI first: a connected monitor is the larger surface.
     for c in /sys/class/drm/card*-HDMI-A-*; do
         [ -e "$c" ] || continue
         if connected "$c"; then
+            CARD=$(basename "$c" | cut -d- -f1)
             CARD_KIND=hdmi
-            basename "$c" | cut -d- -f1
             return 0
         fi
     done
     for c in /sys/class/drm/card*-SPI-*; do
         [ -e "$c" ] || continue
         if connected "$c"; then
+            CARD=$(basename "$c" | cut -d- -f1)
             CARD_KIND=spi
-            basename "$c" | cut -d- -f1
             return 0
         fi
     done
     for c in /sys/class/drm/card*-*; do
         [ -e "$c" ] || continue
         if connected "$c"; then
+            CARD=$(basename "$c" | cut -d- -f1)
             CARD_KIND=other
-            basename "$c" | cut -d- -f1
             return 0
         fi
     done
@@ -61,10 +62,9 @@ find_card() {
 }
 
 # The panel card can appear a few seconds after the module load.
-CARD=""
 i=0
 while [ "$i" -lt 50 ]; do
-    CARD=$(find_card) && break
+    find_card && break
     i=$((i + 1))
     sleep 0.2
 done

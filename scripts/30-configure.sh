@@ -119,6 +119,7 @@ Group=cpz
 TTYPath=/dev/%i
 StandardInput=tty
 StandardOutput=tty
+StandardError=journal
 TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=no
