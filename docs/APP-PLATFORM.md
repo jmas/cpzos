@@ -101,7 +101,7 @@ cpzos-apps/
 | Package | Contents |
 | --- | --- |
 | `cpz-system-apps` | `cpz-app` binary, Home, Apps Manager, Settings, desktop entries, helper client, sudoers rule |
-| `cpz-apps-catalog` | generated `/usr/share/cpz/catalog/apps.json`; regenerated per release |
+| `cpz-apps-manager` | data-only catalog: generated `/usr/share/cpz/catalog/apps.json`; regenerated per release |
 | `cpz-app-<name>` | first-party apps (convention, not a requirement) |
 | any | third-party apps, `groups=('cpz-apps')` recommended |
 
@@ -110,7 +110,7 @@ cpzos-apps/
   any image or system with the UI gets Home, Apps Manager and Settings.
 - That same dependency is what makes the system apps non-removable through
   pacman, not just a UI rule.
-- `cpz-system-apps` depends on `cpz-apps-catalog`, so browsing works offline
+- `cpz-system-apps` depends on `cpz-apps-manager`, so browsing works offline
   from the installed copy.
 - The apps release is published as a new pacman repository `[cpz-apps]` in a
   separate GitHub release (`apps-stable`), signed with the existing CPZ UI
@@ -121,7 +121,7 @@ cpzos-apps/
   *before* the stanza ships. A stanza pointing at a missing release would make
   `pacman -Sy` fail on every device.
 - The UI image bakes the catalog: stage 45 installs `cpz-system-apps` and
-  `cpz-apps-catalog` from the signed repository, so the first Apps Manager
+  `cpz-apps-manager` from the signed repository, so the first Apps Manager
   start has a list without network or root. The build report records the
   package version, its sha256 and the catalog `generated` date.
 - Release builds pin `UI_APPS_CATALOG_VERSION` and `UI_APPS_CATALOG_SHA256` in
@@ -177,7 +177,7 @@ CI from the built packages, so it cannot drift from the desktop entries:
 
 ### 6.1 Baked at build, refreshed in the background
 
-- The catalog is a signed package (`cpz-apps-catalog`) installed by the UI
+- The catalog is a signed, data-only package (`cpz-apps-manager`) installed by the UI
   build, so a device that has never been online still shows apps.
 - Entering Apps Manager starts one best-effort `refresh-catalog` call *after*
   the first frame. The list is already interactive; the refresh never blocks a
@@ -289,7 +289,7 @@ The session runs as `cpz`. One helper does all package work:
   and must not be required by `cpz-ui`/`cpz-system-apps`. The helper runs
   `pacman -Rns --noconfirm -- <package>`.
 - `refresh-catalog`: rate-limited, runs `pacman -Sy` and then
-  `pacman -S --needed --noconfirm cpz-apps-catalog`. It is the only `-S`
+  `pacman -S --needed --noconfirm cpz-apps-manager`. It is the only `-S`
   without `-u`, allowed because the catalog package is data-only, has no
   dependencies and installs no library or binary. A package test enforces
   `depends=()`; if that ever changes, the exception is removed.
@@ -372,10 +372,10 @@ Not implemented on this branch, listed for the platform follow-up:
 2. `scripts/30-configure.sh`: write `/etc/cpz/language` from `UI_LANGUAGE`.
 3. `scripts/35-ui-repo.sh`: write `/etc/pacman.d/cpz-apps.conf` and include it.
    Ship this only after the apps release exists.
-4. `scripts/45-ui-test.sh`: install `cpz-system-apps` and `cpz-apps-catalog`
+4. `scripts/45-ui-test.sh`: install `cpz-system-apps` and `cpz-apps-manager`
    with the UI package set, verify the pinned sha256 when set, and record the
    catalog version and date in the build report.
-5. `scripts/50-verify.sh`: in the UI image assert `cpz-apps-catalog` is
+5. `scripts/50-verify.sh`: in the UI image assert `cpz-apps-manager` is
    installed, `/usr/share/cpz/catalog/apps.json` parses with `"version": 1`,
    and the package has no dependencies; in the base image assert both are
    absent. Also assert the language file and the `cpz-ui` →
