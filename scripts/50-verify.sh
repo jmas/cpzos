@@ -96,7 +96,7 @@ if [ "$UI_TEST" = "1" ]; then
     need "ui tmux unit"        "debugfs -R 'stat /usr/lib/systemd/system/cpz-tmux.service' $ROOTIMG | grep -q Inode"
     need "ui tmux drop-in"     "debugfs -R 'stat /usr/lib/systemd/system/cpz-ui@.service.d/10-tmux.conf' $ROOTIMG | grep -q Inode"
     need "ui fast restart"     "debugfs -R 'cat /usr/lib/systemd/system/cpz-ui@.service.d/20-restart.conf' $ROOTIMG | grep -q 'TimeoutStopSec=5s'"
-    need "ui single session"   "debugfs -R 'cat /etc/cpz/tmux.conf' $ROOTIMG | grep -q 'unbind -n C-b'"
+    need "ui single session"   "debugfs -R 'cat /etc/cpz/tmux.conf' $ROOTIMG | grep -q 'set -g prefix C-a'"
     need "ui tmux enabled"     "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q cpz-tmux"
     need "ui session enabled"  "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q 'cpz-ui@tty1'"
     need "ui desktop entry"    "debugfs -R 'stat /usr/share/applications/cpz-terminal.desktop' $ROOTIMG | grep -q Inode"

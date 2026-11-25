@@ -4,11 +4,30 @@ CPZ UI
 Menu and tabs
 -------------
   Alt+O          Open the application menu
+  Alt+H          Help
   Alt+T          New tab
   Alt+W          Close the current tab
-  Alt+Left       Previous tab
-  Alt+Right      Next tab
+  Alt+R          Rename the current tab
+  Alt+L          List open tabs
+  Alt+Tab        Next tab
+  Alt+Shift+Tab  Previous tab
   Alt+1..9       Select tab
+
+Panes
+-----
+  Alt+V          Split left/right
+  Alt+B          Split top/bottom
+  Alt+N          Next pane
+  Alt+P          Previous pane
+  Alt+Z          Zoom / unzoom pane
+  Alt+X          Close pane
+
+Copy and paste
+--------------
+  Alt+C          Enter copy mode
+  Alt+Y          Paste the tmux buffer
+  In copy mode:  j/k move, Ctrl+U/D or Fn+L/M page,
+                 Space selects, Enter copies, q exits.
 
 Terminal
 --------
@@ -19,10 +38,12 @@ Terminal
 
 Language
 --------
-  Alt+Shift      Switch keyboard layout (us, ua)
+  Alt+Space      Switch keyboard layout (us, ua)
 
 Session
 -------
+  There is one tmux session. Session switching, renaming and creation are
+  disabled. C-a is the advanced tmux prefix fallback; daily actions use Alt.
   The tmux server survives a compositor restart, a terminal restart and an
   output switch. Closing a foreground application returns to the same tab.
 

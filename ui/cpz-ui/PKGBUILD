@@ -1,6 +1,6 @@
 # Maintainer: CPZ <cpz-ui@jmas.github.io>
 pkgname=cpz-ui
-pkgver=0.1.9
+pkgver=0.1.10
 pkgrel=1
 pkgdesc="CPZ UI session: cage, foot, tmux, launcher, status and backlight"
 arch=('aarch64')
