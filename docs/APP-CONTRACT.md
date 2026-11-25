@@ -166,7 +166,7 @@ Categories=System;Documentation;
   package for available apps; for an installed app Apps Manager resolves the
   owner with `pacman -Qo <entry>` when the detail screen opens.
 - Available-app metadata is generated at package build time from these entries
-  into `/usr/share/cpz/catalog/apps.json` (`cpz-apps-manager`). The XDG
+  into `/usr/share/cpz/catalog/apps.json` (`cpz-apps-catalog`). The XDG
   directories remain authoritative for installed apps; the catalog only adds
   the not-yet-installed ones.
 - Category grouping in Apps Manager uses the first main freedesktop category.
