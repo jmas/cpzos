@@ -2,12 +2,6 @@ name: Publish UI repository
 
 on:
   workflow_dispatch:
-    inputs:
-      channel:
-        description: "Repository channel"
-        type: choice
-        options: [stable, beta]
-        default: stable
   push:
     tags: ["ui-v*"]
 
@@ -42,27 +36,28 @@ jobs:
       - name: Build the builder image
         run: docker build --platform linux/arm64 -t cpz-arch-builder docker
 
-      - name: Prepare the package input directory
-        run: mkdir -p out/ui/packages
+      - name: Prepare the package input directories
+        run: mkdir -p out/ui/packages/stable out/ui/packages/beta
 
-      - name: Sign and build the repository
+      - name: Sign and build both repositories
         env:
-          CHANNEL: ${{ github.event.inputs.channel || (endsWith(github.ref_name, '-beta') && 'beta' || 'stable') }}
           SITE_DIR: master/site
           GPG_PRIVATE_KEY: ${{ secrets.CPZ_UI_GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.CPZ_UI_GPG_PASSPHRASE }}
           GPG_KEY_ID: ${{ secrets.CPZ_UI_GPG_KEY_ID }}
         run: |
-          docker run --rm --platform linux/arm64 \
-            -v "$PWD:/work" -w /work \
-            -e CHANNEL -e SITE_DIR \
-            -e GPG_PRIVATE_KEY -e GPG_PASSPHRASE -e GPG_KEY_ID \
-            cpz-arch-builder ./tools/ui-repo.sh
+          for ch in stable beta; do
+            docker run --rm --platform linux/arm64 \
+              -v "$PWD:/work" -w /work \
+              -e CHANNEL="$ch" -e SITE_DIR -e PKG_DIR="out/ui/packages/$ch" \
+              -e GPG_PRIVATE_KEY -e GPG_PASSPHRASE -e GPG_KEY_ID \
+              cpz-arch-builder ./tools/ui-repo.sh
+          done
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload the site with the repository
+      - name: Upload the site with the repositories
         uses: actions/upload-pages-artifact@v3
         with:
           path: master/site
