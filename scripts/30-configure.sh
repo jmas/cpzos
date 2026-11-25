@@ -148,6 +148,36 @@ SUBSYSTEM=="i2c-dev",                    GROUP="i2c",  MODE="0660"
 SUBSYSTEM=="input",  KERNEL=="event*",   GROUP="input", MODE="0660"
 EOF
 
+# --- seat policy ------------------------------------------------------------
+# The vendor rules put the internal panel and keyboard on
+# seat-cardputer-zero. cage/libinput only see seat0, so the panel DRM card and
+# the matrix keyboard never reach the session. Replace the vendor rules with
+# seat0 rules; the vendor permissions rule is already installed above.
+rm -f "$ROOT/etc/udev/rules.d/99-cardputer-zero-lcd.rules" \
+      "$ROOT/etc/udev/rules.d/99-cardputer-zero-keyboard.rules"
+
+cat > "$ROOT/etc/udev/rules.d/99-cpz-display.rules" <<'EOF'
+# Internal panel DRM card. Keep it on seat0; cage only sees seat0.
+ACTION!="remove", SUBSYSTEM=="drm", KERNEL=="card*", \
+  ENV{ID_PATH}=="platform-3f204000.spi-cs-0", \
+  ENV{ID_SEAT}="seat0", \
+  SYMLINK+="dri/cardputer-zero-internal"
+EOF
+
+cat > "$ROOT/etc/udev/rules.d/99-cpz-input.rules" <<'EOF'
+# Internal TCA8418 keyboard. Keep it on seat0 and make sure it is a keyboard,
+# not a phantom pointer.
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", \
+  ENV{ID_PATH}=="platform-3f804000.i2c", \
+  ENV{ID_SEAT}="seat0", \
+  ENV{ID_INPUT_KEYBOARD}="1", \
+  ENV{ID_INPUT_MOUSE}="", \
+  ENV{ID_INPUT_TOUCHPAD}="", \
+  ENV{ID_INPUT_POINTINGSTICK}="", \
+  SYMLINK+="input/cardputer-zero-internal", \
+  GROUP="input", MODE="0660"
+EOF
+
 # --- optional: SSH ----------------------------------------------------------
 if [ "$ENABLE_SSH" = "1" ]; then
     # Minimal wired networking: systemd-networkd has a DHCP client, and

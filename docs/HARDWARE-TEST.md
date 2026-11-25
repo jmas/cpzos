@@ -53,6 +53,20 @@ The first visible frame should be the tmux status row and a shell prompt.
   restart of `cpz-ui@tty1.service`.
 - Panel backlight: visible at boot; `sudo /usr/lib/cpz/backlight status` shows
   the m5ioe1 registers.
+- Seat policy: both the panel DRM card and the internal keyboard must be on
+  `seat0`:
+
+```sh
+cat /etc/udev/rules.d/99-cpz-display.rules
+cat /etc/udev/rules.d/99-cpz-input.rules
+loginctl seat-status seat0
+udevadm info /sys/class/drm/card1 2>/dev/null | grep -E 'ID_SEAT|ID_PATH'
+udevadm info /dev/input/event0 2>/dev/null | grep -E 'ID_SEAT|ID_PATH'
+```
+
+The vendor `99-cardputer-zero-lcd.rules` and
+`99-cardputer-zero-keyboard.rules` must be absent; they put the devices on
+`seat-cardputer-zero`, which cage cannot see.
 
 ### Input
 
@@ -101,6 +115,17 @@ cat /etc/cpz/platform.conf
 
 If the panel is dark but serial works, collect `dmesg`, `ls /sys/class/drm`,
 `lsmod`, and the two unit journals.
+
+```sh
+dmesg | grep -iE 'panel|st7789|mipi|drm'
+ls -l /dev/dri /dev/input/by-path
+lsmod | grep -E 'panel|st7789|m5ioe1|spi_bcm2835'
+cat /sys/class/drm/card*-*/status
+cat /sys/class/drm/card*-*/modes | head
+sudo /usr/lib/cpz/backlight status
+udevadm info /sys/class/drm/card1 2>/dev/null | grep -E 'ID_SEAT|ID_PATH'
+```
+
 
 ## Budgets
 

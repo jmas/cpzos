@@ -145,6 +145,10 @@ need "systemd watchdog config" "debugfs -R 'cat /etc/systemd/system.conf.d/10-cp
 need "volatile journal"        "debugfs -R 'cat /etc/systemd/journald.conf.d/10-cpz.conf' $ROOTIMG | grep -q 'Storage=volatile'"
 need "i2c-dev autoload"        "debugfs -R 'cat /etc/modules-load.d/cpz.conf' $ROOTIMG | grep -q '^i2c-dev$'"
 need "device permissions"      "debugfs -R 'cat /etc/udev/rules.d/70-cpz-permissions.rules' $ROOTIMG | grep -q 'i2c-dev'"
+need "panel on seat0"          "debugfs -R 'cat /etc/udev/rules.d/99-cpz-display.rules' $ROOTIMG | grep -q 'ID_SEAT.*seat0'"
+need "keyboard on seat0"       "debugfs -R 'cat /etc/udev/rules.d/99-cpz-input.rules' $ROOTIMG | grep -q 'ID_SEAT.*seat0'"
+absent "no vendor lcd seat rule" "debugfs -R 'stat /etc/udev/rules.d/99-cardputer-zero-lcd.rules' $ROOTIMG"
+absent "no vendor key seat rule" "debugfs -R 'stat /etc/udev/rules.d/99-cardputer-zero-keyboard.rules' $ROOTIMG"
 
 log "ui repository"
 need "ui signing key"          "debugfs -R 'stat /usr/share/pacman/keyrings/cpz-ui-signing.asc' $ROOTIMG | grep -q Inode"
