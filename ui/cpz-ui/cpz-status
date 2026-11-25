@@ -17,7 +17,8 @@ if [ -f "$PIDFILE" ]; then
     fi
 fi
 printf '%s\n' "$$" > "$PIDFILE"
-trap 'rm -f "$PIDFILE"' EXIT INT TERM
+trap 'rm -f "$PIDFILE"' EXIT
+trap 'exit 0' INT TERM
 
 last=""
 

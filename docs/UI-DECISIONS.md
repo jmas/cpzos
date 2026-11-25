@@ -43,6 +43,9 @@ ExecStart=/usr/lib/cpz/session
   inside tmux.
 - Cage has no layer-shell; overlay launchers such as `fuzzel`, `wofi` or
   `bemenu` are not an option for this stack.
+- Output selection happens once at session start: HDMI when a monitor is
+  connected, otherwise the panel. Hotplug and live switching are a later
+  improvement; the unit can be restarted to re-select.
 
 ## 3. Application model
 
@@ -139,7 +142,8 @@ stay installable.**
 
 - Launcher: implemented as `cpz-launcher` + `cpz-term-launch`.
 - Status: implemented as `cpz-status` with `/run/cpz/status` and the tmux row.
-- UI package: `ui/cpz-ui` builds with makepkg in CI.
+- UI package: `ui/cpz-ui` builds with makepkg in CI and is published to the
+  `ui-stable` release.
 - Platform contract: `docs/PLATFORM-CONTRACT.md`.
 - App contract: `docs/APP-CONTRACT.md`.
 - Panel/HDMI and budget validation: pending on hardware.

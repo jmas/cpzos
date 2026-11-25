@@ -26,10 +26,11 @@ export WLR_DRM_NO_MODIFIERS=1
 export XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-us,ua}"
 export XKB_DEFAULT_OPTIONS="${XKB_DEFAULT_OPTIONS:-grp:alt_shift_toggle}"
 
+connected() {
+    [ -r "$1/status" ] && [ "$(cat "$1/status")" = connected ]
+}
+
 find_card() {
-    connected() {
-        [ -r "$1/status" ] && [ "$(cat "$1/status")" = connected ]
-    }
     # HDMI first: a connected monitor is the larger surface.
     for c in /sys/class/drm/card*-HDMI-A-*; do
         [ -e "$c" ] || continue
