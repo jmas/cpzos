@@ -1,8 +1,7 @@
 # UI qualities
 
-Status: draft for the `ui/qualities` branch. This document defines the
-properties the UI must have. It does not choose or prescribe an
-implementation.
+Status: requirements agreed for the `ui/qualities` branch. The implementation
+stack is not chosen yet.
 
 ## 1. Product context
 
@@ -78,6 +77,8 @@ The UI answers input before the user can perceive a delay.
   never draws the shell's chrome or status bar.
 - The application contract is versioned. Unknown fields are ignored; an
   incompatible application is skipped with a clear reason.
+- Applications are separate packages. The UI core is the `cpz-ui` package set;
+  applications depend on its contract and are versioned independently.
 - New applications do not require a change to the session or the terminal.
 
 ### Q6. Localization and accessibility
@@ -100,8 +101,9 @@ The UI answers input before the user can perceive a delay.
 
 - Idle work is near zero: no busy loops, no continuous redraw, no periodic
   shell polls.
-- Proposed budgets, to confirm on hardware: UI layer RSS ≤ 64 MB, boot to a
-  usable prompt ≤ 8 s, idle wakeups ≤ 1/min.
+- Confirmed budgets: first usable frame ≤ 12 s from cold power-on (stretch
+  goal 10 s), UI core RSS ≤ 64 MB, idle wakeups ≤ 5/min, and no more than 2%
+  of one core averaged over 60 s idle.
 - Status updates are event-driven; a status surface reads a cache rather than
   waking a daemon.
 - A session restart or output switch does not cost more than a screen blink.
@@ -129,24 +131,34 @@ The UI answers input before the user can perceive a delay.
 
 - **Platform:** kernel, firmware, hardware drivers, base system, network,
   login, update mechanism and security.
-- **UI:** session, compositor/terminal, status surfaces, launcher, themes and
-  catalogs. Applications are either part of this layer or separate packages on
-  top of it (open decision).
-- The UI depends on a documented, versioned platform contract: application
-  launch, status/notifications, input/layout events, theme tokens, locale
-  catalogs and session persistence.
-- The UI is delivered as a pacman package set from a dedicated repository.
-- A UI update is a package upgrade. It must not rebuild the system image or
-  replace the kernel or the boot path.
-- A platform update must not require UI source changes within the same
-  platform major.
-- Versioning: platform major `P` and UI release `U`, shown as `P.U`. A platform
-  change that breaks the contract increments `P`; UI features and fixes
-  increment `U` within the same `P`.
+- **UI core:** session, compositor/terminal, status surfaces, launcher, themes
+  and catalogs. It is delivered as the `cpz-ui` pacman package set.
+- **Applications:** separate pacman packages on top of the UI core. They
+  declare the UI app-contract range and are versioned independently. An
+  application update is still a UI update and never changes the platform.
+- **Platform contract (narrow):** the platform version and capabilities; the
+  standard Linux interfaces (DRM/KMS, evdev, ALSA, sysfs, network); the user,
+  logind session and runtime directories; one session entry point; and the
+  pacman/update mechanism. Application manifests, status/notifications, theme
+  tokens and locale catalogs are UI-owned, not platform.
+- The UI is delivered as pacman packages: `cpz-ui` plus application packages.
+  A UI update must not rebuild the system image or replace the kernel or boot
+  path.
+- **Versioning:** platform image `P`, platform contract `C`, UI release `U`;
+  the system shows `P.U`. `P` increments with each platform image release, `C`
+  only when the platform interface breaks, and `U` with UI changes.
 - The UI declares the platform contract range it supports. The platform
   refuses an incompatible UI and reports why.
-- Rollback reinstalls the previous UI package set from the package cache or the
-  repository; the previous set remains installable.
+- **Rollback:** the last two UI core releases, and the application versions
+  tested with them, remain installable. Rollback uses `pacman -U` from the
+  repository or the local package cache.
+- **Channels:** `stable` is the default; `beta` is opt-in. Both are signed
+  repository directories, and a release is promoted from beta to stable.
+- **Signing and hosting:** a dedicated PGP key signs the packages and the
+  repository database. The public key ships in the base image, CI signs the
+  release, and the static repository lives on GitHub Pages with `stable/` and
+  `beta/` paths. Key rotation ships with a platform update; the old key stays
+  while older UI releases remain installable.
 - User settings, layouts, themes and session data survive UI updates.
 
 ## 4. Non-goals
@@ -158,11 +170,23 @@ The UI answers input before the user can perceive a delay.
 - A screen reader.
 - A custom terminal that implements only the escape codes the UI needs.
 - Rebuilding the OS image to ship a UI fix.
+- Rolling back a platform image through pacman; a platform rollback is a
+  reflash.
+- Unsigned UI packages or an unsigned repository.
 
 ## 5. Decisions on this branch
 
-- **UI update:** pacman package set from a dedicated repository; rollback by
-  reinstalling the previous set. No image rebuild.
+- **Update path:** `cpz-ui` core plus separate application packages from a
+  signed pacman repository. No image rebuild; rollback with `pacman -U`.
+- **Budgets:** first frame ≤ 12 s (stretch 10 s), UI core RSS ≤ 64 MB, idle
+  wakeups ≤ 5/min, ≤ 2% of one core idle, key 50/100 ms, tab switch ≤ 100 ms.
+- **Platform contract:** narrow. The platform exposes version, capabilities,
+  standard Linux interfaces, user/logind/runtime and one session entry point;
+  the UI owns the application, theme and locale contracts.
+- **Rollback and channels:** last two UI core releases stay installable;
+  `stable` is the default, `beta` is opt-in.
+- **Signing and hosting:** a dedicated PGP key, a public key in the base image,
+  and a static repository on GitHub Pages with `stable/` and `beta/` paths.
 - **Languages:** en, de, es, fr, it, ja, pl, pt, tr, uk, zh; layout switching
   only, no IME.
 - **Accessibility:** high contrast, colour-independent state, visible focus and
@@ -172,12 +196,17 @@ The UI answers input before the user can perceive a delay.
 - **Panel and HDMI:** one layout model with per-output cell metrics and
   scaling, not separate interfaces.
 
-## 6. Open decisions
+## 6. Implementation follow-ups
 
-1. Confirm the latency, RAM, boot and wakeup budgets on hardware.
-2. Decide whether applications are part of the UI package set or separate
-   packages on top of it.
-3. Define the exact platform contract and its compatibility/refusal rules.
-4. Decide rollback retention (how many UI releases stay installable) and
-   whether there are stable and beta update channels.
-5. Confirm package signing keys and repository hosting.
+1. Measure the confirmed budgets on hardware and change them only with
+   evidence.
+2. Create the PGP key, choose the repository URL and add the CI signing job.
+3. Write platform contract v1: capabilities, session entry point, paths and
+   version metadata.
+4. Define the UI app contract: manifest, launch, status/notifications, theme
+   tokens, locale catalogs and package naming.
+5. Choose the terminal emulator and the session stack.
+6. Define the promotion/rollback checklist and how the last two releases are
+   retained.
+7. Add the public key and the stable/beta repository configuration to the base
+   image in a new stage once the repository exists.
