@@ -169,7 +169,7 @@ The agreed budgets are in `docs/UI-QUALITIES.md`: first frame ≤ 12 s (stretch
 ## Known gaps
 
 - HDMI hotplug switching is implemented but needs validation with a real
-  monitor; the 5-second cooldown is intentional.
+  monitor; the 2-second cooldown is intentional.
 - The notification daemon and theme tokens are not implemented.
 - Locale catalogs cover the core entries; the full 11-language set is later.
 - The panel SPI workaround and backlight are hardware-specific and need

@@ -37,11 +37,17 @@ printf 'cpz-output: current=%s desired=%s\n' "$current" "$desired" >&2
 # Debounce HPD flaps and a restart that is already in progress.
 now=$(date +%s)
 last=$(cat "$COOLDOWN" 2>/dev/null || echo 0)
-if [ $((now - last)) -lt 5 ]; then
+if [ $((now - last)) -lt 2 ]; then
     exit 0
 fi
 printf '%s\n' "$now" > "$COOLDOWN"
 
-sleep 1
+state=$(systemctl is-active cpz-ui@tty1 2>/dev/null || true)
+if [ "$state" != "active" ]; then
+    printf 'cpz-output: UI state=%s, letting it settle\n' "$state" >&2
+    exit 0
+fi
+
+sleep 0.2
 printf 'cpz-output: restarting UI for %s\n' "$desired" >&2
 systemctl try-restart cpz-ui@tty1.service

@@ -1,3 +1,3 @@
 # HDMI hotplug: ask systemd to reconcile the active output.
-ACTION=="add|change", SUBSYSTEM=="drm", KERNEL=="card*-HDMI-A-*", \
+ACTION=="add|change|remove", SUBSYSTEM=="drm", KERNEL=="card*-HDMI-A-*", \
   TAG+="systemd", ENV{SYSTEMD_WANTS}+="cpz-output.service"

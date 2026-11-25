@@ -125,7 +125,7 @@ TTYVHangup=yes
 TTYVTDisallocate=no
 ExecStart=/usr/lib/cpz/session
 Restart=always
-RestartSec=3
+RestartSec=500ms
 KillMode=control-group
 
 [Install]
