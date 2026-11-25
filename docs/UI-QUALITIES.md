@@ -90,8 +90,11 @@ The UI answers input before the user can perceive a delay.
   bug.
 - Keyboard focus is always visible. Colour is not the only carrier of state.
 - A high-contrast theme and a colour-independent mode are supported.
-- Target languages: to be confirmed (the previous project shipped en, de, es,
-  fr, it, ja, pl, pt, tr, uk, zh).
+- Target languages (confirmed): en, de, es, fr, it, ja, pl, pt, tr, uk, zh.
+- Input method: layout switching only. IME composition is out of scope.
+- Accessibility floor (confirmed): high-contrast theme, colour-independent
+  state, visible focus and complete keyboard operation. A screen reader is out
+  of scope.
 
 ### Q7. Autonomy and efficiency
 
@@ -109,8 +112,9 @@ The UI answers input before the user can perceive a delay.
   resize, bracketed paste, mouse reporting and the correct terminfo entry.
 - Standard terminal applications (shell, editor, pager, file manager, tmux,
   htop) work unmodified.
-- The terminal is a standard implementation or a full-compatible one; a
-  custom reduced terminal is not acceptable.
+- The terminal is an existing standard emulator. The emulator choice belongs to
+  the stack; the capabilities above are mandatory. A custom reduced terminal is
+  not acceptable.
 - Selection, copy and paste work without leaving the keyboard model.
 
 ### Q9. Session persistence
@@ -125,21 +129,24 @@ The UI answers input before the user can perceive a delay.
 
 - **Platform:** kernel, firmware, hardware drivers, base system, network,
   login, update mechanism and security.
-- **UI:** session, compositor/terminal, status surfaces, launcher, themes,
-  catalogs and applications.
+- **UI:** session, compositor/terminal, status surfaces, launcher, themes and
+  catalogs. Applications are either part of this layer or separate packages on
+  top of it (open decision).
 - The UI depends on a documented, versioned platform contract: application
   launch, status/notifications, input/layout events, theme tokens, locale
   catalogs and session persistence.
-- A UI update is a package/overlay update. It must not require rebuilding the
-  system image.
+- The UI is delivered as a pacman package set from a dedicated repository.
+- A UI update is a package upgrade. It must not rebuild the system image or
+  replace the kernel or the boot path.
 - A platform update must not require UI source changes within the same
   platform major.
-- Proposed versioning: platform major `P` and UI release `U`, shown as
-  `P.U`. A platform major change may break the contract; a UI update changes
-  only `U`.
+- Versioning: platform major `P` and UI release `U`, shown as `P.U`. A platform
+  change that breaks the contract increments `P`; UI features and fixes
+  increment `U` within the same `P`.
 - The UI declares the platform contract range it supports. The platform
   refuses an incompatible UI and reports why.
-- The previous UI version remains available for rollback.
+- Rollback reinstalls the previous UI package set from the package cache or the
+  repository; the previous set remains installable.
 - User settings, layouts, themes and session data survive UI updates.
 
 ## 4. Non-goals
@@ -147,20 +154,30 @@ The UI answers input before the user can perceive a delay.
 - A desktop environment, overlapping windows or a window manager.
 - A permanent status bar full of chrome, or icon-only navigation.
 - A mouse-first or touch-first interaction model.
+- Input methods/IME beyond layout switching.
+- A screen reader.
 - A custom terminal that implements only the escape codes the UI needs.
 - Rebuilding the OS image to ship a UI fix.
 
-## 5. Open decisions
+## 5. Decisions on this branch
 
-1. Confirm the language list and whether IME (not only layouts) is in scope.
-2. Confirm the latency, RAM, boot and wakeup budgets on hardware.
-3. Choose the UI update mechanism: package repository, signed bundle or A/B
-   image.
-4. Confirm whether the terminal is an existing standard emulator or a
-   compatible implementation, and which terminal capabilities are mandatory.
-5. Confirm whether panel and HDMI share one layout model with per-output
-   metrics or may have separate layouts.
-6. Define the accessibility floor: high contrast, colour independence, and
-   whether a screen reader is in scope.
-7. Decide whether applications are part of the UI layer or separate packages
-   on top of it.
+- **UI update:** pacman package set from a dedicated repository; rollback by
+  reinstalling the previous set. No image rebuild.
+- **Languages:** en, de, es, fr, it, ja, pl, pt, tr, uk, zh; layout switching
+  only, no IME.
+- **Accessibility:** high contrast, colour-independent state, visible focus and
+  complete keyboard operation; no screen reader.
+- **Terminal:** an existing standard emulator with the capabilities in Q8; no
+  custom reduced terminal.
+- **Panel and HDMI:** one layout model with per-output cell metrics and
+  scaling, not separate interfaces.
+
+## 6. Open decisions
+
+1. Confirm the latency, RAM, boot and wakeup budgets on hardware.
+2. Decide whether applications are part of the UI package set or separate
+   packages on top of it.
+3. Define the exact platform contract and its compatibility/refusal rules.
+4. Decide rollback retention (how many UI releases stay installable) and
+   whether there are stable and beta update channels.
+5. Confirm package signing keys and repository hosting.
