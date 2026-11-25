@@ -197,10 +197,9 @@ CI from the built packages, so it cannot drift from the desktop entries:
   `/var/lib/cpz/refresh`. A busy pacman lock or a missing network is a no-op,
   not an error dialog and not a retry loop.
 - Home does not refresh: it lists installed apps only.
-- Apps Manager serialises its own actions: if the user presses Install while
-  the refresh is still running, Apps Manager waits for it to finish and then
-  starts the transaction. A foreign package operation that owns the lock is
-  reported as `Another package operation is running; try again`.
+- If a package operation already holds the lock (including the background
+  refresh), an install or remove changes nothing and reports
+  `Another package operation is running; try again`.
 - `Install` refreshes the sync database itself, so a catalog that is a few
   minutes stale cannot hide a freshly published app.
 - The background refresh updates the catalog only. It never upgrades installed
@@ -404,7 +403,8 @@ cpz-app settings about [--json]
 | Device checklist: install/remove, refresh, protection, 40×10 layout | pending |
 | Remove `fzf`/`j4-dmenu-desktop` after the hardware sign-off | pending |
 
-Order matters: the signed `apps-stable` release is published before the base
-image ships the stanza to real devices. The helper must pass tests for name
-validation, protected packages, the data-only catalog exception and
-partial-upgrade refusal before the release.
+Order matters: publish the signed `apps-stable` release, then ship a base image
+with the `[cpz-apps]` stanza, and only then release a `cpz-ui` that depends on
+`cpz-system-apps`. The helper must pass tests for name validation, protected
+packages, the data-only catalog exception and partial-upgrade refusal before
+the release.
