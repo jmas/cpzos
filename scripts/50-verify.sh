@@ -120,7 +120,7 @@ if [ "$UI_TEST" = "1" ]; then
     need "app catalog"         "debugfs -R 'stat /usr/share/cpz/catalog/apps.json' $ROOTIMG | grep -q Inode"
     need "app catalog schema"  "debugfs -R 'cat /usr/share/cpz/catalog/apps.json' $ROOTIMG | grep -q '\"version\": 1'"
     need "catalog data only"   "pacman --root $ROOT -Qi cpz-apps-catalog | grep -q '^Depends On.*: None'"
-    need "home default command" "debugfs -R 'cat /etc/cpz/tmux.conf' $ROOTIMG | grep -q 'default-command /usr/bin/cpz-app home'"
+    need "home default command" "debugfs -R 'cat /etc/cpz/tmux.conf' $ROOTIMG | grep -q 'default-command \"/usr/bin/cpz-app home\"'"
     need "apps popup binding"  "debugfs -R 'cat /etc/cpz/tmux.conf' $ROOTIMG | grep -q '/usr/bin/cpz-app apps'"
     need "ui sudoers"          "debugfs -R 'stat /etc/sudoers.d/20-cpz-ui' $ROOTIMG | grep -q Inode"
     need "ui modules"          "debugfs -R 'cat /usr/lib/modules-load.d/cpz-ui.conf' $ROOTIMG | grep -q panel-mipi-dbi-m"

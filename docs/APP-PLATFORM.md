@@ -249,7 +249,7 @@ Apps Manager · All            2/12
 ### 7.2 Home
 
 - Default command of a new tmux window
-  (`set -g default-command /usr/bin/cpz-app home`).
+  (`set -g default-command "/usr/bin/cpz-app home"`).
 - One list of installed apps, same rows and search as Apps Manager, plus
   `Terminal` (the shell entry), `Apps Manager` and `Settings`. `Enter` launches
   the app **in the current window** (process replacement), so a tab is "the app
