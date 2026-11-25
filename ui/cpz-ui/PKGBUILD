@@ -1,6 +1,6 @@
 # Maintainer: CPZ <cpz-ui@jmas.github.io>
 pkgname=cpz-ui
-pkgver=0.1.5
+pkgver=0.1.6
 pkgrel=1
 pkgdesc="CPZ UI session: cage, foot, tmux, launcher, status and backlight"
 arch=('aarch64')
@@ -42,6 +42,7 @@ package() {
 
     install -Dm644 "$startdir/cpz-tmux.service" "$pkgdir/usr/lib/systemd/system/cpz-tmux.service"
     install -Dm644 "$startdir/cpz-output.service" "$pkgdir/usr/lib/systemd/system/cpz-output.service"
+    install -Dm644 "$startdir/cpz-output-boot.timer" "$pkgdir/usr/lib/systemd/system/cpz-output-boot.timer"
     install -Dm644 "$startdir/cpz-ui@.service.d/10-tmux.conf" \
         "$pkgdir/usr/lib/systemd/system/cpz-ui@.service.d/10-tmux.conf"
 

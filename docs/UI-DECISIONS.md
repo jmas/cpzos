@@ -46,7 +46,9 @@ ExecStart=/usr/lib/cpz/session
 - Output selection is dynamic: `cpz-output.service` is triggered by the HDMI
   connector udev event, compares the desired output with `/run/cpz/output`
   and restarts `cpz-ui@tty1.service` only when the output changed. tmux is a
-  separate service, so tabs and applications survive the switch.
+  separate service, so tabs and applications survive the switch. A one-shot
+  10-second post-boot timer catches connector events that happen while the
+  session is still writing its state.
 
 ## 3. Application model
 

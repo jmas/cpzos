@@ -23,6 +23,7 @@ for c in /sys/class/drm/card*-HDMI-A-*; do
 done
 
 current=$(sed -n 's/^kind=//p' "$STATE" | head -1)
+printf 'cpz-output: current=%s desired=%s\n' "$current" "$desired" >&2
 [ "$desired" = "$current" ] && exit 0
 
 # Serialise overlapping udev runs.
@@ -30,6 +31,7 @@ exec 9>"$LOCK"
 flock -x 9
 
 current=$(sed -n 's/^kind=//p' "$STATE" | head -1)
+printf 'cpz-output: current=%s desired=%s\n' "$current" "$desired" >&2
 [ "$desired" = "$current" ] && exit 0
 
 # Debounce HPD flaps and a restart that is already in progress.
@@ -41,4 +43,5 @@ fi
 printf '%s\n' "$now" > "$COOLDOWN"
 
 sleep 1
+printf 'cpz-output: restarting UI for %s\n' "$desired" >&2
 systemctl try-restart cpz-ui@tty1.service

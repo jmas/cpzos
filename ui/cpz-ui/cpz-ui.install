@@ -2,6 +2,7 @@ post_install() {
     systemd-tmpfiles --create /usr/lib/tmpfiles.d/cpz-ui.conf >/dev/null 2>&1 || true
     systemctl enable cpz-tmux.service >/dev/null 2>&1 || true
     systemctl enable cpz-ui@tty1.service >/dev/null 2>&1 || true
+    systemctl enable cpz-output-boot.timer >/dev/null 2>&1 || true
     systemctl start cpz-tmux.service >/dev/null 2>&1 || true
     systemctl start cpz-ui@tty1.service >/dev/null 2>&1 || true
 }
@@ -12,5 +13,6 @@ post_upgrade() {
 
 pre_remove() {
     systemctl disable --now cpz-ui@tty1.service >/dev/null 2>&1 || true
+    systemctl disable --now cpz-output-boot.timer >/dev/null 2>&1 || true
     systemctl disable --now cpz-tmux.service >/dev/null 2>&1 || true
 }

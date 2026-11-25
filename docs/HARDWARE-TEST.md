@@ -74,7 +74,8 @@ The first visible frame should be the tmux status row and a shell prompt.
 - Panel: 320×170, readable text, no flicker, no tearing on scroll.
 - HDMI: monitor is detected at boot; the panel backlight turns off.
 - Output selection: HDMI when connected, panel otherwise. Hotplug is dynamic:
-  `cpz-output.service` restarts only the UI unit and tmux survives.
+  `cpz-output.service` restarts only the UI unit and tmux survives. A one-shot
+  10-second post-boot timer catches startup races.
 - Panel backlight: visible at boot; `sudo /usr/lib/cpz/backlight status` shows
   the m5ioe1 registers.
 - Seat policy: both the panel DRM card and the internal keyboard must be on

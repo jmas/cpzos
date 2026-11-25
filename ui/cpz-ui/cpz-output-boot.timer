@@ -1,0 +1,9 @@
+[Unit]
+Description=CPZ output reconcile after boot
+
+[Timer]
+OnBootSec=10s
+Unit=cpz-output.service
+
+[Install]
+WantedBy=timers.target

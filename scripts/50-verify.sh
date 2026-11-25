@@ -89,6 +89,8 @@ if [ "$UI_TEST" = "1" ]; then
     need "ui status helper"    "debugfs -R 'stat /usr/lib/cpz/status' $ROOTIMG | grep -q Inode"
     need "ui output helper"    "debugfs -R 'stat /usr/lib/cpz/output' $ROOTIMG | grep -q Inode"
     need "ui output unit"      "debugfs -R 'stat /usr/lib/systemd/system/cpz-output.service' $ROOTIMG | grep -q Inode"
+    need "ui output timer"     "debugfs -R 'stat /usr/lib/systemd/system/cpz-output-boot.timer' $ROOTIMG | grep -q Inode"
+    need "ui output timer enabled" "debugfs -R 'ls /etc/systemd/system/timers.target.wants' $ROOTIMG | grep -q cpz-output-boot"
     need "ui output rule"      "debugfs -R 'cat /usr/lib/udev/rules.d/99-cpz-output.rules' $ROOTIMG | grep -q 'cpz-output.service'"
     need "ui backlight helper" "debugfs -R 'stat /usr/lib/cpz/backlight' $ROOTIMG | grep -q Inode"
     need "ui tmux unit"        "debugfs -R 'stat /usr/lib/systemd/system/cpz-tmux.service' $ROOTIMG | grep -q Inode"

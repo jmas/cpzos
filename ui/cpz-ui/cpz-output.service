@@ -1,6 +1,5 @@
 [Unit]
 Description=CPZ output reconciler
-ConditionPathExists=/run/cpz/output
 After=cpz-ui@tty1.service
 
 [Service]
