@@ -12,12 +12,17 @@ VOLUME        ?= cpz-arch-build
 
 RUN = docker run --rm --platform linux/arm64 \
 	-v "$(PWD):/work" -v "$(VOLUME):/build" \
-	-e BUILD=/build -e OUT_DIR=/work/out \
+	-e BUILD=/build -e OUT_DIR=/work/out -e UI_TEST="$(UI_TEST)" \
 	-w /work $(BUILDER_IMAGE)
+
+ifeq ($(UI_TEST),1)
+UI_PACKAGE = ui-package
+UI_TEST_STAGE = $(RUN) ./scripts/45-ui-test.sh
+endif
 
 NAME = cpz-arch-0.1.0-cm0
 
-.PHONY: all builder rootfs image verify shell clean distclean help
+.PHONY: all builder rootfs image verify shell clean distclean help ui-package
 
 all: image
 
@@ -27,6 +32,7 @@ help:
 	  'make rootfs    install base + linux-rpi + vendor modules into the build volume' \
 	  'make image     assemble the disk image (implies rootfs)' \
 	  'make verify    check the image invariants without mounting it' \
+	  'make verify UI_TEST=1  build and verify the UI hardware-test image' \
 	  'make shell     interactive shell in the builder' \
 	  'make clean     remove build artifacts and the build volume' \
 	  'make distclean remove everything, including the builder image'
@@ -34,11 +40,15 @@ help:
 builder:
 	docker build --platform linux/arm64 -t $(BUILDER_IMAGE) docker
 
-rootfs: builder
+ui-package: builder
+	$(RUN) ./ui/build.sh stable
+
+rootfs: builder $(UI_PACKAGE)
 	$(RUN) ./scripts/10-rootfs.sh
 	$(RUN) ./scripts/20-device.sh
 	$(RUN) ./scripts/30-configure.sh
 	$(RUN) ./scripts/35-ui-repo.sh
+	$(UI_TEST_STAGE)
 
 image: rootfs
 	$(RUN) ./scripts/40-image.sh
@@ -49,7 +59,8 @@ verify: image
 shell: builder
 	docker run --rm -it --platform linux/arm64 \
 	  -v "$(PWD):/work" -v "$(VOLUME):/build" \
-	  -e BUILD=/build -e OUT_DIR=/work/out -w /work $(BUILDER_IMAGE) bash
+	  -e BUILD=/build -e OUT_DIR=/work/out -e UI_TEST="$(UI_TEST)" \
+	  -w /work $(BUILDER_IMAGE) bash
 
 clean:
 	rm -rf out

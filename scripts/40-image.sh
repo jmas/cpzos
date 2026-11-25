@@ -14,7 +14,9 @@ for tool in mformat mcopy sfdisk mke2fs zstd dd truncate; do
     require "$tool"
 done
 
-NAME="cpz-arch-${CPZ_ARCH_VERSION}-cm0"
+UI_SUFFIX=""
+[ "$UI_TEST" = "1" ] && UI_SUFFIX="-ui"
+NAME="cpz-arch-${CPZ_ARCH_VERSION}-cm0${UI_SUFFIX}"
 IMG="$BUILD/$NAME.img"
 BOOTIMG="$BUILD/boot.fat"
 ROOTIMG="$BUILD/root.ext4"

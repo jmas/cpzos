@@ -7,6 +7,10 @@
 
 CPZ_ARCH_VERSION="0.1.0"
 
+# Build a hardware-test image with the UI package installed. The default is the
+# clean base image. Set UI_TEST=1 for `make verify UI_TEST=1`.
+UI_TEST="${UI_TEST:-0}"
+
 # ---------------------------------------------------------------------------
 # Base distribution
 # ---------------------------------------------------------------------------
@@ -55,8 +59,11 @@ TIMEZONE="UTC"
 BOOT_MB="64"
 # Root size in MiB. `make image` refuses to build if the rootfs does not fit.
 # The base (kernel, firmware, hardware modules, networking) is much smaller
-# than the old UI image; 768 MiB leaves room for package updates.
+# than the UI image; the UI test build uses a larger root.
 ROOT_MB="768"
+if [ "$UI_TEST" = "1" ]; then
+    ROOT_MB="1024"
+fi
 
 # Deterministic MBR disk identifier. PARTUUIDs are derived from it:
 #   <DISK_ID>-01 = boot (FAT32) and -02 = root (ext4)
@@ -86,6 +93,11 @@ UI_REPO_STABLE='https://github.com/jmas/cpzos/releases/download/ui-stable'
 UI_REPO_BETA='https://github.com/jmas/cpzos/releases/download/ui-beta'
 UI_REPO_KEY="keys/cpz-ui-signing.asc"
 UI_REPO_KEY_FPR="C7DBEDC1B4855ACB0570C7D229C04B0663395458"
+
+# Runtime dependencies installed into the UI test image. The UI package itself
+# comes from the locally built out/ui/packages/stable directory.
+UI_TEST_PACKAGES="cage foot tmux fzf j4-dmenu-desktop desktop-file-utils
+	xorg-xwayland mesa ttf-dejavu xkeyboard-config"
 
 # Installed only to build the vendor modules, removed before the image is made.
 BUILD_PACKAGES="linux-rpi-headers gcc make bc dtc pahole pkgconf"

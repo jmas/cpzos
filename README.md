@@ -100,6 +100,7 @@ make verify
 | `make rootfs` | base Arch ARM + vendor modules in the build volume |
 | `make image` | `out/cpz-arch-0.1.0-cm0.img` and `.img.zst` |
 | `make verify` | structural and package checks without mounting the image |
+| `make verify UI_TEST=1` | UI hardware-test image `out/cpz-arch-0.1.0-cm0-ui.img` |
 
 The rootfs is assembled with `pacman --root`; the FAT32 boot partition with
 mtools and the ext4 root with `mke2fs -d`, so no loop devices or host root are
@@ -129,6 +130,7 @@ docs/UI-QUALITIES.md   UI quality requirements
 docs/UI-DECISIONS.md   session, app, launcher and status decisions
 docs/PLATFORM-CONTRACT.md  platform/UI boundary and session entry
 docs/APP-CONTRACT.md   desktop-entry app model and launch rules
+docs/HARDWARE-TEST.md  UI test image and device checklist
 ```
 
 ## Status and risks

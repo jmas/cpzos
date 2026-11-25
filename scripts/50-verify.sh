@@ -9,7 +9,9 @@ cd "$(dirname "$0")/.."
 . ./config.sh
 . scripts/lib.sh
 
-NAME="cpz-arch-${CPZ_ARCH_VERSION}-cm0"
+UI_SUFFIX=""
+[ "$UI_TEST" = "1" ] && UI_SUFFIX="-ui"
+NAME="cpz-arch-${CPZ_ARCH_VERSION}-cm0${UI_SUFFIX}"
 IMG="$BUILD/$NAME.img"
 BOOTIMG="$BUILD/verify-boot.fat"
 ROOTIMG="$BUILD/verify-root.ext4"
@@ -71,26 +73,52 @@ need "contract version"      "debugfs -R 'cat /etc/cpz/platform.conf' $ROOTIMG |
 need "platform capabilities" "debugfs -R 'cat /etc/cpz/platform.conf' $ROOTIMG | grep -q 'display.panel'"
 need "hdmi capability"       "debugfs -R 'cat /etc/cpz/platform.conf' $ROOTIMG | grep -q 'display.hdmi'"
 
-log "no UI or display stack"
-absent "no cpz-session"        "debugfs -R 'stat /usr/local/bin/cpz-session' $ROOTIMG"
-absent "no cpz-term"           "debugfs -R 'stat /usr/local/bin/cpz-term' $ROOTIMG"
-absent "no cpz-shell"          "debugfs -R 'stat /usr/local/bin/cpz-shell' $ROOTIMG"
-absent "no cpz-launcher"       "debugfs -R 'stat /usr/local/bin/cpz-launcher' $ROOTIMG"
-absent "no cpz-settings"       "debugfs -R 'stat /usr/local/bin/cpz-settings' $ROOTIMG"
-absent "no cpz-help"           "debugfs -R 'stat /usr/local/bin/cpz-help' $ROOTIMG"
-absent "no cpz-ctl"            "debugfs -R 'stat /usr/local/bin/cpz-ctl' $ROOTIMG"
-absent "no providers"          "debugfs -R 'stat /usr/local/bin/cpz-battery' $ROOTIMG"
-absent "no backlight helper"   "debugfs -R 'stat /usr/local/bin/cpz-backlight' $ROOTIMG"
-absent "no cpz tmux start"     "debugfs -R 'stat /usr/local/bin/cpz-tmux-start' $ROOTIMG"
-absent "no cpz app directory"  "debugfs -R 'stat /usr/share/cpz' $ROOTIMG"
-absent "no icon map"           "debugfs -R 'stat /usr/share/cpz/icons.map' $ROOTIMG"
-absent "no tmux config"        "debugfs -R 'stat /etc/tmux.conf' $ROOTIMG"
-absent "no session unit"       "debugfs -R 'stat /etc/systemd/system/cpz-session.service' $ROOTIMG"
-absent "no shell unit"         "debugfs -R 'stat /etc/systemd/system/cpz-shell.service' $ROOTIMG"
-absent "no tmux unit"          "debugfs -R 'stat /etc/systemd/system/cpz-tmux.service' $ROOTIMG"
-absent "no panel module list"  "debugfs -R 'stat /etc/modules-load.d/cpz-panel.conf' $ROOTIMG"
-absent "no panel modprobe"     "debugfs -R 'stat /etc/modprobe.d/cpz-panel.conf' $ROOTIMG"
-absent "no cpz profile"        "debugfs -R 'stat /etc/profile.d/00-cpz.sh' $ROOTIMG"
+if [ "$UI_TEST" = "1" ]; then
+    log "ui test image"
+    need_pkg cpz-ui
+    need_pkg cage
+    need_pkg foot
+    need_pkg tmux
+    need_pkg fzf
+    need_pkg j4-dmenu-desktop
+    need_pkg mesa
+    need_pkg ttf-dejavu
+    need "ui session"          "debugfs -R 'stat /usr/lib/cpz/session' $ROOTIMG | grep -q Inode"
+    need "ui attach"           "debugfs -R 'stat /usr/lib/cpz/attach' $ROOTIMG | grep -q Inode"
+    need "ui launcher"         "debugfs -R 'stat /usr/lib/cpz/launcher' $ROOTIMG | grep -q Inode"
+    need "ui status helper"    "debugfs -R 'stat /usr/lib/cpz/status' $ROOTIMG | grep -q Inode"
+    need "ui backlight helper" "debugfs -R 'stat /usr/lib/cpz/backlight' $ROOTIMG | grep -q Inode"
+    need "ui tmux unit"        "debugfs -R 'stat /usr/lib/systemd/system/cpz-tmux.service' $ROOTIMG | grep -q Inode"
+    need "ui tmux drop-in"     "debugfs -R 'stat /usr/lib/systemd/system/cpz-ui@.service.d/10-tmux.conf' $ROOTIMG | grep -q Inode"
+    need "ui tmux enabled"     "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q cpz-tmux"
+    need "ui session enabled"  "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q 'cpz-ui@tty1'"
+    need "ui desktop entry"    "debugfs -R 'stat /usr/share/applications/cpz-terminal.desktop' $ROOTIMG | grep -q Inode"
+    need "ui help entry"       "debugfs -R 'stat /usr/share/applications/cpz-help.desktop' $ROOTIMG | grep -q Inode"
+    need "ui sudoers"          "debugfs -R 'stat /etc/sudoers.d/20-cpz-ui' $ROOTIMG | grep -q Inode"
+    need "ui modules"          "debugfs -R 'cat /usr/lib/modules-load.d/cpz-ui.conf' $ROOTIMG | grep -q panel-mipi-dbi-m"
+    need "ui tmpfiles"         "debugfs -R 'cat /usr/lib/tmpfiles.d/cpz-ui.conf' $ROOTIMG | grep -q '/run/cpz'"
+else
+    log "no UI or display stack"
+    absent "no cpz-session"        "debugfs -R 'stat /usr/local/bin/cpz-session' $ROOTIMG"
+    absent "no cpz-term"           "debugfs -R 'stat /usr/local/bin/cpz-term' $ROOTIMG"
+    absent "no cpz-shell"          "debugfs -R 'stat /usr/local/bin/cpz-shell' $ROOTIMG"
+    absent "no cpz-launcher"       "debugfs -R 'stat /usr/local/bin/cpz-launcher' $ROOTIMG"
+    absent "no cpz-settings"       "debugfs -R 'stat /usr/local/bin/cpz-settings' $ROOTIMG"
+    absent "no cpz-help"           "debugfs -R 'stat /usr/local/bin/cpz-help' $ROOTIMG"
+    absent "no cpz-ctl"            "debugfs -R 'stat /usr/local/bin/cpz-ctl' $ROOTIMG"
+    absent "no providers"          "debugfs -R 'stat /usr/local/bin/cpz-battery' $ROOTIMG"
+    absent "no backlight helper"   "debugfs -R 'stat /usr/local/bin/cpz-backlight' $ROOTIMG"
+    absent "no cpz tmux start"     "debugfs -R 'stat /usr/local/bin/cpz-tmux-start' $ROOTIMG"
+    absent "no cpz app directory"  "debugfs -R 'stat /usr/share/cpz' $ROOTIMG"
+    absent "no icon map"           "debugfs -R 'stat /usr/share/cpz/icons.map' $ROOTIMG"
+    absent "no tmux config"        "debugfs -R 'stat /etc/tmux.conf' $ROOTIMG"
+    absent "no session unit"       "debugfs -R 'stat /etc/systemd/system/cpz-session.service' $ROOTIMG"
+    absent "no shell unit"         "debugfs -R 'stat /etc/systemd/system/cpz-shell.service' $ROOTIMG"
+    absent "no tmux unit"          "debugfs -R 'stat /etc/systemd/system/cpz-tmux.service' $ROOTIMG"
+    absent "no panel module list"  "debugfs -R 'stat /etc/modules-load.d/cpz-panel.conf' $ROOTIMG"
+    absent "no panel modprobe"     "debugfs -R 'stat /etc/modprobe.d/cpz-panel.conf' $ROOTIMG"
+    absent "no cpz profile"        "debugfs -R 'stat /etc/profile.d/00-cpz.sh' $ROOTIMG"
+fi
 
 log "login paths"
 need "serial recovery getty"   "debugfs -R 'ls -l /etc/systemd/system/getty.target.wants' $ROOTIMG 2>/dev/null | grep -q 'serial-getty@ttyS0'"
@@ -100,7 +128,11 @@ log "ui session entry point"
 need "ui session template"     "debugfs -R 'stat /usr/lib/systemd/system/cpz-ui@.service' $ROOTIMG | grep -q Inode"
 need "ui session uses PAM"     "debugfs -R 'cat /usr/lib/systemd/system/cpz-ui@.service' $ROOTIMG | grep -q '^PAMName=login'"
 need "ui session entry point"  "debugfs -R 'cat /usr/lib/systemd/system/cpz-ui@.service' $ROOTIMG | grep -q '^ExecStart=/usr/lib/cpz/session'"
-need "ui session not enabled"  "! debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG 2>/dev/null | grep -q 'cpz-ui@'"
+if [ "$UI_TEST" = "1" ]; then
+    need "ui session enabled"  "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG 2>/dev/null | grep -q 'cpz-ui@tty1'"
+else
+    need "ui session not enabled" "! debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG 2>/dev/null | grep -q 'cpz-ui@'"
+fi
 if [ "$ENABLE_SSH" = "1" ]; then
     need "openssh installed"    "pacman --root $ROOT -Q openssh"
     need "sshd enabled"         "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q sshd"
@@ -127,25 +159,49 @@ need_pkg linux-rpi
 need_pkg sudo
 need_pkg iwd
 need_pkg bluez
-need_absent_pkg libtsm
-need_absent_pkg freetype2
-need_absent_pkg libxkbcommon
-need_absent_pkg libevdev
-need_absent_pkg libdrm
-need_absent_pkg tmux
-need_absent_pkg ttf-dejavu
-need_absent_pkg python
-need_absent_pkg git
-need_absent_pkg vim
-need_absent_pkg nnn
-need_absent_pkg htop
-need_absent_pkg alsa-utils
-need_absent_pkg fontconfig
-need_absent_pkg mesa
-need_absent_pkg sdl2-compat
-need_absent_pkg cairo
-need_absent_pkg pango
-need_absent_pkg libinput
+if [ "$UI_TEST" = "1" ]; then
+    need_pkg cage
+    need_pkg foot
+    need_pkg tmux
+    need_pkg fzf
+    need_pkg j4-dmenu-desktop
+    need_pkg desktop-file-utils
+    need_pkg xorg-xwayland
+    need_pkg mesa
+    need_pkg ttf-dejavu
+    need_pkg xkeyboard-config
+    need_pkg libdrm
+    need_pkg freetype2
+    need_pkg libxkbcommon
+    need_pkg libevdev
+    need_pkg libinput
+    need_absent_pkg libtsm
+    need_absent_pkg python
+    need_absent_pkg git
+    need_absent_pkg vim
+    need_absent_pkg nnn
+    need_absent_pkg htop
+    need_absent_pkg alsa-utils
+    need_absent_pkg sdl2-compat
+else
+    need_absent_pkg libtsm
+    need_absent_pkg freetype2
+    need_absent_pkg libxkbcommon
+    need_absent_pkg libevdev
+    need_absent_pkg libdrm
+    need_absent_pkg tmux
+    need_absent_pkg ttf-dejavu
+    need_absent_pkg python
+    need_absent_pkg git
+    need_absent_pkg vim
+    need_absent_pkg nnn
+    need_absent_pkg htop
+    need_absent_pkg alsa-utils
+    need_absent_pkg fontconfig
+    need_absent_pkg mesa
+    need_absent_pkg sdl2-compat
+    need_absent_pkg libinput
+fi
 
 need "sudo is setuid"       "debugfs -R 'stat /usr/bin/sudo' $ROOTIMG | grep -q 'Mode:  0\{0,1\}4755'"
 need "no initramfs in /boot" "! debugfs -R 'ls /boot' $ROOTIMG 2>/dev/null | grep -qi initramfs"
