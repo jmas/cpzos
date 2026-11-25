@@ -101,8 +101,8 @@ need "device permissions"      "debugfs -R 'cat /etc/udev/rules.d/70-cpz-permiss
 log "ui repository"
 need "ui signing key"          "debugfs -R 'stat /usr/share/pacman/keyrings/cpz-ui-signing.asc' $ROOTIMG | grep -q Inode"
 need "ui key trusted"          "chroot $ROOT pacman-key --list-keys $UI_REPO_KEY_FPR | grep -q 'CPZ UI Signing'"
-need "ui stable config"        "debugfs -R 'cat /etc/pacman.d/cpz-ui.conf' $ROOTIMG | grep -q 'jmas.github.io/cpzos/ui/stable'"
-need "ui beta config"          "debugfs -R 'cat /etc/pacman.d/cpz-ui-beta.conf' $ROOTIMG | grep -q 'jmas.github.io/cpzos/ui/beta'"
+need "ui stable config"        "debugfs -R 'cat /etc/pacman.d/cpz-ui.conf' $ROOTIMG | grep -q 'releases/download/ui-stable'"
+need "ui beta config"          "debugfs -R 'cat /etc/pacman.d/cpz-ui-beta.conf' $ROOTIMG | grep -q 'releases/download/ui-beta'"
 need "ui repo requires signatures" "debugfs -R 'cat /etc/pacman.d/cpz-ui.conf' $ROOTIMG | grep -q 'DatabaseRequired'"
 need "pacman includes ui repo" "debugfs -R 'cat /etc/pacman.conf' $ROOTIMG | grep -q 'Include = /etc/pacman.d/cpz-ui.conf'"
 

@@ -156,9 +156,9 @@ The UI answers input before the user can perceive a delay.
   repository directories, and a release is promoted from beta to stable.
 - **Signing and hosting:** a dedicated PGP key signs the packages and the
   repository database. The public key ships in the base image, CI signs the
-  release, and the static repository lives on GitHub Pages with `stable/` and
-  `beta/` paths. Key rotation ships with a platform update; the old key stays
-  while older UI releases remain installable.
+  release, and the static repository is published as the GitHub Releases
+  `ui-stable` and `ui-beta`. Key rotation ships with a platform update; the old
+  key stays while older UI releases remain installable.
 - User settings, layouts, themes and session data survive UI updates.
 
 ## 4. Non-goals
@@ -186,7 +186,8 @@ The UI answers input before the user can perceive a delay.
 - **Rollback and channels:** last two UI core releases stay installable;
   `stable` is the default, `beta` is opt-in.
 - **Signing and hosting:** a dedicated PGP key, a public key in the base image,
-  and a static repository on GitHub Pages with `stable/` and `beta/` paths.
+  and a static repository published as the GitHub Releases `ui-stable` and
+  `ui-beta`.
 - **Languages:** en, de, es, fr, it, ja, pl, pt, tr, uk, zh; layout switching
   only, no IME.
 - **Accessibility:** high contrast, colour-independent state, visible focus and

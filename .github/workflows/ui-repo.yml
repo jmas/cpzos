@@ -6,12 +6,10 @@ on:
     tags: ["ui-v*"]
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
+  group: ui-repository
   cancel-in-progress: false
 
 jobs:
@@ -19,19 +17,10 @@ jobs:
     name: Sign and publish the UI repository
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Checkout the UI branch
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Checkout the site from master
-        uses: actions/checkout@v4
-        with:
-          ref: master
-          path: master
 
       - name: Build the builder image
         run: docker build --platform linux/arm64 -t cpz-arch-builder docker
@@ -39,29 +28,27 @@ jobs:
       - name: Prepare the package input directories
         run: mkdir -p out/ui/packages/stable out/ui/packages/beta
 
-      - name: Sign and build both repositories
+      - name: Sign both repositories and upload the releases
         env:
-          SITE_DIR: master/site
+          GH_TOKEN: ${{ github.token }}
           GPG_PRIVATE_KEY: ${{ secrets.CPZ_UI_GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.CPZ_UI_GPG_PASSPHRASE }}
           GPG_KEY_ID: ${{ secrets.CPZ_UI_GPG_KEY_ID }}
         run: |
+          set -euo pipefail
           for ch in stable beta; do
             docker run --rm --platform linux/arm64 \
               -v "$PWD:/work" -w /work \
-              -e CHANNEL="$ch" -e SITE_DIR -e PKG_DIR="out/ui/packages/$ch" \
+              -e CHANNEL="$ch" -e OUT_DIR="build/ui-repo/$ch" \
+              -e PKG_DIR="out/ui/packages/$ch" \
               -e GPG_PRIVATE_KEY -e GPG_PASSPHRASE -e GPG_KEY_ID \
               cpz-arch-builder ./tools/ui-repo.sh
+
+            tag="ui-$ch"
+            if ! gh release view "$tag" >/dev/null 2>&1; then
+              gh release create "$tag" \
+                --title "CPZ UI repository ($ch)" \
+                --notes "Signed CPZ UI pacman repository ($ch channel)."
+            fi
+            gh release upload "$tag" "build/ui-repo/$ch"/* --clobber
           done
-
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload the site with the repositories
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: master/site
-
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4

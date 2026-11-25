@@ -76,9 +76,8 @@ fi
 # ---------------------------------------------------------------------------
 # The UI ships as pacman packages, separately from the base image. Stable is
 # enabled in /etc/pacman.conf; beta is installed as an opt-in include.
-# `$arch` is expanded by pacman.
-UI_REPO_STABLE='https://jmas.github.io/cpzos/ui/stable/$arch'
-UI_REPO_BETA='https://jmas.github.io/cpzos/ui/beta/$arch'
+UI_REPO_STABLE='https://github.com/jmas/cpzos/releases/download/ui-stable'
+UI_REPO_BETA='https://github.com/jmas/cpzos/releases/download/ui-beta'
 UI_REPO_KEY="keys/cpz-ui-signing.asc"
 UI_REPO_KEY_FPR="C7DBEDC1B4855ACB0570C7D229C04B0663395458"
 

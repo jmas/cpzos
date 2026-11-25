@@ -57,7 +57,7 @@ The UI is a separate pacman package set. The base image ships the public signing
 key (`keys/cpz-ui-signing.asc`) and enables the stable repository:
 
 ```text
-https://jmas.github.io/cpzos/ui/stable/$arch
+https://github.com/jmas/cpzos/releases/download/ui-stable
 ```
 
 `/etc/pacman.d/cpz-ui-beta.conf` is installed for the beta channel but is not

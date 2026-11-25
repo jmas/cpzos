@@ -1,24 +1,23 @@
 #!/bin/bash
-# Build the signed CPZ UI pacman repository into a static site tree.
+# Build the signed CPZ UI pacman repository.
 #
 # Runs inside the arm64 Arch builder image. Inputs come from the environment:
 #   CHANNEL           stable or beta (default: stable)
-#   SITE_DIR          directory that becomes the Pages artifact (default: site)
-#   PKG_DIR           directory with *.pkg.tar.zst packages (default: out/ui/packages)
+#   OUT_DIR           output directory (default: out/ui/repo/<channel>)
+#   PKG_DIR           directory with *.pkg.tar.zst packages
+#                     (default: out/ui/packages/<channel>)
 #   GPG_PRIVATE_KEY   armored private signing key (GitHub secret)
 #   GPG_PASSPHRASE    passphrase for the signing key (GitHub secret)
 #   GPG_KEY_ID        signing key fingerprint (GitHub secret)
 #
-# The repository is served from:
-#   <site>/ui/<channel>/<arch>/cpz-ui.db
+# The output is uploaded as the assets of the GitHub release ui-<channel>:
+#   https://github.com/jmas/cpzos/releases/download/ui-<channel>/cpz-ui.db
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CHANNEL="${CHANNEL:-stable}"
-SITE_DIR="${SITE_DIR:-site}"
-PKG_DIR="${PKG_DIR:-out/ui/packages}"
-ARCH="${ARCH:-aarch64}"
-DEST="$SITE_DIR/ui/$CHANNEL/$ARCH"
+OUT_DIR="${OUT_DIR:-out/ui/repo/$CHANNEL}"
+PKG_DIR="${PKG_DIR:-out/ui/packages/$CHANNEL}"
 
 case "$CHANNEL" in
     stable|beta) ;;
@@ -50,41 +49,41 @@ sign() {
         --detach-sign "$1"
 }
 
-log "preparing $DEST"
-mkdir -p "$DEST" "$SITE_DIR/ui"
-cp keys/cpz-ui-signing.asc "$SITE_DIR/ui/cpz-ui-signing.asc"
+log "preparing $OUT_DIR"
+mkdir -p "$OUT_DIR"
 
 shopt -s nullglob
 packages=("$PKG_DIR"/*.pkg.tar.zst)
 for pkg in "${packages[@]}"; do
-    cp "$pkg" "$DEST/"
+    cp "$pkg" "$OUT_DIR/"
 done
 shopt -u nullglob
 
 log "signing packages"
-for pkg in "$DEST"/*.pkg.tar.zst; do
+for pkg in "$OUT_DIR"/*.pkg.tar.zst; do
     [ -e "$pkg" ] || continue
     sign "$pkg"
 done
 
 log "creating the repository database"
-rm -f "$DEST/cpz-ui.db.tar.gz" "$DEST/cpz-ui.files.tar.gz" \
-      "$DEST/cpz-ui.db" "$DEST/cpz-ui.files" \
-      "$DEST/cpz-ui.db.sig" "$DEST/cpz-ui.files.sig"
+rm -f "$OUT_DIR/cpz-ui.db.tar.gz" "$OUT_DIR/cpz-ui.files.tar.gz" \
+      "$OUT_DIR/cpz-ui.db" "$OUT_DIR/cpz-ui.files" \
+      "$OUT_DIR/cpz-ui.db.sig" "$OUT_DIR/cpz-ui.files.sig"
 if [ "${#packages[@]}" -eq 0 ]; then
-    repo-add "$DEST/cpz-ui.db.tar.gz"
+    repo-add "$OUT_DIR/cpz-ui.db.tar.gz"
 else
-    repo-add "$DEST/cpz-ui.db.tar.gz" "$DEST"/*.pkg.tar.zst
+    repo-add "$OUT_DIR/cpz-ui.db.tar.gz" "$OUT_DIR"/*.pkg.tar.zst
 fi
 
-# GitHub Pages does not preserve the relative symlinks repo-add creates.
-rm -f "$DEST/cpz-ui.db" "$DEST/cpz-ui.files"
-cp "$DEST/cpz-ui.db.tar.gz" "$DEST/cpz-ui.db"
-cp "$DEST/cpz-ui.files.tar.gz" "$DEST/cpz-ui.files"
+# GitHub release assets cannot be symlinks; ship the database under its
+# canonical name as well.
+rm -f "$OUT_DIR/cpz-ui.db" "$OUT_DIR/cpz-ui.files"
+cp "$OUT_DIR/cpz-ui.db.tar.gz" "$OUT_DIR/cpz-ui.db"
+cp "$OUT_DIR/cpz-ui.files.tar.gz" "$OUT_DIR/cpz-ui.files"
 
 log "signing the database"
-sign "$DEST/cpz-ui.db"
-sign "$DEST/cpz-ui.files"
+sign "$OUT_DIR/cpz-ui.db"
+sign "$OUT_DIR/cpz-ui.files"
 
-log "repository ready: $DEST"
-ls -l "$DEST"
+log "repository ready: $OUT_DIR"
+ls -l "$OUT_DIR"
