@@ -102,7 +102,10 @@ Unknown keys are ignored by other desktops and by the launcher.
 
 - All visible strings use `Name[lang]`, `Comment[lang]`, `Keywords[lang]` and
   the package's locale catalogs.
-- Target languages: en, de, es, fr, it, ja, pl, pt, tr, uk, zh.
+- Target languages: en, de, es, fr, it, ja, pl, pt, tr, uk, zh. Resolution
+  order (`CPZ_LANG`, `~/.config/cpz/language`, `/etc/cpz/language`, `LANG`,
+  `en`), catalog file format and fallbacks are defined in
+  [LANGUAGE.md](LANGUAGE.md).
 - Translations must fit the panel; truncated labels are a bug.
 - Keyboard layouts switch live; an app must not require a session restart.
 
@@ -152,19 +155,21 @@ Categories=System;Documentation;
 ## 11. System apps and the catalog
 
 - A system app is an ordinary entry shipped by `cpz-system-apps` with
-  `X-CPZ-System=true`. It appears in the store like any other app, but the
-  store shows it as non-removable and never offers Remove.
+  `X-CPZ-System=true`. It appears in Apps Manager like any other app, is
+  marked non-removable and never offers Remove.
+- Home, Apps Manager and Settings are preinstalled with the UI: `cpz-ui`
+  depends on `cpz-system-apps`. The clean base image stays UI-free by design.
 - Protection is enforced twice: `cpz-ui` depends on `cpz-system-apps`, and the
   install helper refuses to remove protected packages. The field alone is a
   label, not a security boundary.
 - The desktop entry does not name its package. The catalog maps entry id to
-  package for available apps; for an installed app the store resolves the
+  package for available apps; for an installed app Apps Manager resolves the
   owner with `pacman -Qo <entry>` when the detail screen opens.
 - Available-app metadata is generated at package build time from these entries
   into `/usr/share/cpz/catalog/apps.json` (`cpz-apps-catalog`). The XDG
   directories remain authoritative for installed apps; the catalog only adds
   the not-yet-installed ones.
-- Category grouping in the store uses the first main freedesktop category.
+- Category grouping in Apps Manager uses the first main freedesktop category.
   Every entry needs at least one main category.
 - A catalog entry whose contract is newer than the running system apps is
   listed but not installable until the system is updated; the reason is shown.
@@ -175,5 +180,5 @@ Every console application follows [TUI-CONTRACT.md](TUI-CONTRACT.md): the
 shared toolkit, the plain-`F`/`X`/`Z`/`C` navigation, panel-first layout and
 the latency budgets. That document is binding for system and third-party apps.
 
-The repository, catalog, store, Home, Settings and privileged helper are
+The repository, catalog, Apps Manager, Home, Settings and privileged helper are
 described in [APP-PLATFORM.md](APP-PLATFORM.md).

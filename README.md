@@ -132,8 +132,9 @@ docs/UI-QUALITIES.md   UI quality requirements
 docs/UI-DECISIONS.md   session, app, launcher and status decisions
 docs/PLATFORM-CONTRACT.md  platform/UI boundary and session entry
 docs/APP-CONTRACT.md   desktop-entry app model and launch rules
-docs/APP-PLATFORM.md   apps repository, catalog, store, Home and Settings
+docs/APP-PLATFORM.md   apps repository, catalog, Apps Manager, Home and Settings
 docs/TUI-CONTRACT.md   binding rules for console apps on the device
+docs/LANGUAGE.md       system language, translation catalogs and fallbacks
 docs/HARDWARE-TEST.md  UI test image and device checklist
 ```
 

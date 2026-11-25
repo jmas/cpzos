@@ -73,6 +73,9 @@ and ask the product owner.
 21. **The keyboard is the product.** Navigation must work on the Cardputer
     Zero matrix keyboard without the Fn layer. Never make an Fn-only key,
     `Alt` chord or punctuation (Sym layer) the only way to do something.
+22. **User-visible text is translated.** Follow `docs/LANGUAGE.md`: no
+    hardcoded strings, resolve the system language, fall back to `en`. The UI
+    never depends on glibc locales or `locale-gen`.
 
 ## Current map
 

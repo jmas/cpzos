@@ -1,11 +1,12 @@
 # TUI contract v1
 
-Status: proposed on `design/app-platform`. This document is binding for every
-CPZ console application built on this platform, including the system apps in
-`cpz-system-apps` and third-party apps that want the standard look. It sits
-under [UI-QUALITIES.md](UI-QUALITIES.md); [APP-CONTRACT.md](APP-CONTRACT.md)
-covers packaging and launch, [APP-PLATFORM.md](APP-PLATFORM.md) covers the app
-repository and the store.
+Status: agreed on `design/app-platform` (2026-11-26). This document is binding
+for every CPZ console application built on this platform, including the system
+apps in `cpz-system-apps` and third-party apps that want the standard look. It
+sits under [UI-QUALITIES.md](UI-QUALITIES.md);
+[APP-CONTRACT.md](APP-CONTRACT.md) covers packaging and launch,
+[APP-PLATFORM.md](APP-PLATFORM.md) covers the repository and Apps Manager, and
+[LANGUAGE.md](LANGUAGE.md) covers translations.
 
 If a requirement here conflicts with a hardware fact, the hardware wins and
 this document is corrected. Do not work around the keyboard with Fn chords.
@@ -114,7 +115,7 @@ Home
 ```
 
 ```text
-Apps · All                    2/12
+Apps Manager · All            2/12
 > Update app list
   Player                      0.4.1   *
   Recorder                    0.2.0
@@ -178,7 +179,7 @@ Consequences:
 
 ## 7. Flows, confirmation and errors
 
-- `Enter` on a list item opens it. In the store, the first `Enter` opens the
+- `Enter` on a list item opens it. In Apps Manager, the first `Enter` opens the
   detail screen; actions are a vertical list on that screen.
 - Destructive actions ask for confirmation, name the object, and default to
   "No". `Enter` on the default "No" cancels; `Esc` cancels. Focus starts on
@@ -199,8 +200,9 @@ Consequences:
   `~/.config/cpz/<app>` (settings) and `~/.local/state/cpz/<app>` (logs,
   state). Caches go under `~/.cache/cpz/<app>`. Never write to `/etc`, the
   package database or another app's files.
-- Every visible string comes from a catalog. English and Ukrainian ship now;
-  the other agreed languages are added without layout changes.
+- Every visible string comes from a catalog; resolution and file names are in
+  [LANGUAGE.md](LANGUAGE.md). English and Ukrainian ship now; the other agreed
+  languages resolve to English until translated.
 - Ukrainian labels are the width test. If a string does not fit at 40 columns,
   shorten it; truncation of a label is a bug, truncation of a value is allowed.
 - Complete keyboard operation, visible focus and a colour-independent state
@@ -217,7 +219,7 @@ Consequences:
 - [ ] No shell, no `sh -c`, no command string built from user data.
 - [ ] `desktop-file-validate` passes for every installed entry.
 - [ ] `gofmt`, `go vet ./...`, `go test ./...` pass; golden frames cover the
-      smallest size and both keyboard layouts.
+      smallest size, both keyboard layouts and `CPZ_LANG=en`/`uk`.
 - [ ] Failure path tested: offline, package error, missing catalog, read-only
       home.
 - [ ] `README` of the app lists its keys in the same order as this document.
