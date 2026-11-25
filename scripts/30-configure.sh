@@ -93,17 +93,17 @@ in_root "systemctl enable serial-getty@ttyS0.service >/dev/null 2>&1 || true"
 # and audio through the normal login path instead of a root daemon.
 cat > "$ROOT/usr/lib/systemd/system/cpz-ui@.service" <<'EOF'
 [Unit]
-Description=CPZ UI session on %I
+Description=CPZ UI session on %i
 After=systemd-user-sessions.service
 Wants=systemd-user-sessions.service
-Conflicts=getty@%I.service
+Conflicts=getty@%i.service
 ConditionPathExists=/usr/lib/cpz/session
 
 [Service]
 PAMName=login
 User=cpz
 Group=cpz
-TTYPath=/dev/%I
+TTYPath=/dev/%i
 StandardInput=tty
 StandardOutput=tty
 TTYReset=yes
