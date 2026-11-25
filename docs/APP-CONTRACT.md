@@ -59,6 +59,7 @@ Recommended:
 | `DBusActivatable` | standard single-instance activation |
 | `X-CPZ-Tab=new\|keep` | open a new tab or reuse the current one |
 | `X-CPZ-Single=0\|1` | focus an existing app instead of a second instance |
+| `X-CPZ-System=true` | system app: shown in the list, never removable |
 | `X-CPZ-Contract=1` | app-contract version the entry expects |
 
 `X-CPZ-*` is used only where the Desktop Entry standard has no equivalent.
@@ -71,7 +72,8 @@ Unknown keys are ignored by other desktops and by the launcher.
 - Field codes `%f`, `%u`, `%U`, `%F`, `%i`, `%c`, `%k` are expanded according
   to the specification.
 - `Terminal=true` entries are passed to `cpz-term-launch`, which opens a new
-  tmux window in the persistent session.
+  tmux window in the persistent session. The Home app instead replaces its own
+  window with the chosen app, so a new tab becomes the app it launches.
 - `Terminal=false` entries are launched as child processes with
   `WAYLAND_DISPLAY` / `DISPLAY` / `XAUTHORITY` from the session.
 - A missing binary, an invalid `Exec` or a failed launch is reported in the
@@ -146,3 +148,32 @@ Exec=/usr/lib/cpz/help
 Terminal=true
 Categories=System;Documentation;
 ```
+
+## 11. System apps and the catalog
+
+- A system app is an ordinary entry shipped by `cpz-system-apps` with
+  `X-CPZ-System=true`. It appears in the store like any other app, but the
+  store shows it as non-removable and never offers Remove.
+- Protection is enforced twice: `cpz-ui` depends on `cpz-system-apps`, and the
+  install helper refuses to remove protected packages. The field alone is a
+  label, not a security boundary.
+- The desktop entry does not name its package. The catalog maps entry id to
+  package for available apps; for an installed app the store resolves the
+  owner with `pacman -Qo <entry>` when the detail screen opens.
+- Available-app metadata is generated at package build time from these entries
+  into `/usr/share/cpz/catalog/apps.json` (`cpz-apps-catalog`). The XDG
+  directories remain authoritative for installed apps; the catalog only adds
+  the not-yet-installed ones.
+- Category grouping in the store uses the first main freedesktop category.
+  Every entry needs at least one main category.
+- A catalog entry whose contract is newer than the running system apps is
+  listed but not installable until the system is updated; the reason is shown.
+
+## 12. Console interface
+
+Every console application follows [TUI-CONTRACT.md](TUI-CONTRACT.md): the
+shared toolkit, the plain-`F`/`X`/`Z`/`C` navigation, panel-first layout and
+the latency budgets. That document is binding for system and third-party apps.
+
+The repository, catalog, store, Home, Settings and privileged helper are
+described in [APP-PLATFORM.md](APP-PLATFORM.md).

@@ -64,6 +64,16 @@ and ask the product owner.
     comments and `scripts/50-verify.sh` with every architectural change.
     Hardware-only gaps must be stated explicitly.
 
+## Console applications
+
+20. **TUI apps follow `docs/TUI-CONTRACT.md`.** It is binding, not a style
+    suggestion: one Go/Bubble Tea toolkit, plain `F`/`X`/`Z`/`C` navigation
+    (no Fn), `Enter` confirms, `Esc` goes back, 40×10 minimum layout, no
+    footer or borders, 100 ms first frame. Do not add a second TUI stack.
+21. **The keyboard is the product.** Navigation must work on the Cardputer
+    Zero matrix keyboard without the Fn layer. Never make an Fn-only key,
+    `Alt` chord or punctuation (Sym layer) the only way to do something.
+
 ## Current map
 
 - `config.sh` — board, packages, identity, image geometry.

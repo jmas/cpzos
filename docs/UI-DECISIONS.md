@@ -101,6 +101,13 @@ Alternatives and why they are not the default:
 - A custom launcher is unnecessary unless `j4-dmenu-desktop` fails the
   argument or tab test.
 
+**Pending replacement (design, not implemented):** the Apps store and the Home
+screen replace the `fzf` picker for daily use. `Alt+O` will open
+`cpz-app apps`; a new tab will run `cpz-app home` instead of a bare shell.
+`j4-dmenu-desktop`, `fzf` and `cpz-launcher` stay until the store passes the
+hardware checklist. See [APP-PLATFORM.md](APP-PLATFORM.md) and
+[TUI-CONTRACT.md](TUI-CONTRACT.md).
+
 ## 5. Status
 
 **Decision: one tmux status row, event-driven, with a cache file.**
@@ -151,5 +158,8 @@ stay installable.**
   `ui-stable` release.
 - Platform contract: `docs/PLATFORM-CONTRACT.md`.
 - App contract: `docs/APP-CONTRACT.md`.
+- TUI contract: `docs/TUI-CONTRACT.md` (proposed).
+- Application platform: `docs/APP-PLATFORM.md` (proposed; separate
+  `cpzos-apps` repository, catalog, store, Home, Settings).
 - Panel/HDMI and budget validation: pending on hardware.
 - Notification daemon, theme tokens and locale catalogs: later.
