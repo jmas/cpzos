@@ -2,9 +2,8 @@
 
 A minimal Arch Linux ARM base for the M5Stack **Cardputer Zero** (CM0). It
 contains the kernel, firmware, hardware drivers, networking and a login path —
-and deliberately no display stack, no terminal session and no UI. It exists so a
-new graphics stack can be built on a clean system instead of on top of the old
-one.
+and deliberately no display or session layer. It exists so a new stack can be
+built on a clean system instead of on top of the old one.
 
 ## What boots
 
@@ -87,7 +86,7 @@ scripts/10-rootfs.sh   pacman rootfs, no initramfs
 scripts/20-device.sh   vendor modules, overlays, firmware, keymaps
 scripts/30-configure.sh identity, boot files, login paths, pruning
 scripts/40-image.sh    FAT32 + ext4 + MBR, no loop devices
-scripts/50-verify.sh   base-image invariants and UI-free boundary
+scripts/50-verify.sh   base-image invariants
 ```
 
 ## Status and risks
@@ -100,9 +99,8 @@ hardware-only gaps to check on a device are:
 2. wired DHCP and `sshd`;
 3. the vendor modules load without errors when a stack requests them.
 
-## Adding a stack
+## Extending the base
 
-Add it as a new stage after `20-device.sh` (or a new script called from
-`Makefile`) and keep the base rules: no application names in the session
-layer, argv arrays for launches, no JSON in runtime protocols, and no
-package that silently replaces the kernel or the boot path.
+Add a new stage after `20-device.sh` (or a new script called from `Makefile`).
+Keep the base rules in `AGENTS.md`, update this README and
+`scripts/50-verify.sh`, and run `make verify`.

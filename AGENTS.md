@@ -6,9 +6,9 @@ and ask the product owner.
 
 ## What this tree is
 
-1. **A base distribution, not a UI.** The image contains the kernel, firmware,
-   hardware drivers, networking and a login path. It defines no display stack,
-   no terminal session and no application layer.
+1. **A base distribution.** The image contains the kernel, firmware, hardware
+   drivers, networking and a login path. A display or session layer is added
+   separately.
 2. **No display policy.** Do not add DRM, HDMI, panel selection, backlight,
    splash, framebuffer-console or module-loading decisions to this base. A new
    stack is added as a separate stage later.
@@ -43,8 +43,8 @@ and ask the product owner.
 
 ## Security
 
-14. **No shell for launches.** Use argv arrays. The base has no launcher, but
-    any future helper follows the same rule.
+14. **No shell for launches.** Use argv arrays, not a shell, for process
+    launches.
 15. **No secrets in the image.** The default password is a development
     convenience; document it and do not add keys or tokens.
 16. **Network is opt-in by flag.** `ENABLE_SSH=1` is the only reason networkd,
@@ -68,4 +68,4 @@ and ask the product owner.
 - `scripts/20-device.sh` — vendor modules, overlays, firmware, keymaps.
 - `scripts/30-configure.sh` — identity, boot files, login paths, pruning.
 - `scripts/40-image.sh` — FAT32 + ext4 + MBR without loop devices.
-- `scripts/50-verify.sh` — base-image and no-UI invariants.
+- `scripts/50-verify.sh` — base-image invariants.
