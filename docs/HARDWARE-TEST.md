@@ -102,7 +102,9 @@ The vendor `99-cardputer-zero-lcd.rules` and
 
 ### Session
 
-- `tmux -L cpz list-sessions` shows `main`.
+- `tmux -L cpz list-sessions` shows exactly `main`.
+- `tmux -L cpz list-keys -T root | grep C-b` shows nothing (prefix disabled).
+- There is no session chooser, rename or new-session UI.
 - `systemctl restart cpz-ui@tty1.service` returns to the same tmux tab.
 - Closing a terminal app returns to the same tab and working directory.
 - `tmux` survives a cage restart.

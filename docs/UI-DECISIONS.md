@@ -38,7 +38,9 @@ ExecStart=/usr/lib/cpz/session
 - `foot` renders through `wl_shm`, so the RGB565 SPI panel needs no GPU
   renderer.
 - `tmux` supplies tabs, panes, the status row and persistence across a
-  compositor restart.
+  compositor restart. There is exactly one session (`main`), the tmux prefix
+  is disabled, and session creation/switching is not exposed; windows are
+  controlled by the direct Alt bindings.
 - No system bar, tray or layer-shell panel. Status and notifications live
   inside tmux.
 - Cage has no layer-shell; overlay launchers such as `fuzzel`, `wofi` or
