@@ -186,7 +186,7 @@ if [ "$ENABLE_SSH" = "1" ]; then
     log "enabling wired DHCP and sshd"
     cat > "$ROOT/etc/systemd/network/20-wired.network" <<'EOF'
 [Match]
-Name=en* eth*
+Name=en* eth* usb*
 
 [Network]
 DHCP=yes
@@ -198,6 +198,20 @@ EOF
     in_root "systemctl enable systemd-networkd.service >/dev/null 2>&1 || true"
     in_root "systemctl enable systemd-resolved.service >/dev/null 2>&1 || true"
     in_root "systemctl enable sshd.service >/dev/null 2>&1 || true"
+    in_root "systemctl enable sshdgenkeys.service >/dev/null 2>&1 || true"
+
+    # Generate host keys at build time so SSH is usable immediately on first
+    # boot and the first connection does not race sshdgenkeys.
+    in_root "ssh-keygen -A >/dev/null 2>&1 || true"
+    install -d "$ROOT/etc/ssh/sshd_config.d"
+    cat > "$ROOT/etc/ssh/sshd_config.d/10-cpz.conf" <<'EOF'
+# CPZ recovery access. The wheel user is the only remote account; root is
+# locked. Password login is intentional for the development image.
+PasswordAuthentication yes
+PermitRootLogin no
+AllowUsers cpz
+EOF
+    chmod 0644 "$ROOT/etc/ssh/sshd_config.d/10-cpz.conf"
 else
     in_root "systemctl disable systemd-networkd.service >/dev/null 2>&1 || true"
     in_root "systemctl disable systemd-resolved.service >/dev/null 2>&1 || true"

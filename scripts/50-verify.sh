@@ -97,6 +97,7 @@ if [ "$UI_TEST" = "1" ]; then
     need "ui sudoers"          "debugfs -R 'stat /etc/sudoers.d/20-cpz-ui' $ROOTIMG | grep -q Inode"
     need "ui modules"          "debugfs -R 'cat /usr/lib/modules-load.d/cpz-ui.conf' $ROOTIMG | grep -q panel-mipi-dbi-m"
     need "ui tmpfiles"         "debugfs -R 'cat /usr/lib/tmpfiles.d/cpz-ui.conf' $ROOTIMG | grep -q '/run/cpz'"
+    need "persistent journal"  "debugfs -R 'cat /etc/systemd/journald.conf.d/20-cpz-test.conf' $ROOTIMG | grep -q 'Storage=persistent'"
 else
     log "no UI or display stack"
     absent "no cpz-session"        "debugfs -R 'stat /usr/local/bin/cpz-session' $ROOTIMG"
@@ -136,8 +137,13 @@ fi
 if [ "$ENABLE_SSH" = "1" ]; then
     need "openssh installed"    "pacman --root $ROOT -Q openssh"
     need "sshd enabled"         "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q sshd"
+    need "ssh host key"         "debugfs -R 'stat /etc/ssh/ssh_host_ed25519_key' $ROOTIMG | grep -q Inode"
+    need "ssh password auth"    "debugfs -R 'cat /etc/ssh/sshd_config.d/10-cpz.conf' $ROOTIMG | grep -q '^PasswordAuthentication yes'"
+    need "ssh only cpz"         "debugfs -R 'cat /etc/ssh/sshd_config.d/10-cpz.conf' $ROOTIMG | grep -q '^AllowUsers cpz'"
+    need "sshd keygen enabled"  "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q sshdgenkeys"
     need "networkd enabled"     "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q systemd-networkd"
     need "wired DHCP network"   "debugfs -R 'cat /etc/systemd/network/20-wired.network' $ROOTIMG | grep -q 'DHCP=yes'"
+    need "usb ethernet match"   "debugfs -R 'cat /etc/systemd/network/20-wired.network' $ROOTIMG | grep -q 'usb\*'"
 fi
 
 log "base configuration"

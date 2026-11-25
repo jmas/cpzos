@@ -49,9 +49,11 @@ loads the modules and chooses the output.
 
 ## Access
 
-- **Serial:** `ttyS0` at 115200 baud. This is the only local login path.
-- **SSH:** wired Ethernet, DHCP, user `cpz` / password `cpz` when
-  `ENABLE_SSH=1`. Change the password before putting the device on a network.
+- **Serial:** `ttyS0` at 115200 baud. This is the local recovery path.
+- **SSH:** wired or USB Ethernet, DHCP, user `cpz` / password `cpz` when
+  `ENABLE_SSH=1`. Host keys are generated at build time. The UI test image
+  keeps a persistent journal for `journalctl -b -1`; the clean base keeps the
+  volatile journal. Change the password before putting the device on a network.
 - **root:** locked (`root:!`); use `sudo`.
 
 ## UI packages

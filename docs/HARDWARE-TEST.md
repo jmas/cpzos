@@ -24,10 +24,34 @@ with the `-ui` suffix. It is not the release base image.
 - Flash `out/cpz-arch-0.1.0-cm0-ui.img` with Raspberry Pi Imager,
   balenaEtcher or `dd`.
 - Serial: `ttyS0` at 115200 baud.
-- SSH: wired Ethernet, user `cpz` / password `cpz`.
+- SSH: wired Ethernet or USB Ethernet, DHCP, user `cpz` / password `cpz`.
 
 Keep the serial console attached during the first boot. If the panel stays
 dark, serial is the only diagnostic path.
+
+SSH is enabled by default (`ENABLE_SSH=1`). Host keys are generated at build
+time, so the first connection does not wait for `sshdgenkeys`. The test image
+keeps a persistent journal for post-mortem logs; the clean base image keeps the
+volatile journal.
+
+If the IP is unknown, use serial:
+
+```sh
+ip -4 addr
+networkctl status
+systemctl status sshd
+journalctl -b -u sshd
+```
+
+From another machine:
+
+```sh
+ssh cpz@<device-ip>
+journalctl -b -1
+journalctl -b -1 -u cpz-ui@tty1
+journalctl -b -1 -u cpz-tmux
+```
+
 
 ## Expected boot
 
