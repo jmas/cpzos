@@ -8,3 +8,4 @@ Exec=/usr/lib/cpz/help
 Terminal=true
 Categories=System;Documentation;
 Keywords=keys;shortcuts;manual;
+NoDisplay=true

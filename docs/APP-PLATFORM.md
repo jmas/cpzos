@@ -179,6 +179,10 @@ CI from the built packages, so it cannot drift from the desktop entries:
 - Installed apps are read from `$XDG_DATA_HOME/applications` and
   `$XDG_DATA_DIRS/applications` as today; the catalog only fills in available,
   not-yet-installed apps. An installed app never depends on the catalog.
+- Only system entries (`X-CPZ-System=true`) and entries present in the catalog
+  are user-facing apps. Desktop files shipped by the session or its
+  dependencies (foot, foot-client, foot-server, help) are filtered out, so
+  Home shows Apps Manager, Settings, Terminal and installed catalog apps.
 - Localized fields are copied as `name[lang]`, `comment[lang]` and
   `keywords[lang]`; Apps Manager and Home pick the system language with an `en`
   fallback exactly as [LANGUAGE.md](LANGUAGE.md) defines.
@@ -250,7 +254,7 @@ Apps Manager · All            2/12
 
 - Default command of a new tmux window
   (`set -g default-command "/usr/bin/cpz-app home"`).
-- One list of installed apps, same rows and search as Apps Manager, plus
+- One list of system and installed catalog apps, same rows and search as Apps Manager, plus
   `Terminal` (the shell entry), `Apps Manager` and `Settings`. `Enter` launches
   the app **in the current window** (process replacement), so a tab is "the app
   you chose", not a launcher that stays behind. Before `exec`, Home renames the

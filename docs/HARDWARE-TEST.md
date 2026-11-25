@@ -120,8 +120,8 @@ The vendor `99-cardputer-zero-lcd.rules` and
 
 ### Applications
 
-- Home lists Terminal, Apps Manager, Settings and the installed apps; it does
-  not list itself.
+- Home lists Apps Manager, Settings, Terminal and installed catalog apps; it
+  does not list itself, Foot, Foot Client, Foot Server or Help.
 - `Enter` on Terminal replaces the tab with a shell and renames it.
 - `Alt+O` opens Apps Manager; it reads the baked catalog without network.
 - Apps Manager: `Z`/`C` switch categories, `F`/`X` move, `Tab` searches,

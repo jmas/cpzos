@@ -31,7 +31,9 @@ $XDG_DATA_DIRS/applications          (usually /usr/local/share:/usr/share)
 
 A package installs into `/usr/share/applications`. User overrides go into
 `~/.local/share/applications`. `NoDisplay=true`, `OnlyShowIn` and `NotShowIn`
-are honoured by the launcher.
+are honoured by the launcher. Home and Apps Manager list only system entries
+and entries present in the catalog; other desktop files shipped by the session
+or its dependencies are not apps.
 
 ## 3. Desktop entry fields
 
