@@ -1,0 +1,29 @@
+CPZ UI
+======
+
+Menu and tabs
+-------------
+  Alt+O          Open the application menu
+  Alt+T          New tab
+  Alt+W          Close the current tab
+  Alt+Left       Previous tab
+  Alt+Right      Next tab
+  Alt+1..9       Select tab
+
+Terminal
+--------
+  Ctrl+Shift+C   Copy selection
+  Ctrl+Shift+V   Paste
+  Shift+PageUp   Scroll back
+  Shift+PageDown Scroll forward
+
+Language
+--------
+  Alt+Shift      Switch keyboard layout (us, ua)
+
+Session
+-------
+  The tmux server survives a compositor restart, a terminal restart and an
+  output switch. Closing a foreground application returns to the same tab.
+
+  Recovery is available over the serial console and SSH.

@@ -29,6 +29,18 @@ ln -sf "/usr/share/zoneinfo/$TIMEZONE" "$ROOT/etc/localtime"
 head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$ROOT/etc/machine-id"
 printf '\n' >> "$ROOT/etc/machine-id"
 
+# --- platform contract ------------------------------------------------------
+# The UI layer reads this file and refuses an incompatible platform. The base
+# image is the platform; the UI is a separate package set.
+log "writing the platform contract"
+install -d "$ROOT/etc/cpz"
+cat > "$ROOT/etc/cpz/platform.conf" <<'EOF'
+# CPZ platform contract. Read by the UI layer at session start.
+platform=1
+contract=1
+caps=display.panel,display.hdmi,input.matrix,audio,battery,network,storage,serial
+EOF
+
 # --- groups and the login user ---------------------------------------------
 # gpio/spi/i2c do not exist in a stock Arch install; the vendor udev rules and
 # any future tooling expect them.
@@ -183,6 +195,12 @@ dtoverlay=spk-gpio24-high-overlay" ;;
     *)  die "unknown BOARD '$BOARD' (expected v3 or v5)" ;;
 esac
 
+if [ "$ENABLE_HDMI" = "1" ]; then
+    HDMI_LINE="dtoverlay=vc4-kms-v3d"
+else
+    HDMI_LINE="#dtoverlay=vc4-kms-v3d   # disabled: panel only"
+fi
+
 # The board overlay describes the keypad, PMIC, battery gauge, audio codec and
 # IMU rails. It is hardware description only; no display policy is configured
 # here. The panel/HDMI drivers are present in the image for a later stack.
@@ -207,9 +225,19 @@ enable_uart=1
 # USB host mode.
 dtoverlay=dwc2
 
+# Display hardware. The base enables the DRM cards; the UI stack selects one.
+$HDMI_LINE
+
+# Disable spidev@0/@1 so the panel can own SPI0 chip select 0. Must come after
+# dtparam=spi=on and before the board overlay.
+dtoverlay=cpz-spi
+
 # Vendor board overlay: keypad, M5 IO expander, audio, power-fail handler,
 # LEDs, battery gauge and IMU.
 $BOARD_OVERLAYS
+
+# Firmware heap for vc4/HDMI clients.
+gpu_mem=64
 
 dtparam=watchdog=on
 EOF

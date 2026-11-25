@@ -1,0 +1,58 @@
+# Maintainer: CPZ <cpz-ui@jmas.github.io>
+pkgname=cpz-ui
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="CPZ UI session: cage, foot, tmux, launcher, status and backlight"
+arch=('aarch64')
+url="https://github.com/jmas/cpzos"
+license=('BSD-3-Clause')
+depends=(
+    'cage'
+    'foot'
+    'tmux'
+    'fzf'
+    'j4-dmenu-desktop'
+    'desktop-file-utils'
+    'dex'
+    'xorg-xwayland'
+    'mesa'
+    'ttf-dejavu'
+    'xkeyboard-config'
+)
+backup=('etc/cpz/foot.ini' 'etc/cpz/tmux.conf')
+install=cpz-ui.install
+options=(!strip)
+source=()
+sha256sums=()
+
+build() {
+    cc -O2 -Wall -Wextra -o "$srcdir/cpz-backlight" "$startdir/cpz-backlight.c"
+}
+
+package() {
+    install -Dm755 "$startdir/cpz-session"      "$pkgdir/usr/lib/cpz/session"
+    install -Dm755 "$startdir/cpz-attach"       "$pkgdir/usr/lib/cpz/attach"
+    install -Dm755 "$startdir/cpz-tmux-start"   "$pkgdir/usr/lib/cpz/tmux-start"
+    install -Dm755 "$startdir/cpz-launcher"     "$pkgdir/usr/lib/cpz/launcher"
+    install -Dm755 "$startdir/cpz-term-launch"  "$pkgdir/usr/lib/cpz/term-launch"
+    install -Dm755 "$startdir/cpz-status"       "$pkgdir/usr/lib/cpz/status"
+    install -Dm755 "$startdir/cpz-notify"       "$pkgdir/usr/lib/cpz/notify"
+    install -Dm755 "$startdir/cpz-help"         "$pkgdir/usr/lib/cpz/help"
+    install -Dm755 "$srcdir/cpz-backlight"      "$pkgdir/usr/lib/cpz/backlight"
+
+    install -Dm644 "$startdir/cpz-tmux.service" "$pkgdir/usr/lib/systemd/system/cpz-tmux.service"
+    install -Dm644 "$startdir/cpz-ui@.service.d/10-tmux.conf" \
+        "$pkgdir/usr/lib/systemd/system/cpz-ui@.service.d/10-tmux.conf"
+
+    install -Dm644 "$startdir/foot.ini"         "$pkgdir/etc/cpz/foot.ini"
+    install -Dm644 "$startdir/tmux.conf"        "$pkgdir/etc/cpz/tmux.conf"
+    install -Dm440 "$startdir/cpz-ui.sudoers"   "$pkgdir/etc/sudoers.d/20-cpz-ui"
+
+    install -Dm644 "$startdir/modules-load.conf" "$pkgdir/usr/lib/modules-load.d/cpz-ui.conf"
+    install -Dm644 "$startdir/modprobe.conf"     "$pkgdir/usr/lib/modprobe.d/cpz-ui.conf"
+    install -Dm644 "$startdir/tmpfiles.conf"     "$pkgdir/usr/lib/tmpfiles.d/cpz-ui.conf"
+
+    install -Dm644 "$startdir/cpz-terminal.desktop" "$pkgdir/usr/share/applications/cpz-terminal.desktop"
+    install -Dm644 "$startdir/cpz-help.desktop"     "$pkgdir/usr/share/applications/cpz-help.desktop"
+    install -Dm644 "$startdir/HELP"                 "$pkgdir/usr/share/cpz/HELP"
+}

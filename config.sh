@@ -28,6 +28,12 @@ BOARD="v5"
 DTOVERLAYS_URL="https://github.com/m5stack/m5stack-linux-dtoverlays.git"
 DTOVERLAYS_REF="4f7aeee9fc103ebb03d22cac476bb191ecfb321e"
 
+# Display hardware enablement. The base ships the DRM cards and overlays but
+# no compositor or terminal; the UI layer chooses and drives one output.
+# HDMI/vc4: on enables the vc4 overlay and GPU memory. Panel: always enabled by
+# the board overlay plus the cpz-spi chip-select workaround.
+ENABLE_HDMI="1"
+
 # SSH over Ethernet. On: installs openssh and brings up any wired interface
 # with DHCP through systemd-networkd + systemd-resolved. This is the primary
 # login path while the image has no display stack.

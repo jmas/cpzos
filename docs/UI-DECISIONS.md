@@ -135,12 +135,12 @@ stay installable.**
 - Retention automation and the exact soak period are defined after the first
   real UI release.
 
-## 8. Open items
+## 8. Implementation status
 
-- Prototype the launcher and confirm `j4-dmenu-desktop` argument handling.
-- Implement the status helper and the `/run/cpz/status` cache.
-- Add the UI package build step to the release workflow (the current workflow
-  signs prebuilt packages).
-- Decide whether a notification daemon is needed after the first compositor
-  test.
-- Write platform contract v1 and the app contract with these decisions.
+- Launcher: implemented as `cpz-launcher` + `cpz-term-launch`.
+- Status: implemented as `cpz-status` with `/run/cpz/status` and the tmux row.
+- UI package: `ui/cpz-ui` builds with makepkg in CI.
+- Platform contract: `docs/PLATFORM-CONTRACT.md`.
+- App contract: `docs/APP-CONTRACT.md`.
+- Panel/HDMI and budget validation: pending on hardware.
+- Notification daemon, theme tokens and locale catalogs: later.

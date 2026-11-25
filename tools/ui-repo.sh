@@ -53,15 +53,16 @@ log "preparing $OUT_DIR"
 mkdir -p "$OUT_DIR"
 
 shopt -s nullglob
-packages=("$PKG_DIR"/*.pkg.tar.zst)
+packages=("$PKG_DIR"/*.pkg.tar.zst "$PKG_DIR"/*.pkg.tar.xz)
+copied=()
 for pkg in "${packages[@]}"; do
     cp "$pkg" "$OUT_DIR/"
+    copied+=("$OUT_DIR/$(basename "$pkg")")
 done
 shopt -u nullglob
 
 log "signing packages"
-for pkg in "$OUT_DIR"/*.pkg.tar.zst; do
-    [ -e "$pkg" ] || continue
+for pkg in "${copied[@]}"; do
     sign "$pkg"
 done
 
@@ -69,10 +70,10 @@ log "creating the repository database"
 rm -f "$OUT_DIR/cpz-ui.db.tar.gz" "$OUT_DIR/cpz-ui.files.tar.gz" \
       "$OUT_DIR/cpz-ui.db" "$OUT_DIR/cpz-ui.files" \
       "$OUT_DIR/cpz-ui.db.sig" "$OUT_DIR/cpz-ui.files.sig"
-if [ "${#packages[@]}" -eq 0 ]; then
+if [ "${#copied[@]}" -eq 0 ]; then
     repo-add "$OUT_DIR/cpz-ui.db.tar.gz"
 else
-    repo-add "$OUT_DIR/cpz-ui.db.tar.gz" "$OUT_DIR"/*.pkg.tar.zst
+    repo-add "$OUT_DIR/cpz-ui.db.tar.gz" "${copied[@]}"
 fi
 
 # GitHub release assets cannot be symlinks; ship the database under its

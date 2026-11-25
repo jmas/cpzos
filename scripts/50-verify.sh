@@ -49,8 +49,14 @@ need "fbcon off"                   "mtype -i $BOOTIMG ::/cmdline.txt | grep -q '
 need "panic reboot enabled"        "mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'panic=10'"
 need "serial recovery console"     "mtype -i $BOOTIMG ::/cmdline.txt | grep -q 'console=ttyS0,115200'"
 need "hardware watchdog on"        "mtype -i $BOOTIMG ::/config.txt | grep -q '^dtparam=watchdog=on'"
-need "no vc4 overlay"              "! mtype -i $BOOTIMG ::/config.txt | grep -q '^dtoverlay=vc4-kms-v3d'"
-need "no panel spi overlay"        "! mtype -i $BOOTIMG ::/config.txt | grep -q '^dtoverlay=cpz-spi'"
+if [ "$ENABLE_HDMI" = "1" ]; then
+    need "vc4 overlay enabled"     "mtype -i $BOOTIMG ::/config.txt | grep -q '^dtoverlay=vc4-kms-v3d'"
+    need "gpu memory set"          "mtype -i $BOOTIMG ::/config.txt | grep -q '^gpu_mem=64'"
+else
+    need "vc4 overlay disabled"    "! mtype -i $BOOTIMG ::/config.txt | grep -q '^dtoverlay=vc4-kms-v3d'"
+fi
+need "panel spi overlay"           "mtype -i $BOOTIMG ::/config.txt | grep -q '^dtoverlay=cpz-spi'"
+need "cpz-spi dtbo"                "mtype -i $BOOTIMG ::/overlays/cpz-spi.dtbo"
 need "no boot splash"              "! mdir -i $BOOTIMG ::/ | grep -qi 'splash'"
 
 log "root partition"
@@ -60,6 +66,10 @@ need "login user cpz"        "debugfs -R 'cat /etc/passwd' $ROOTIMG | grep -q '^
 need "root account locked"   "debugfs -R 'cat /etc/shadow' $ROOTIMG | grep -qE '^root:!'"
 need "wheel sudo rule"       "debugfs -R 'cat /etc/sudoers.d/10-wheel' $ROOTIMG | grep -q '%wheel'"
 need "fstab root PARTUUID"   "debugfs -R 'cat /etc/fstab' $ROOTIMG | grep -q '$ROOT_PARTUUID'"
+need "platform contract"     "debugfs -R 'cat /etc/cpz/platform.conf' $ROOTIMG | grep -q '^platform=1'"
+need "contract version"      "debugfs -R 'cat /etc/cpz/platform.conf' $ROOTIMG | grep -q '^contract=1'"
+need "platform capabilities" "debugfs -R 'cat /etc/cpz/platform.conf' $ROOTIMG | grep -q 'display.panel'"
+need "hdmi capability"       "debugfs -R 'cat /etc/cpz/platform.conf' $ROOTIMG | grep -q 'display.hdmi'"
 
 log "no UI or display stack"
 absent "no cpz-session"        "debugfs -R 'stat /usr/local/bin/cpz-session' $ROOTIMG"

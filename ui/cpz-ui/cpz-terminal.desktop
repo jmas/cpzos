@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Name[uk]=Термінал
+Comment=Open a shell in a new tab
+Comment[uk]=Відкрити оболонку в новій вкладці
+Exec=bash -l
+Terminal=true
+Categories=System;TerminalEmulator;
+Keywords=shell;console;tab;

@@ -204,12 +204,15 @@ The UI answers input before the user can perceive a delay.
 1. Measure the confirmed budgets on hardware and change them only with
    evidence.
 2. Create the PGP key, choose the repository URL and add the CI signing job.
+   **Done.**
 3. Write platform contract v1: capabilities, session entry point, paths and
-   version metadata.
-4. Define the UI app contract: manifest, launch, status/notifications, theme
-   tokens, locale catalogs and package naming.
-5. Choose the terminal emulator and the session stack.
+   version metadata. **Done:** `docs/PLATFORM-CONTRACT.md`.
+4. Define the UI app contract: desktop entries, launch, status/notifications,
+   localization and package naming. **Done:** `docs/APP-CONTRACT.md`.
+5. Choose the terminal emulator and the session stack. **Done:** cage + foot +
+   tmux; `docs/UI-DECISIONS.md`.
 6. Define the promotion/rollback checklist and how the current and previous
    releases are retained.
 7. Add the public key and the stable/beta repository configuration to the base
-   image in a new stage once the repository exists. **Done:** `scripts/35-ui-repo.sh`.
+   image in a new stage once the repository exists. **Done:**
+   `scripts/35-ui-repo.sh`.

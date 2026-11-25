@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Help
+Name[uk]=Довідка
+Comment=Keys and session help
+Comment[uk]=Клавіші та довідка сесії
+Exec=/usr/lib/cpz/help
+Terminal=true
+Categories=System;Documentation;
+Keywords=keys;shortcuts;manual;

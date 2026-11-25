@@ -1,0 +1,22 @@
+#!/bin/sh
+# j4-dmenu-desktop terminal adapter.
+#
+# For Terminal=true entries j4-dmenu-desktop invokes:
+#   cpz-term-launch -e /tmp/j4-dmenu-XXXXXX
+# The temporary script contains the entry command. Copy it into /run/cpz
+# before opening a tmux window, so the window does not race j4's cleanup.
+set -eu
+if [ "${1:-}" = "-e" ]; then
+    shift
+fi
+
+if [ "$#" -eq 1 ] && [ -f "$1" ]; then
+    copy=$(mktemp /run/cpz/launch.XXXXXX) || copy=$1
+    if [ "$copy" != "$1" ]; then
+        cp "$1" "$copy"
+        chmod 700 "$copy"
+    fi
+    exec tmux -L cpz new-window "$copy"
+fi
+
+exec tmux -L cpz new-window "$@"

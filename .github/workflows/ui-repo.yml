@@ -22,7 +22,9 @@ jobs:
   publish:
     name: Sign and publish the UI repository
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      CHANNEL: ${{ github.event.inputs.channel || (endsWith(github.ref_name, '-beta') && 'beta' || 'stable') }}
 
     steps:
       - name: Checkout
@@ -31,16 +33,20 @@ jobs:
       - name: Build the builder image
         run: docker build --platform linux/arm64 -t cpz-arch-builder docker
 
+      - name: Build the UI package
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/work" -w /work \
+            cpz-arch-builder ./ui/build.sh "$CHANNEL"
+
       - name: Sign the repository and upload the release
         env:
           GH_TOKEN: ${{ github.token }}
-          CHANNEL: ${{ github.event.inputs.channel || (endsWith(github.ref_name, '-beta') && 'beta' || 'stable') }}
           GPG_PRIVATE_KEY: ${{ secrets.CPZ_UI_GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.CPZ_UI_GPG_PASSPHRASE }}
           GPG_KEY_ID: ${{ secrets.CPZ_UI_GPG_KEY_ID }}
         run: |
           set -euo pipefail
-          mkdir -p "out/ui/packages/$CHANNEL"
           docker run --rm --platform linux/arm64 \
             -v "$PWD:/work" -w /work \
             -e CHANNEL -e OUT_DIR="build/ui-repo/$CHANNEL" \

@@ -34,6 +34,12 @@ rm -rf "$ROOT/tmp/dtoverlays"
 mkdir -p "$ROOT/tmp/dtoverlays"
 cp -a "$SRC/modules" "$ROOT/tmp/dtoverlays/"
 
+# Free SPI0 chip select 0 for the panel. `dtparam=spi=on` creates spidev@0
+# and spidev@1; the vendor overlay places the panel at reg 0, and the SPI core
+# keeps the first device on that chip select, so the panel never probes. This
+# is hardware enablement, not display policy; the UI stack loads the modules.
+install -m 0644 src/cpz-spi.dts "$ROOT/tmp/cpz-spi.dts"
+
 # CardputerZero carries the board overlay (keypad, audio, PMIC, battery gauge,
 # IMU rails). The sub-directories build the individual drivers. Display
 # bring-up is deliberately not configured here: the drivers stay available for
@@ -63,8 +69,12 @@ find "$ROOT/tmp/dtoverlays/modules" -maxdepth 2 -name '*.rules' \
     cp "$ROOT/tmp/dtoverlays/modules/tca8418-1.0/tca8418_keypad_m5stack_keymap.map" \
        "$ROOT/usr/share/keymaps/"
 
+log "building cpz-spi.dtbo"
+in_root "dtc -@ -I dts -O dtb -o /boot/overlays/cpz-spi.dtbo /tmp/cpz-spi.dts"
+[ -s "$ROOT/boot/overlays/cpz-spi.dtbo" ] || die "cpz-spi.dtbo is empty"
+
 in_root "depmod -a $KVER"
-rm -rf "$ROOT/tmp/dtoverlays"
+rm -rf "$ROOT/tmp/dtoverlays" "$ROOT/tmp/cpz-spi.dts"
 
 # --- sanity ----------------------------------------------------------------
 [ -f "$ROOT/boot/overlays/cardputerzero-$BOARD-overlay.dtbo" ] || \

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Transient CPZ notification in the tmux status line.
+exec tmux -L cpz display-message -d 3000 "$*"

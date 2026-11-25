@@ -1,0 +1,10 @@
+#!/bin/sh
+# Desktop-entry launcher inside a tmux popup.
+#
+# j4-dmenu-desktop reads the XDG desktop entries and launches the chosen one;
+# fzf is its dmenu-like selector. Terminal=true entries are handed to
+# cpz-term-launch, which opens a tmux window instead of a new compositor window.
+set -eu
+exec j4-dmenu-desktop \
+    --dmenu="fzf --no-sort --prompt='> '" \
+    --term=/usr/lib/cpz/term-launch

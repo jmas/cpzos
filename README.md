@@ -1,9 +1,9 @@
 # cpz-arch
 
 A minimal Arch Linux ARM base for the M5Stack **Cardputer Zero** (CM0). It
-contains the kernel, firmware, hardware drivers, networking and a login path —
-and deliberately no display or session layer. It exists so a new stack can be
-built on a clean system instead of on top of the old one.
+contains the kernel, firmware, hardware drivers, display enablement, networking
+and a login path — and deliberately no UI: no compositor, terminal session or
+application layer. The UI ships as a separate pacman package set.
 
 ## What boots
 
@@ -23,26 +23,29 @@ splash or application framework. The kernel framebuffer console is mapped off
 
 - Arch Linux ARM `base`, `linux-rpi`, `raspberrypi-bootloader`.
 - The Cardputer Zero vendor kernel modules and device-tree overlays (keypad,
-  expander, audio codec, battery gauge, IMU). They are installed and
-  available; none of them is loaded as a display stack.
+  expander, audio codec, battery gauge, IMU, panel and vc4/HDMI). The hardware
+  paths are enabled; no userspace stack is loaded.
 - A login user `cpz` in `wheel`, `input`, `video`, `audio`, `gpio`, `spi`,
   `i2c`. `root` is locked; `sudo` uses the normal wheel rule.
+- `/etc/cpz/platform.conf` with the platform and contract version and the
+  hardware capability list.
 - `systemd-networkd` + `systemd-resolved` over wired Ethernet and `sshd` when
   `ENABLE_SSH=1`.
 - A 15-second hardware watchdog, an in-memory journal and no initramfs.
 
 ## What is deliberately absent
 
-- No `cpz-*` binaries, manifests, icons, themes, fonts or TUI apps.
-- No DRM/HDMI/panel selection, backlight control or `/run/cpz` state.
-- No `vc4`/HDMI overlay, no panel SPI overlay and no panel module autoload.
+- No compositor, terminal emulator, window manager, tmux or application
+  framework. The UI is a separate pacman package set.
+- No `cpz-*` UI binaries, manifests, icons, themes, fonts or TUI apps.
+- No `/run/cpz` UI state in the base.
 - No boot splash; the FAT boot partition holds firmware, kernel, device tree
   and overlays only.
 - No `libdrm`, `libtsm`, `freetype2`, `libxkbcommon`, `libevdev`, tmux or
-  font packages.
+  font packages in the base.
 
-The display drivers remain in `/boot/overlays` and
-`/usr/lib/modules/<kernel>/extra` for whichever stack is added next.
+The display drivers and overlays are installed and enabled; the UI package
+loads the modules and chooses the output.
 
 ## Access
 
@@ -72,6 +75,15 @@ is reserved for later. The platform also ships an inert
 `cpz-ui@.service` template: the UI package provides `/usr/lib/cpz/session` and
 enables `cpz-ui@tty1.service`, which uses `PAMName=login` to create the logind
 session and seat.
+
+Install the UI layer on a running system with:
+
+```sh
+sudo pacman -Sy cpz-ui
+```
+
+The package pulls `cage`, `foot`, `tmux`, the launcher and the status helper,
+enables `cpz-tmux.service` and starts `cpz-ui@tty1.service`.
 
 ## Build
 
@@ -115,6 +127,8 @@ keys/                  public UI signing key
 .github/workflows/     base verify and UI repository publishing
 docs/UI-QUALITIES.md   UI quality requirements
 docs/UI-DECISIONS.md   session, app, launcher and status decisions
+docs/PLATFORM-CONTRACT.md  platform/UI boundary and session entry
+docs/APP-CONTRACT.md   desktop-entry app model and launch rules
 ```
 
 ## Status and risks

@@ -1,0 +1,85 @@
+#!/bin/sh
+# CPZ UI session entry point.
+#
+# systemd starts this from cpz-ui@tty1.service with PAMName=login, so the
+# process already has a logind session, seat and the cpz user. This script
+# selects one DRM card, starts the persistent tmux server and hands the display
+# to cage.
+set -eu
+
+CONF=/etc/cpz/platform.conf
+log() { printf 'cpz-ui: %s\n' "$*" >&2; }
+
+[ -r "$CONF" ] || { log "missing $CONF"; exit 1; }
+# shellcheck disable=SC1090
+. "$CONF"
+[ "${platform:-0}" -ge 1 ] 2>/dev/null || { log "unsupported platform"; exit 1; }
+[ "${contract:-0}" -ge 1 ] 2>/dev/null || { log "unsupported contract"; exit 1; }
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export XDG_SESSION_TYPE=wayland
+export XDG_CURRENT_DESKTOP=CPZ
+export MOZ_ENABLE_WAYLAND=1
+export TMUX_TMPDIR=/run/cpz
+export WLR_RENDERER=pixman
+export WLR_DRM_NO_MODIFIERS=1
+export XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-us,ua}"
+export XKB_DEFAULT_OPTIONS="${XKB_DEFAULT_OPTIONS:-grp:alt_shift_toggle}"
+
+find_card() {
+    connected() {
+        [ -r "$1/status" ] && [ "$(cat "$1/status")" = connected ]
+    }
+    # HDMI first: a connected monitor is the larger surface.
+    for c in /sys/class/drm/card*-HDMI-A-*; do
+        [ -e "$c" ] || continue
+        if connected "$c"; then
+            basename "$c" | cut -d- -f1
+            return 0
+        fi
+    done
+    for c in /sys/class/drm/card*-SPI-*; do
+        [ -e "$c" ] || continue
+        if connected "$c"; then
+            basename "$c" | cut -d- -f1
+            return 0
+        fi
+    done
+    for c in /sys/class/drm/card*-*; do
+        [ -e "$c" ] || continue
+        if connected "$c"; then
+            basename "$c" | cut -d- -f1
+            return 0
+        fi
+    done
+    return 1
+}
+
+# The panel card can appear a few seconds after the module load.
+CARD=""
+i=0
+while [ "$i" -lt 50 ]; do
+    CARD=$(find_card) && break
+    i=$((i + 1))
+    sleep 0.2
+done
+[ -n "$CARD" ] || { log "no connected DRM output"; exit 1; }
+
+export WLR_DRM_DEVICES="/dev/dri/$CARD"
+log "using $WLR_DRM_DEVICES"
+
+case "$CARD" in
+    *SPI*) sudo -n /usr/lib/cpz/backlight on >/dev/null 2>&1 || true ;;
+    *)     sudo -n /usr/lib/cpz/backlight off >/dev/null 2>&1 || true ;;
+esac
+
+# tmux is a separate service and must already be running.
+if ! tmux -L cpz has-session -t main 2>/dev/null; then
+    log "tmux server is not running"
+    exit 1
+fi
+tmux -L cpz set-option -g status-right "" >/dev/null 2>&1 || true
+tmux -L cpz run-shell -b /usr/lib/cpz/status >/dev/null 2>&1 || true
+
+exec cage -m last -s -d -- \
+    foot -c /etc/cpz/foot.ini -- /usr/lib/cpz/attach

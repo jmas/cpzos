@@ -1,0 +1,20 @@
+[Unit]
+Description=CPZ tmux server
+After=systemd-tmpfiles-setup.service user-runtime-dir@1000.service
+Wants=user-runtime-dir@1000.service
+Before=cpz-ui@tty1.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=cpz
+Group=cpz
+Environment=HOME=/home/cpz
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=TMUX_TMPDIR=/run/cpz
+ExecStart=/usr/lib/cpz/tmux-start
+ExecStop=/usr/bin/tmux -L cpz kill-server
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

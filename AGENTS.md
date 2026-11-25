@@ -9,12 +9,13 @@ and ask the product owner.
 1. **A base distribution.** The image contains the kernel, firmware, hardware
    drivers, networking and a login path. A display or session layer is added
    separately.
-2. **No display policy.** Do not add DRM, HDMI, panel selection, backlight,
-   splash, framebuffer-console or module-loading decisions to this base. A new
-   stack is added as a separate stage later.
-3. **Drivers stay available, not enabled.** Vendor modules and overlays are
-   installed so a future stack can use them. Do not autoload or configure them
-   in the base.
+2. **Hardware enablement only.** The base may enable the DRM/HDMI/panel
+   overlays so a UI package can use them. Do not add a compositor, terminal,
+   backlight control, splash or display module-loading policy to the base;
+   those belong to the UI package.
+3. **Drivers are available; the UI loads them.** Vendor modules and overlays
+   are installed, and the hardware paths are enabled. The base does not
+   autoload display modules; the UI package does.
 4. **One build path.** `make image` and `make verify` are the only supported
    entry points. Do not add host-root or loop-device requirements.
 5. **No initramfs.** The kernel and ext4 root must stay directly bootable from
@@ -31,9 +32,9 @@ and ask the product owner.
    empty directory; do not reintroduce a distro tarball as the image source.
 9. **Boot files are generated.** `scripts/30-configure.sh` owns
    `/boot/config.txt` and `/boot/cmdline.txt`; edit `config.sh`, not the image.
-10. **Hardware description only.** The board overlay describes the keypad,
-    PMIC, battery gauge, audio codec and IMU. It must not become a display
-    configuration.
+10. **Hardware description.** The board overlay describes the keypad, PMIC,
+    battery gauge, audio codec and IMU. Display enablement is limited to the
+    documented `vc4`/`cpz-spi` overlays; it is not a UI configuration.
 11. **One kernel.** `linux-rpi` is pinned by the package set. Do not add a
     second kernel or a package that replaces the boot firmware.
 12. **Identity is explicit.** Hostname, user, locale and timezone come from

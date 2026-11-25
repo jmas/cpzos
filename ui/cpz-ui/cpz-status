@@ -1,0 +1,59 @@
+#!/bin/sh
+# CPZ status: one tmux status row, updated only when a value changes.
+#
+# A 20-second loop keeps idle wakeups at three per minute, within the UI
+# budget. Battery and network are read from sysfs; the clock changes once a
+# minute. The helper exits with the tmux session.
+set -eu
+
+RUNDIR=/run/cpz
+PIDFILE="$RUNDIR/status.pid"
+[ -d "$RUNDIR" ] || exit 0
+
+if [ -f "$PIDFILE" ]; then
+    pid=$(cat "$PIDFILE" 2>/dev/null || true)
+    if [ -n "${pid:-}" ] && kill -0 "$pid" 2>/dev/null; then
+        exit 0
+    fi
+fi
+printf '%s\n' "$$" > "$PIDFILE"
+trap 'rm -f "$PIDFILE"' EXIT INT TERM
+
+last=""
+
+while tmux -L cpz has-session -t main 2>/dev/null; do
+    battery=""
+    for f in /sys/class/power_supply/*/capacity; do
+        [ -r "$f" ] || continue
+        battery=$(cat "$f")
+        break
+    done
+
+    network=down
+    for d in /sys/class/net/*; do
+        [ -e "$d/operstate" ] || continue
+        [ "$(basename "$d")" = lo ] && continue
+        if [ "$(cat "$d/operstate" 2>/dev/null)" = up ]; then
+            network=up
+            break
+        fi
+    done
+
+    clock=$(date +%H:%M)
+    right=""
+    if [ -n "$battery" ]; then
+        right=" BAT ${battery}%"
+    fi
+    if [ "$network" = up ]; then
+        right="$right NET"
+    fi
+    right="$right $clock"
+
+    if [ "$right" != "$last" ]; then
+        tmux -L cpz set-option -g status-right "$right" >/dev/null 2>&1 || true
+        printf 'battery=%s\nnetwork=%s\nclock=%s\n' \
+            "${battery:-}" "$network" "$clock" > "$RUNDIR/status"
+        last="$right"
+    fi
+    sleep 20
+done

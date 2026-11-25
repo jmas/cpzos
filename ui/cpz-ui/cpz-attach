@@ -1,0 +1,14 @@
+#!/bin/sh
+# Publish the compositor environment to the tmux server, then attach.
+# The server starts before cage, so it cannot know WAYLAND_DISPLAY/DISPLAY.
+set -eu
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    tmux -L cpz set-environment -g WAYLAND_DISPLAY "$WAYLAND_DISPLAY"
+fi
+if [ -n "${DISPLAY:-}" ]; then
+    tmux -L cpz set-environment -g DISPLAY "$DISPLAY"
+fi
+if [ -n "${XAUTHORITY:-}" ]; then
+    tmux -L cpz set-environment -g XAUTHORITY "$XAUTHORITY"
+fi
+exec tmux -L cpz attach -t main
