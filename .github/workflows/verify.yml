@@ -34,6 +34,11 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     needs: verify
+    # The UI image installs the signed apps repository and bakes its catalog.
+    # Set the repository variable after the first apps-stable release.
+    if: vars.CPZ_APPS_REPO != ''
+    env:
+      UI_APPS_REPO_STABLE: ${{ vars.CPZ_APPS_REPO }}
 
     steps:
       - name: Checkout

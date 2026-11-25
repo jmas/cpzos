@@ -84,8 +84,27 @@ Install the UI layer on a running system with:
 sudo pacman -Sy cpz-ui
 ```
 
-The package pulls `cage`, `foot`, `tmux`, the launcher and the status helper,
-enables `cpz-tmux.service` and starts `cpz-ui@tty1.service`.
+The package pulls `cage`, `foot`, `tmux`, the status helper and
+`cpz-system-apps`, enables `cpz-tmux.service` and starts
+`cpz-ui@tty1.service`.
+
+## Applications
+
+Home, Apps Manager and Settings ship from the separate
+[`cpzos-apps`](https://github.com/jmas/cpzos-apps) repository as
+`cpz-system-apps`; `cpz-ui` depends on it. The UI image bakes the current app
+catalog, and Apps Manager refreshes it in the background. Point the build at
+the signed apps repository:
+
+```sh
+make verify UI_TEST=1 \
+  UI_APPS_REPO_STABLE=https://github.com/jmas/cpzos/releases/download/apps-stable
+```
+
+`UI_APPS_CATALOG_VERSION` and `UI_APPS_CATALOG_SHA256` pin the catalog for a
+release build. `UI_APPS_SIGLEVEL` defaults to `Required DatabaseRequired`; a
+local unsigned test repository may override it. See
+[docs/APP-PLATFORM.md](docs/APP-PLATFORM.md).
 
 ## Build
 

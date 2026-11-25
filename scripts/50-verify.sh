@@ -105,6 +105,21 @@ if [ "$UI_TEST" = "1" ]; then
     need "ui session enabled"  "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q 'cpz-ui@tty1'"
     need "ui desktop entry"    "debugfs -R 'stat /usr/share/applications/cpz-terminal.desktop' $ROOTIMG | grep -q Inode"
     need "ui help entry"       "debugfs -R 'stat /usr/share/applications/cpz-help.desktop' $ROOTIMG | grep -q Inode"
+    need_pkg cpz-system-apps
+    need_pkg cpz-apps-catalog
+    need "cpz-app binary"      "debugfs -R 'stat /usr/bin/cpz-app' $ROOTIMG | grep -q Inode"
+    need "app helper"          "debugfs -R 'stat /usr/lib/cpz/app-install' $ROOTIMG | grep -q Inode"
+    need "apps sudoers"        "debugfs -R 'cat /etc/sudoers.d/20-cpz-apps' $ROOTIMG | grep -q '/usr/lib/cpz/app-install'"
+    need "protected packages"  "debugfs -R 'cat /usr/share/cpz/protected-packages' $ROOTIMG | grep -q '^cpz-system-apps$'"
+    need "apps tmpfiles"       "debugfs -R 'cat /usr/lib/tmpfiles.d/cpz-apps.conf' $ROOTIMG | grep -q '/var/lib/cpz'"
+    need "home entry"          "debugfs -R 'stat /usr/share/applications/cpz-app-home.desktop' $ROOTIMG | grep -q Inode"
+    need "apps manager entry"  "debugfs -R 'stat /usr/share/applications/cpz-apps-manager.desktop' $ROOTIMG | grep -q Inode"
+    need "settings entry"      "debugfs -R 'stat /usr/share/applications/cpz-settings.desktop' $ROOTIMG | grep -q Inode"
+    need "app catalog"         "debugfs -R 'stat /usr/share/cpz/catalog/apps.json' $ROOTIMG | grep -q Inode"
+    need "app catalog schema"  "debugfs -R 'cat /usr/share/cpz/catalog/apps.json' $ROOTIMG | grep -q '\"version\": 1'"
+    need "catalog data only"   "pacman --root $ROOT -Qi cpz-apps-catalog | grep -q '^Depends On.*: None'"
+    need "home default command" "debugfs -R 'cat /etc/cpz/tmux.conf' $ROOTIMG | grep -q 'default-command /usr/bin/cpz-app home'"
+    need "apps popup binding"  "debugfs -R 'cat /etc/cpz/tmux.conf' $ROOTIMG | grep -q '/usr/bin/cpz-app apps'"
     need "ui sudoers"          "debugfs -R 'stat /etc/sudoers.d/20-cpz-ui' $ROOTIMG | grep -q Inode"
     need "ui modules"          "debugfs -R 'cat /usr/lib/modules-load.d/cpz-ui.conf' $ROOTIMG | grep -q panel-mipi-dbi-m"
     need "ui tmpfiles"         "debugfs -R 'cat /usr/lib/tmpfiles.d/cpz-ui.conf' $ROOTIMG | grep -q '/run/cpz'"
@@ -117,6 +132,8 @@ else
     absent "no cpz-launcher"       "debugfs -R 'stat /usr/local/bin/cpz-launcher' $ROOTIMG"
     absent "no cpz-settings"       "debugfs -R 'stat /usr/local/bin/cpz-settings' $ROOTIMG"
     absent "no cpz-help"           "debugfs -R 'stat /usr/local/bin/cpz-help' $ROOTIMG"
+    absent "no cpz-app"            "debugfs -R 'stat /usr/bin/cpz-app' $ROOTIMG"
+    absent "no app catalog"        "debugfs -R 'stat /usr/share/cpz/catalog/apps.json' $ROOTIMG"
     absent "no cpz-ctl"            "debugfs -R 'stat /usr/local/bin/cpz-ctl' $ROOTIMG"
     absent "no providers"          "debugfs -R 'stat /usr/local/bin/cpz-battery' $ROOTIMG"
     absent "no backlight helper"   "debugfs -R 'stat /usr/local/bin/cpz-backlight' $ROOTIMG"
@@ -157,6 +174,9 @@ if [ "$ENABLE_SSH" = "1" ]; then
     need "usb ethernet match"   "debugfs -R 'cat /etc/systemd/network/20-wired.network' $ROOTIMG | grep -q 'usb\*'"
 fi
 
+log "ui language"
+need "ui language"             "debugfs -R 'cat /etc/cpz/language' $ROOTIMG | grep -Eq '^(en|de|es|fr|it|ja|pl|pt|tr|uk|zh)$'"
+
 log "base configuration"
 need "systemd watchdog config" "debugfs -R 'cat /etc/systemd/system.conf.d/10-cpz-watchdog.conf' $ROOTIMG | grep -q 'RuntimeWatchdogSec=15s'"
 need "volatile journal"        "debugfs -R 'cat /etc/systemd/journald.conf.d/10-cpz.conf' $ROOTIMG | grep -q 'Storage=volatile'"
@@ -174,6 +194,12 @@ need "ui stable config"        "debugfs -R 'cat /etc/pacman.d/cpz-ui.conf' $ROOT
 need "ui beta config"          "debugfs -R 'cat /etc/pacman.d/cpz-ui-beta.conf' $ROOTIMG | grep -q 'releases/download/ui-beta'"
 need "ui repo requires signatures" "debugfs -R 'cat /etc/pacman.d/cpz-ui.conf' $ROOTIMG | grep -q 'DatabaseRequired'"
 need "pacman includes ui repo" "debugfs -R 'cat /etc/pacman.conf' $ROOTIMG | grep -q 'Include = /etc/pacman.d/cpz-ui.conf'"
+if [ -n "$UI_APPS_REPO_STABLE" ]; then
+    need "apps repo config"    "debugfs -R 'cat /etc/pacman.d/cpz-apps.conf' $ROOTIMG | grep -q '^\[cpz-apps\]$'"
+    need "pacman includes apps repo" "debugfs -R 'cat /etc/pacman.conf' $ROOTIMG | grep -q 'Include = /etc/pacman.d/cpz-apps.conf'"
+else
+    absent "no apps repo config" "debugfs -R 'stat /etc/pacman.d/cpz-apps.conf' $ROOTIMG"
+fi
 
 log "packages"
 need_pkg linux-rpi

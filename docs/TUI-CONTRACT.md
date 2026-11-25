@@ -13,8 +13,8 @@ this document is corrected. Do not work around the keyboard with Fn chords.
 
 ## 1. Scope and stack
 
-- One toolkit for every CPZ TUI: Go + Bubble Tea v2 + Lip Gloss, wrapped in the
-  shared `internal/tui` kit of the apps repository.
+- One toolkit for every CPZ TUI: Go 1.24 + Bubble Tea 1.3 + Lip Gloss,
+  wrapped in the shared `internal/tui` kit of `cpzos-apps`.
 - Ship one static aarch64 binary (the `cpz-app` multicall binary is preferred:
   `cpz-app home`, `cpz-app apps`, `cpz-app settings`).
 - No daemon, no background process, no shell, no network on startup. Process

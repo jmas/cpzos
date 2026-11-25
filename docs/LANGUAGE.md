@@ -58,12 +58,15 @@ tr.N("apps.count", n)        // plural bucket via x/text
 - No app parses the files itself and no app hardcodes a string.
 - The resolver is pure: reads at most two small files, no subprocess, no
   network, no D-Bus. It fits the 100 ms first-frame budget.
-- `internal/i18n` is part of `cpz-system-apps`; third-party apps may copy it
-  or reimplement the same precedence and file names.
+- `internal/i18n` is part of `cpz-system-apps`; a contributed app may import
+  the module (it lives in the same repository) or reimplement the same
+  precedence and file names.
 
 ## 4. Catalog format
 
-Per app, `locales/<code>.json`, embedded into the binary:
+Per binary, `locales/<code>.json`, embedded into the binary. The three system
+apps share one set (`internal/i18n/locales/`); a separate app package keeps its
+own:
 
 ```json
 {

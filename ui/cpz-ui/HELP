@@ -3,9 +3,9 @@ CPZ UI
 
 Menu and tabs
 -------------
-  Alt+O          Open the application menu
+  Alt+O          Open Apps Manager
   Alt+H          Help
-  Alt+T          New tab
+  Alt+T          New tab (Home)
   Alt+W          Close the current tab
   Alt+R          Rename the current tab
   Alt+L          List open tabs
@@ -45,6 +45,7 @@ Session
   There is one tmux session. Session switching, renaming and creation are
   disabled. C-a is the advanced tmux prefix fallback; daily actions use Alt.
   The tmux server survives a compositor restart, a terminal restart and an
-  output switch. Closing a foreground application returns to the same tab.
+  output switch. A new tab starts Home; choosing an app replaces the tab.
+  Closing the last tab recreates a Home tab instead of taking the UI down.
 
   Recovery is available over the serial console and SSH.

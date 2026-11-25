@@ -1,8 +1,8 @@
 # Platform contract v1
 
-Status: agreed on the `ui/qualities` branch. This document is normative for the
-boundary between the base image and the UI package set. The UI app contract is
-separate; see [APP-CONTRACT.md](APP-CONTRACT.md).
+Status: agreed on the `design/app-platform` branch. This document is normative
+for the boundary between the base image and the UI package set. The UI app
+contract is separate; see [APP-CONTRACT.md](APP-CONTRACT.md).
 
 ## 1. Version file
 
@@ -17,6 +17,10 @@ caps=display.panel,display.hdmi,input.matrix,audio,battery,network,storage,seria
 - `platform` identifies the platform image generation.
 - `contract` is the compatibility version of the interfaces below.
 - `caps` lists the hardware capabilities that are present.
+
+The platform also writes `/etc/cpz/language`: one UI language code from
+[LANGUAGE.md](LANGUAGE.md). The base writes the system default; a user file in
+`~/.config/cpz/language` overrides it.
 
 The UI reads the file at session start. It must refuse to start when
 `platform` is below its minimum or `contract` is outside its supported range,
@@ -69,6 +73,10 @@ display modules; the base does not autoload them.
 | Path | Owner | Purpose |
 | --- | --- | --- |
 | `/etc/cpz/platform.conf` | root | platform version and capabilities |
+| `/etc/cpz/language` | root | default UI language code |
+| `/usr/share/cpz/protected-packages` | root | packages the app helper never removes |
+| `/var/lib/cpz` | root | app helper state (catalog refresh rate limit) |
+| `/etc/pacman.d/cpz-apps.conf` | root | signed application repository |
 | `/etc/cpz/foot.ini`, `/etc/cpz/tmux.conf` | root | UI defaults, package-owned |
 | `/run/cpz` | `cpz` | tmux socket, status cache, launch adapters |
 | `/usr/lib/cpz` | root | UI entry point and helpers |
@@ -86,8 +94,12 @@ The base never writes user state into `/etc` or `/var`.
 - The UI declares a supported `contract` range; the platform refuses an
   incompatible UI and reports why.
 - The web of package dependencies covers the UI runtime (`cage`, `foot`,
-  `tmux`, `fzf`, `j4-dmenu-desktop`, fonts). The platform check covers the
-  contract version and capabilities.
+  `tmux`, fonts) and the system apps (`cpz-system-apps`, which depends on
+  `cpz-apps-catalog`). The platform check covers the contract version and
+  capabilities.
+- Applications come from the separate `[cpz-apps]` repository described in
+  [APP-PLATFORM.md](APP-PLATFORM.md). The base ships the repository config and
+  the signing key; the UI image bakes the current catalog.
 - User settings and session data survive UI updates.
 
 ## 6. Platform smoke test
@@ -101,6 +113,7 @@ A platform is acceptable for the UI when all of these pass:
 4. `/dev/input/event*` is readable by `cpz`.
 5. `/dev/snd/*` is readable by `cpz` when audio is present.
 6. Serial getty and SSH still start when the UI is absent or stopped.
+7. `/etc/cpz/language` contains a supported code.
 
 ## 7. Out of scope
 

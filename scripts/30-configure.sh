@@ -41,6 +41,13 @@ contract=1
 caps=display.panel,display.hdmi,input.matrix,audio,battery,network,storage,serial
 EOF
 
+log "writing the UI language"
+case "$UI_LANGUAGE" in
+    en|de|es|fr|it|ja|pl|pt|tr|uk|zh) ;;
+    *) die "unsupported UI_LANGUAGE: $UI_LANGUAGE" ;;
+esac
+printf '%s\n' "$UI_LANGUAGE" > "$ROOT/etc/cpz/language"
+
 # --- groups and the login user ---------------------------------------------
 # gpio/spi/i2c do not exist in a stock Arch install; the vendor udev rules and
 # any future tooling expect them.

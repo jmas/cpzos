@@ -13,6 +13,10 @@ VOLUME        ?= cpz-arch-build
 RUN = docker run --rm --platform linux/arm64 \
 	-v "$(PWD):/work" -v "$(VOLUME):/build" \
 	-e BUILD=/build -e OUT_DIR=/work/out -e UI_TEST="$(UI_TEST)" \
+	-e UI_APPS_REPO_STABLE="$(UI_APPS_REPO_STABLE)" \
+	-e UI_APPS_SIGLEVEL="$(UI_APPS_SIGLEVEL)" \
+	-e UI_APPS_CATALOG_VERSION="$(UI_APPS_CATALOG_VERSION)" \
+	-e UI_APPS_CATALOG_SHA256="$(UI_APPS_CATALOG_SHA256)" \
 	-w /work $(BUILDER_IMAGE)
 
 ifeq ($(UI_TEST),1)
@@ -60,6 +64,10 @@ shell: builder
 	docker run --rm -it --platform linux/arm64 \
 	  -v "$(PWD):/work" -v "$(VOLUME):/build" \
 	  -e BUILD=/build -e OUT_DIR=/work/out -e UI_TEST="$(UI_TEST)" \
+	  -e UI_APPS_REPO_STABLE="$(UI_APPS_REPO_STABLE)" \
+	  -e UI_APPS_SIGLEVEL="$(UI_APPS_SIGLEVEL)" \
+	  -e UI_APPS_CATALOG_VERSION="$(UI_APPS_CATALOG_VERSION)" \
+	  -e UI_APPS_CATALOG_SHA256="$(UI_APPS_CATALOG_SHA256)" \
 	  -w /work $(BUILDER_IMAGE) bash
 
 clean:

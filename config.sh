@@ -43,6 +43,10 @@ ENABLE_HDMI="1"
 # login path while the image has no display stack.
 ENABLE_SSH="1"
 
+# UI language for console apps (see docs/LANGUAGE.md). Written to
+# /etc/cpz/language; a user can override it in ~/.config/cpz/language.
+UI_LANGUAGE="en"
+
 # ---------------------------------------------------------------------------
 # Identity
 # ---------------------------------------------------------------------------
@@ -93,6 +97,19 @@ UI_REPO_STABLE='https://github.com/jmas/cpzos/releases/download/ui-stable'
 UI_REPO_BETA='https://github.com/jmas/cpzos/releases/download/ui-beta'
 UI_REPO_KEY="keys/cpz-ui-signing.asc"
 UI_REPO_KEY_FPR="C7DBEDC1B4855ACB0570C7D229C04B0663395458"
+
+# App repository (Apps Manager and its catalog). Empty until the first signed
+# apps release is published: a Server that points at a missing release makes
+# every `pacman -Sy` fail. The UI test image requires it; the clean base only
+# stores the configuration.
+UI_APPS_REPO_STABLE="${UI_APPS_REPO_STABLE:-}"
+UI_APPS_REPO_BETA=""
+UI_APPS_SIGLEVEL="${UI_APPS_SIGLEVEL:-Required DatabaseRequired}"
+
+# Optional release pin for the catalog package. Empty takes the current
+# repository version; release builds set both and fail on a mismatch.
+UI_APPS_CATALOG_VERSION="${UI_APPS_CATALOG_VERSION:-}"
+UI_APPS_CATALOG_SHA256="${UI_APPS_CATALOG_SHA256:-}"
 
 # Runtime dependencies installed into the UI test image. The UI package itself
 # comes from the locally built out/ui/packages/stable directory.

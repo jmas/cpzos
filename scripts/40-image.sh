@@ -90,6 +90,10 @@ kernel:      $(kernel_version)
 login:       $USER_NAME / $USER_PASS
 EOF
 
+if [ -f "$BUILD/apps-catalog.txt" ]; then
+    cat "$BUILD/apps-catalog.txt" >> "$BUILD/$NAME.txt"
+fi
+
 # The build volume is not visible on the host; export the artifacts.
 mkdir -p "${OUT_DIR:?}"
 cp -f "$IMG" "$IMG.zst" "$BUILD/$NAME.txt" "${OUT_DIR:?}/"

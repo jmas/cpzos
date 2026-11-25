@@ -101,10 +101,10 @@ Alternatives and why they are not the default:
 - A custom launcher is unnecessary unless `j4-dmenu-desktop` fails the
   argument or tab test.
 
-**Pending replacement (agreed, not implemented):** Apps Manager and the Home
-screen replace the `fzf` picker for daily use. `Alt+O` will open
-`cpz-app apps`; a new tab will run `cpz-app home` instead of a bare shell.
-`j4-dmenu-desktop`, `fzf` and `cpz-launcher` stay until Apps Manager passes the
+**Replacement implemented:** Apps Manager and Home replace the `fzf` picker
+for daily use. `Alt+O` opens `cpz-app apps`; a new tab runs `cpz-app home` and
+Home replaces its window with the chosen app. `j4-dmenu-desktop`, `fzf` and
+`cpz-launcher` stay packaged as a fallback until Apps Manager passes the
 hardware checklist. See [APP-PLATFORM.md](APP-PLATFORM.md) and
 [TUI-CONTRACT.md](TUI-CONTRACT.md).
 

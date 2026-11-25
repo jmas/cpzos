@@ -2,8 +2,9 @@
 
 Status: agreed on `design/app-platform` (2026-11-26). The repository name, the
 stack, Home semantics, the update policy and the product names are decided.
-Implementation has not started; the existing launcher (`fzf` +
-`j4-dmenu-desktop`) and the two desktop entries are the current state.
+An MVP is implemented in `jmas/cpzos-apps` (Go 1.24, Bubble Tea 1.3): the three
+system apps, the catalog generator, the helper and the packaging. Signing,
+publishing and device validation are still pending.
 
 Decided: `jmas/cpzos-apps` with curated pull requests; Go + Bubble Tea; Home
 replaces the tab with the chosen app; installs run a full `pacman -Syu`; the
@@ -78,15 +79,22 @@ install/remove unit and shows the entries it provides in the confirmation.
 ```text
 cpzos-apps/
   go.mod                       module cpz.apps, Go 1.24
-  internal/tui/                shared kit: theme, list, detail, search,
-                               dialog, keymap (us/ua), status line
-  internal/catalog/            catalog types, loader, merge with installed
-  internal/apps/               XDG discovery, desktop parsing, ownership
-  internal/pacman/             read-only queries and helper client
+  internal/tui/                shared kit: theme, list, screen, input,
+                               confirm, keymap (us/ua), status line
+  internal/i18n/               language resolver and en/uk catalogs
+  internal/catalog/            catalog schema and loader
+  internal/apps/               XDG discovery, desktop parsing, merge
+  internal/pacman/             read-only queries and the helper client
+  internal/launch/             argv expansion, tmux tab, window replacement
+  internal/home/               Home (new-tab launcher)
+  internal/store/              Apps Manager
+  internal/settings/           Settings and About
+  internal/about/              system facts
   cmd/cpz-app/                 multicall entry: home | apps | settings
-  system/                      the three system apps and their desktop files
+  system/                      desktop entries, helper, sudoers, protected list
   apps/<name>/                 one directory per application package
-  packaging/                   PKGBUILD helpers, catalog generator
+  packaging/                   PKGBUILDs for the system apps and the catalog
+  tools/                       catalog generator and local repository builder
   .github/workflows/           build, test, catalog, sign, publish
 ```
 
@@ -190,7 +198,7 @@ CI from the built packages, so it cannot drift from the desktop entries:
   not an error dialog and not a retry loop.
 - Home does not refresh: it lists installed apps only.
 - Apps Manager serialises its own actions: if the user presses Install while
-  the refresh is still running, the store waits for it to finish and then
+  the refresh is still running, Apps Manager waits for it to finish and then
   starts the transaction. A foreign package operation that owns the lock is
   reported as `Another package operation is running; try again`.
 - `Install` refreshes the sync database itself, so a catalog that is a few
@@ -355,56 +363,48 @@ cpz-app settings about [--json]
 
 - `cpz-system-apps` and each app are versioned independently, like the UI.
 - `X-CPZ-Contract=1` is the app contract. Apps Manager hides entries whose
-  contract is newer than the running system apps and says why in the detail
-  screen.
+  contract is newer than the running system apps.
 - The catalog carries its own schema version. An unknown schema is ignored;
   Apps Manager falls back to the built-in list of system apps.
 - Rollback is `pacman -U` from the local cache, as with the UI. The catalog
   package is versioned with the repo and rolls back with it.
 
-## 12. What changes in this tree
+## 12. Implemented in this tree
 
-Not implemented on this branch, listed for the platform follow-up:
+- `config.sh`: `UI_LANGUAGE="en"`, `UI_APPS_REPO_STABLE`, `UI_APPS_SIGLEVEL`
+  and the optional `UI_APPS_CATALOG_VERSION` / `UI_APPS_CATALOG_SHA256` pins.
+- `scripts/30-configure.sh`: validates the language and writes
+  `/etc/cpz/language`.
+- `scripts/35-ui-repo.sh`: writes `/etc/pacman.d/cpz-apps.conf` and its
+  `Include` only when `UI_APPS_REPO_STABLE` is set, so a missing release never
+  breaks `pacman -Sy`.
+- `scripts/45-ui-test.sh`: requires the apps repository, installs
+  `cpz-system-apps` and `cpz-apps-catalog`, checks the pinned sha256, and
+  records the catalog version, hash and `generated` date in the build report.
+- `scripts/40-image.sh`: appends the catalog record to the image report.
+- `scripts/50-verify.sh`: asserts the language file, the apps repository
+  config, the system apps, the helper, the protected list, the catalog schema,
+  `depends=()`, the Home default command and the Apps Manager binding; the
+  base image asserts the app files are absent.
+- `ui/cpz-ui`: depends on `cpz-system-apps`; `Alt+O` opens Apps Manager;
+  `default-command` is Home. The `fzf` launcher stays packaged as a fallback
+  until Apps Manager passes the hardware checklist.
+- `docs/HARDWARE-TEST.md`: checklist updated for Home, Apps Manager, the
+  catalog and the language.
 
-1. `config.sh`: `UI_APPS_REPO_STABLE` (and beta, unused), `UI_LANGUAGE="en"`,
-   and the optional release pins `UI_APPS_CATALOG_VERSION` /
-   `UI_APPS_CATALOG_SHA256`.
-2. `scripts/30-configure.sh`: write `/etc/cpz/language` from `UI_LANGUAGE`.
-3. `scripts/35-ui-repo.sh`: write `/etc/pacman.d/cpz-apps.conf` and include it.
-   Ship this only after the apps release exists.
-4. `scripts/45-ui-test.sh`: install `cpz-system-apps` and `cpz-apps-catalog`
-   with the UI package set, verify the pinned sha256 when set, and record the
-   catalog version and date in the build report.
-5. `scripts/50-verify.sh`: in the UI image assert `cpz-apps-catalog` is
-   installed, `/usr/share/cpz/catalog/apps.json` parses with `"version": 1`,
-   and the package has no dependencies; in the base image assert both are
-   absent. Also assert the language file and the `cpz-ui` →
-   `cpz-system-apps` dependency.
-6. `ui/cpz-ui`: add the dependency; `Alt+O` opens `cpz-app apps` in the tmux
-   popup instead of the `fzf` list; `default-command` becomes Home; the
-   `cpz-launcher`/`fzf`/`j4-dmenu-desktop` path is removed once Apps Manager
-   passes hardware tests. `cpz-help` stays until the Help overlay covers its
-   content.
-7. `docs/HARDWARE-TEST.md`: add Apps Manager install/remove, Home launch,
-   system-app protection, `CPZ_LANG=uk`, background refresh and offline browse
-   to the checklist.
+## 13. Remaining work
 
-
-## 13. Implementation plan
-
-| Phase | Result |
+| Item | State |
 | --- | --- |
-| 1 | Repo skeleton, `internal/tui` + `internal/i18n`, catalog generator, CI |
-| 2 | Home and Settings (About), language resolver with en/uk, panel/key tests |
-| 3 | Apps Manager browse, search, detail screens over the installed catalog |
-| 4 | Helper, sudoers, install/remove, rate-limited background refresh |
-| 5 | Headless CLI, catalog package with `depends=()`, failure paths |
-| 6 | `cpz-ui` integration: preinstalled dependency, Home as default command |
-| 7 | Base language file and repo stanza, baked catalog in the UI stage |
-| 8 | Verify checks, hardware checklist, first `apps-stable` release |
+| Go apps, kit, i18n, catalog generator, helper, packaging | done |
+| Local test repository (`tools/build-repo.sh`) | done, used for a local UI build |
+| Base language file, repo stanza, baked catalog, verify checks | done |
+| Sign and publish `apps-stable` with the CPZ UI key | pending |
+| Pin the first published catalog in `config.sh` for release builds | pending |
+| Device checklist: install/remove, refresh, protection, 40×10 layout | pending |
+| Remove `fzf`/`j4-dmenu-desktop` after the hardware sign-off | pending |
 
-Order matters: the apps repository and its first catalog are published before
-the base image ships the `[cpz-apps]` stanza or the UI stage installs the
-catalog. Phase 4 does not ship until the helper has tests for name validation,
-protected packages, the data-only catalog exception and partial-upgrade
-refusal.
+Order matters: the signed `apps-stable` release is published before the base
+image ships the stanza to real devices. The helper must pass tests for name
+validation, protected packages, the data-only catalog exception and
+partial-upgrade refusal before the release.

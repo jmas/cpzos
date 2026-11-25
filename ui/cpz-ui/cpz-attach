@@ -1,6 +1,10 @@
 #!/bin/sh
 # Publish the compositor environment to the tmux server, then attach.
 # The server starts before cage, so it cannot know WAYLAND_DISPLAY/DISPLAY.
+#
+# A tab is the app the user chose: when the app exits, the tab closes. If it
+# was the last tab, the session ends; this loop recreates the Home session and
+# attaches again instead of taking cage down with it.
 set -eu
 if [ -n "${WAYLAND_DISPLAY:-}" ]; then
     tmux -L cpz set-environment -g WAYLAND_DISPLAY "$WAYLAND_DISPLAY"
@@ -11,4 +15,11 @@ fi
 if [ -n "${XAUTHORITY:-}" ]; then
     tmux -L cpz set-environment -g XAUTHORITY "$XAUTHORITY"
 fi
-exec tmux -f /etc/cpz/tmux.conf -L cpz attach -t main
+
+while :; do
+    if ! tmux -L cpz has-session -t main 2>/dev/null; then
+        tmux -f /etc/cpz/tmux.conf -L cpz new-session -d -s main -n Home || exit 1
+    fi
+    tmux -f /etc/cpz/tmux.conf -L cpz attach -t main || true
+    sleep 0.2
+done

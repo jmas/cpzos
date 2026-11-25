@@ -7,8 +7,14 @@ the device boots straight into cage + foot + tmux.
 ## Build
 
 ```sh
-make verify UI_TEST=1
+make verify UI_TEST=1 \
+  UI_APPS_REPO_STABLE=https://github.com/jmas/cpzos/releases/download/apps-stable
 ```
+
+The UI build requires the signed app repository: it installs
+`cpz-system-apps` and bakes the current `cpz-apps-catalog`. For a local test
+repository use `UI_APPS_REPO_STABLE=file:///...` and
+`UI_APPS_SIGLEVEL="Optional TrustAll"`; never ship that image.
 
 The build:
 
@@ -61,11 +67,12 @@ firmware
   → systemd
       ├─ cpz-tmux.service    persistent tmux server on tty1
       └─ cpz-ui@tty1.service cage + foot + tmux
-            └─ Home tab
+            └─ Home tab (installed apps)
 ```
 
-The first visible frame should be the tmux status row and a shell prompt.
-`Alt+O` opens the application menu, `Alt+T` opens a new tab, `Alt+W` closes it.
+The first visible frame should be the tmux status row and the Home list.
+`Alt+O` opens Apps Manager, `Alt+T` opens a new Home tab, `Alt+W` closes it.
+Choosing an app in Home replaces the tab and renames it.
 
 ## Checks
 
@@ -108,14 +115,24 @@ The vendor `99-cardputer-zero-lcd.rules` and
 - There is no session chooser, rename or new-session UI.
 - `systemctl restart cpz-ui@tty1.service` returns to the same tmux tab.
 - Closing a terminal app returns to the same tab and working directory.
+- Closing the last tab brings back a fresh Home tab; cage does not restart.
 - `tmux` survives a cage restart.
 
 ### Applications
 
-- `Alt+O` lists `Terminal` and `Help` from the desktop entries.
-- `Terminal` opens a new tmux window.
-- A graphical app (if installed) opens over foot and returns on close.
-- `desktop-file-validate` passes for installed entries.
+- Home lists Terminal, Apps Manager, Settings and the installed apps; it does
+  not list itself.
+- `Enter` on Terminal replaces the tab with a shell and renames it.
+- `Alt+O` opens Apps Manager; it reads the baked catalog without network.
+- Apps Manager: `Z`/`C` switch categories, `F`/`X` move, `Tab` searches,
+  `Enter` opens the detail screen. Installing asks first, then runs the full
+  `pacman -Syu` transaction; removing asks with **No** focused.
+- Removing Home, Apps Manager, Settings or the catalog is refused.
+- `cpz-app apps install <pkg> --yes` works over SSH; without `--yes` it exits 3.
+- The catalog date is visible on `Update app list`; entering Apps Manager
+  refreshes it in the background and never blocks input.
+- `CPZ_LANG=uk cpz-app apps` shows Ukrainian strings; the default is English.
+- `desktop-file-validate` passes for the three system entries.
 
 ### Status and notifications
 

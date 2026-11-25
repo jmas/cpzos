@@ -18,10 +18,48 @@ PKG=$(find out/ui/packages/stable -maxdepth 1 -name 'cpz-ui-*.pkg.tar.*' \
     ! -name '*.sig' | sort -V | tail -1)
 [ -n "$PKG" ] || die "missing cpz-ui package; run ./ui/build.sh stable"
 
+[ -n "$UI_APPS_REPO_STABLE" ] || die "UI_TEST=1 needs UI_APPS_REPO_STABLE (the signed apps repository)"
+
+# Each stage runs in its own container; pacman_target reads the builder config,
+# not the target's pacman.conf, so the app repository is added here.
+if ! grep -q '^\[cpz-apps\]$' /etc/pacman-cpz.conf; then
+    cat >> /etc/pacman-cpz.conf <<EOF
+
+[cpz-apps]
+Server = $UI_APPS_REPO_STABLE
+SigLevel = $UI_APPS_SIGLEVEL
+EOF
+fi
+
 log "installing UI runtime packages"
 pacman_target -Sy --needed
 # shellcheck disable=SC2086
 pacman_target -S --needed $UI_TEST_PACKAGES
+
+log "installing system apps and the app catalog"
+if [ -n "$UI_APPS_CATALOG_VERSION" ]; then
+    pacman_target -S --needed cpz-system-apps "cpz-apps-catalog=$UI_APPS_CATALOG_VERSION"
+else
+    pacman_target -S --needed cpz-system-apps cpz-apps-catalog
+fi
+
+CATALOG_PKG=""
+for p in "$ROOT"/var/cache/pacman/pkg/cpz-apps-catalog-*.pkg.tar.*; do
+    case "$p" in
+        *.sig) continue ;;
+    esac
+    CATALOG_PKG="$p"
+done
+[ -n "$CATALOG_PKG" ] || die "catalog package missing from the pacman cache"
+if [ -n "$UI_APPS_CATALOG_SHA256" ]; then
+    printf '%s  %s\n' "$UI_APPS_CATALOG_SHA256" "$CATALOG_PKG" | sha256sum -c - ||
+        die "catalog package sha256 mismatch"
+fi
+cat > "$BUILD/apps-catalog.txt" <<EOF
+catalog: $(pacman --root "$ROOT" -Q cpz-apps-catalog)
+catalog sha256: $(sha256sum "$CATALOG_PKG" | cut -d' ' -f1)
+catalog generated: $(grep -o '"generated": *"[^"]*"' "$ROOT/usr/share/cpz/catalog/apps.json" | head -n1)
+EOF
 
 log "installing $PKG"
 pacman_target -U --nodeps "$PWD/$PKG"
