@@ -30,16 +30,34 @@ export XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-us,ua}"
 export XKB_DEFAULT_OPTIONS="${XKB_DEFAULT_OPTIONS:-grp:alt_space_toggle}"
 
 connected() {
-    [ -r "$1/status" ] && [ "$(cat "$1/status")" = connected ]
+    [ -r "$1/status" ] && [ "$(cat "$1/status")" = connected ] && [ -s "$1/modes" ]
+}
+
+hdmi_present() {
+    for c in /sys/class/drm/card*-HDMI-A-*; do
+        [ -e "$c" ] || continue
+        [ -r "$c/status" ] && [ "$(cat "$c/status")" = connected ] && return 0
+    done
+    return 1
+}
+
+hdmi_ready() {
+    for c in /sys/class/drm/card*-HDMI-A-*; do
+        [ -e "$c" ] || continue
+        connected "$c" || continue
+        [ "$(wc -c < "$c/edid" 2>/dev/null || echo 0)" -ge 128 ] && return 0
+    done
+    return 1
 }
 
 CARD=""
 CARD_KIND=""
 find_card() {
-    # HDMI first: a connected monitor is the larger surface.
+    # HDMI first, but only after EDID and a mode are readable. Starting cage on
+    # a mode-less HDMI link produces a wrong/fallback mode and a stretched UI.
     for c in /sys/class/drm/card*-HDMI-A-*; do
         [ -e "$c" ] || continue
-        if connected "$c"; then
+        if connected "$c" && [ "$(wc -c < "$c/edid" 2>/dev/null || echo 0)" -ge 128 ]; then
             CARD=$(basename "$c" | cut -d- -f1)
             CARD_KIND=hdmi
             return 0
@@ -64,6 +82,17 @@ find_card() {
     return 1
 }
 
+# Give a connected HDMI monitor up to 2 seconds to expose EDID and modes
+# before falling back to the panel.
+if hdmi_present; then
+    i=0
+    while [ "$i" -lt 10 ]; do
+        hdmi_ready && break
+        i=$((i + 1))
+        sleep 0.2
+    done
+fi
+
 # The panel card can appear a few seconds after the module load.
 i=0
 while [ "$i" -lt 50 ]; do
@@ -76,6 +105,20 @@ done
 export WLR_DRM_DEVICES="/dev/dri/$CARD"
 log "using $WLR_DRM_DEVICES ($CARD_KIND)"
 printf 'kind=%s\ncard=%s\n' "$CARD_KIND" "$CARD" > /run/cpz/output 2>/dev/null || true
+
+# foot uses a fixed pixel size per output: the panel is 320x170, HDMI is a
+# normal desktop resolution. Keep the same information density instead of
+# letting a single point size look stretched or tiny.
+case "$CARD_KIND" in
+    hdmi) font_size=16 ;;
+    *)    font_size=12 ;;
+esac
+foot_config=/run/cpz/foot.ini
+if ! sed "s/^font=.*/font=DejaVu Sans Mono:pixelsize=$font_size/" \
+    /etc/cpz/foot.ini > "$foot_config" 2>/dev/null; then
+    cp /etc/cpz/foot.ini "$foot_config" 2>/dev/null || foot_config=/etc/cpz/foot.ini
+fi
+log "foot pixelsize=$font_size"
 
 case "$CARD_KIND" in
     spi) sudo -n /usr/lib/cpz/backlight on >/dev/null 2>&1 || true ;;
@@ -91,4 +134,4 @@ tmux -L cpz set-option -g status-right "" >/dev/null 2>&1 || true
 tmux -L cpz run-shell -b /usr/lib/cpz/status >/dev/null 2>&1 || true
 
 exec cage -m last -s -d -- \
-    foot -c /etc/cpz/foot.ini -- /usr/lib/cpz/attach
+    foot -c "$foot_config" -- /usr/lib/cpz/attach

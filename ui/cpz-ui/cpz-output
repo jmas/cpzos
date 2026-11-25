@@ -13,14 +13,39 @@ COOLDOWN=/run/cpz/output.restart
 
 [ -r "$STATE" ] || exit 0
 
+hdmi_present() {
+    for c in /sys/class/drm/card*-HDMI-A-*; do
+        [ -e "$c" ] || continue
+        [ -r "$c/status" ] && [ "$(cat "$c/status")" = connected ] && return 0
+    done
+    return 1
+}
+
+hdmi_ready() {
+    for c in /sys/class/drm/card*-HDMI-A-*; do
+        [ -e "$c" ] || continue
+        [ -r "$c/status" ] && [ "$(cat "$c/status")" = connected ] || continue
+        i=0
+        while [ "$i" -lt 5 ]; do
+            if [ -s "$c/modes" ] &&
+                [ "$(wc -c < "$c/edid" 2>/dev/null || echo 0)" -ge 128 ]; then
+                return 0
+            fi
+            i=$((i + 1))
+            sleep 0.2
+        done
+    done
+    return 1
+}
+
 desired=spi
-for c in /sys/class/drm/card*-HDMI-A-*; do
-    [ -r "$c/status" ] || continue
-    if [ "$(cat "$c/status")" = connected ]; then
+if hdmi_present; then
+    if hdmi_ready; then
         desired=hdmi
-        break
+    else
+        printf 'cpz-output: HDMI present but EDID/mode not ready\n' >&2
     fi
-done
+fi
 
 current=$(sed -n 's/^kind=//p' "$STATE" | head -1)
 printf 'cpz-output: current=%s desired=%s\n' "$current" "$desired" >&2

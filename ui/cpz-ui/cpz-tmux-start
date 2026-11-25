@@ -5,4 +5,4 @@ export TMUX_TMPDIR=/run/cpz
 if tmux -L cpz has-session -t main 2>/dev/null; then
     exit 0
 fi
-exec tmux -L cpz new-session -d -s main -n Home
+exec tmux -f /etc/cpz/tmux.conf -L cpz new-session -d -s main -n Home

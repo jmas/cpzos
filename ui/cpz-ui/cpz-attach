@@ -11,4 +11,4 @@ fi
 if [ -n "${XAUTHORITY:-}" ]; then
     tmux -L cpz set-environment -g XAUTHORITY "$XAUTHORITY"
 fi
-exec tmux -L cpz attach -t main
+exec tmux -f /etc/cpz/tmux.conf -L cpz attach -t main
