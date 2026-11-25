@@ -1,3 +1,7 @@
-# HDMI hotplug: ask systemd to reconcile the active output.
+# DRM hotplug is a change event on the card with HOTPLUG=1.
+ACTION=="change", SUBSYSTEM=="drm", KERNEL=="card*", ENV{HOTPLUG}=="1", \
+  TAG+="systemd", ENV{SYSTEMD_WANTS}+="cpz-output.service"
+
+# Connector add/change/remove is a fallback for drivers that emit it.
 ACTION=="add|change|remove", SUBSYSTEM=="drm", KERNEL=="card*-HDMI-A-*", \
   TAG+="systemd", ENV{SYSTEMD_WANTS}+="cpz-output.service"
