@@ -5,10 +5,16 @@ stack, Home semantics, the update policy and the product names are decided.
 Implementation has not started; the existing launcher (`fzf` +
 `j4-dmenu-desktop`) and the two desktop entries are the current state.
 
-Decided: `jmas/cpzos-apps`; Go + Bubble Tea; Home replaces the tab with the
-chosen app; installs and catalog refreshes run a full `pacman -Syu`; the three
-system apps are preinstalled with the UI and are named **Home**, **Apps
-Manager** and **Settings**.
+Decided: `jmas/cpzos-apps` with curated pull requests; Go + Bubble Tea; Home
+replaces the tab with the chosen app; installs run a full `pacman -Syu`; the
+three system apps are preinstalled with the UI and are named **Home**, **Apps
+Manager** and **Settings**; the default UI language is `en`; the UI image
+bakes the current app catalog at build time and Apps Manager refreshes it in
+the background.
+
+First release: catalogs ship `en` and `uk`; the other nine codes resolve to
+`en` until translated. Home is tracked in Apps Manager's **System** category
+but omitted from its own list.
 
 Related: [APP-CONTRACT.md](APP-CONTRACT.md) (desktop entries),
 [TUI-CONTRACT.md](TUI-CONTRACT.md) (console UI rules),
@@ -41,8 +47,10 @@ category, keywords and launch line; translations follow
 - The trust root stays the existing CPZ UI key: one public key, one rotation
   story, no second key to ship in the base image.
 
-Repository name: `jmas/cpzos-apps`. Product name in the UI: **Apps Manager**;
-the binary token stays `apps`.
+Repository name: `jmas/cpzos-apps`. Only curated pull requests are merged:
+the catalog of a shipped image is reviewed code and packaging, not an open
+marketplace. Product name in the UI: **Apps Manager**; the binary token stays
+`apps`.
 
 ## 3. What an application is
 
@@ -84,8 +92,9 @@ cpzos-apps/
 
 - `internal/tui` is the only place that knows the theme, the keymap and the
   screen anatomy. An app that reimplements a list is a review failure.
-- Third-party authors can copy the kit or follow `TUI-CONTRACT.md`; Apps Manager
-  does not enforce the toolkit, only the desktop-entry contract.
+- Apps contributed by pull request use the kit directly; a second list or
+  dialog implementation is a review failure. An app that cannot use Go still
+  follows `TUI-CONTRACT.md` and the desktop-entry contract.
 
 ## 5. Package and channel layout
 
@@ -99,8 +108,8 @@ cpzos-apps/
 - The three system apps are preinstalled: `cpz-ui` depends on
   `cpz-system-apps`. The clean base image still has no UI at all, by design;
   any image or system with the UI gets Home, Apps Manager and Settings.
-- `cpz-ui` depends on `cpz-system-apps`; the dependency is what makes the
-  system apps non-removable through pacman, not just a UI rule.
+- That same dependency is what makes the system apps non-removable through
+  pacman, not just a UI rule.
 - `cpz-system-apps` depends on `cpz-apps-catalog`, so browsing works offline
   from the installed copy.
 - The apps release is published as a new pacman repository `[cpz-apps]` in a
@@ -108,6 +117,16 @@ cpzos-apps/
   key. `Server` points at that release; pacman picks up `cpz-apps.db` there.
 - The base image adds one `Include` stanza for `[cpz-apps]` in a platform
   release. No kernel, boot or session change is involved.
+- Sequencing: the apps repository and its first signed catalog are published
+  *before* the stanza ships. A stanza pointing at a missing release would make
+  `pacman -Sy` fail on every device.
+- The UI image bakes the catalog: stage 45 installs `cpz-system-apps` and
+  `cpz-apps-catalog` from the signed repository, so the first Apps Manager
+  start has a list without network or root. The build report records the
+  package version, its sha256 and the catalog `generated` date.
+- Release builds pin `UI_APPS_CATALOG_VERSION` and `UI_APPS_CATALOG_SHA256` in
+  `config.sh` and fail on a mismatch; test builds take the current repository
+  version. The clean base image installs neither package and stays UI-free.
 
 ## 6. The catalog
 
@@ -152,10 +171,32 @@ CI from the built packages, so it cannot drift from the desktop entries:
 - Localized fields are copied as `name[lang]`, `comment[lang]` and
   `keywords[lang]`; Apps Manager and Home pick the system language with an `en`
   fallback exactly as [LANGUAGE.md](LANGUAGE.md) defines.
-- Refreshing the catalog is a normal package update of `cpz-apps-catalog`
-  (`pacman -Syu`), not a second download channel. Browsing is instant and
-  offline from the installed copy; the date on the `Update app list` row shows
-  how stale it is.
+- Browsing is instant and offline from the installed copy; the date on the
+  `Update app list` row shows how stale it is. There is no second download
+  channel and no separate language pack.
+
+### 6.1 Baked at build, refreshed in the background
+
+- The catalog is a signed package (`cpz-apps-catalog`) installed by the UI
+  build, so a device that has never been online still shows apps.
+- Entering Apps Manager starts one best-effort `refresh-catalog` call *after*
+  the first frame. The list is already interactive; the refresh never blocks a
+  keystroke and never shows a modal.
+- On success the screen re-reads the catalog in place, keeps the cursor and
+  the category, and updates the date. On failure it keeps the cached list and
+  shows a two-second dim note (`Offline, showing the saved list`).
+- Rate limit: at most one attempt per 10 minutes, tracked by the marker file
+  `/var/lib/cpz/refresh`. A busy pacman lock or a missing network is a no-op,
+  not an error dialog and not a retry loop.
+- Home does not refresh: it lists installed apps only.
+- Apps Manager serialises its own actions: if the user presses Install while
+  the refresh is still running, the store waits for it to finish and then
+  starts the transaction. A foreign package operation that owns the lock is
+  reported as `Another package operation is running; try again`.
+- `Install` refreshes the sync database itself, so a catalog that is a few
+  minutes stale cannot hide a freshly published app.
+- The background refresh updates the catalog only. It never upgrades installed
+  apps without a confirmed transaction.
 
 ## 7. The three system apps
 
@@ -177,11 +218,12 @@ stay short (`cpz-app apps`, `cpz-apps-manager.desktop`).
   **Remove** (installed, non-system), **Back**. System apps show
   `System app · cannot be removed` and no Remove row.
 - Remove asks: `Remove Player and its package? User data is kept.` with
-  **No** focused. Install asks for confirmation when it pulls dependencies or
-  performs a system upgrade, and always names the package and total size.
-- The first row of the **All** category is `Update app list`, which runs the
-  refresh transaction. It is hidden inside the other categories to keep them
-  short.
+  **No** focused. Install always asks: it runs a full system upgrade, so the
+  dialog names the package, the display size and that the system is updated
+  too.
+- The first row of the **All** category is `Update app list`, which forces the
+  refresh now (the automatic one is rate-limited to once per 10 minutes). It is
+  hidden inside the other categories to keep them short.
 - Install/remove refresh the list in place; the removed entry disappears,
   installed entries get the installed marker.
 
@@ -229,7 +271,7 @@ Apps Manager · All            2/12
 The session runs as `cpz`. One helper does all package work:
 
 ```text
-/usr/lib/cpz/app-install refresh
+/usr/lib/cpz/app-install refresh-catalog
 /usr/lib/cpz/app-install install <package>
 /usr/lib/cpz/app-install remove  <package>
 ```
@@ -237,20 +279,26 @@ The session runs as `cpz`. One helper does all package work:
 - Installed through `/etc/sudoers.d/20-cpz-apps` as
   `cpz ALL=(root) NOPASSWD: /usr/lib/cpz/app-install`. No wildcard arguments,
   no `pacman` rule, no shell.
-- `install`: the package must be present in the installed catalog and in the
-  `[cpz-apps]` sync database. The helper runs
-  `pacman -Syu --needed --noconfirm -- <package>`.
+- `install`: validate the name shape, run `pacman -Syu --noconfirm`, then
+  require the package to come from the `[cpz-apps]` repository (`pacman -Si`
+  must print `Repository : cpz-apps`), then run
+  `pacman -S --needed --noconfirm -- <package>`. The system is fully upgraded
+  before a single app is added, so no partial-upgrade state exists; an app that
+  is not in the repository installs nothing.
 - `remove`: the package must be installed, must not be in the protected list
   and must not be required by `cpz-ui`/`cpz-system-apps`. The helper runs
   `pacman -Rns --noconfirm -- <package>`.
-- `refresh`: `pacman -Syu --noconfirm`. It updates the catalog and the system
-  together.
+- `refresh-catalog`: rate-limited, runs `pacman -Sy` and then
+  `pacman -S --needed --noconfirm cpz-apps-catalog`. It is the only `-S`
+  without `-u`, allowed because the catalog package is data-only, has no
+  dependencies and installs no library or binary. A package test enforces
+  `depends=()`; if that ever changes, the exception is removed.
 - Every invocation is validated with an anchored package-name regex, logged to
   the journal, and returns the transaction output on stderr. The TUI shows a
   short message and the log location, never untrusted raw output as a command.
-- No `-Sy` without `-u`: a partial upgrade on a rolling distribution breaks
-  libraries. A full `-Syu` is the price of installing on Arch; the UI says so
-  before running it.
+- No other `-Sy` without `-u`: a partial upgrade on a rolling distribution
+  breaks libraries. A full `-Syu`/`-Su` is the price of installing on Arch;
+  the UI says so before running it.
 
 Protected list: `/usr/share/cpz/protected-packages` in `cpz-system-apps` plus a
 hard-coded package check in the helper. `pacman -Rdd` can still break it; that
@@ -261,12 +309,12 @@ is unsupported and not defended against.
 - Terminal apps launch with argv, never through a shell:
   `tmux -L cpz new-window -- <exec...>` from Apps Manager, or process
   replacement from Home.
-- Field codes `%f`, `%u`, `%F`, `%U` have no document source in this UI; the
-  Apps Manager refuses entries that require one and shows the reason. `%i`, `%c`,
-  `%k` expand as usual.
-- `Terminal=false` entries are out of scope for the three system apps; the
-  Apps Manager still lists them but its Open action uses the session launcher path,
-  not tmux.
+- Field codes `%f`, `%u`, `%F`, `%U` have no document source in this UI;
+  Apps Manager refuses entries that require one and shows the reason. `%i`,
+  `%c`, `%k` expand as usual.
+- `Terminal=false` entries are out of scope for the three system apps;
+  Apps Manager still lists them but its Open action uses the session launcher
+  path, not tmux.
 - Opening an app from Apps Manager does not close it. It stays on its tab
   and the app gets a new tab (`X-CPZ-Tab=new` is the default for Apps Manager
   launches).
@@ -318,44 +366,45 @@ cpz-app settings about [--json]
 
 Not implemented on this branch, listed for the platform follow-up:
 
-1. `config.sh`: `UI_APPS_REPO_STABLE` (and beta, unused) and `UI_LANGUAGE`.
+1. `config.sh`: `UI_APPS_REPO_STABLE` (and beta, unused), `UI_LANGUAGE="en"`,
+   and the optional release pins `UI_APPS_CATALOG_VERSION` /
+   `UI_APPS_CATALOG_SHA256`.
 2. `scripts/30-configure.sh`: write `/etc/cpz/language` from `UI_LANGUAGE`.
 3. `scripts/35-ui-repo.sh`: write `/etc/pacman.d/cpz-apps.conf` and include it.
-4. `scripts/50-verify.sh`: assert the apps repo config, the protected list, the
-   language file and the `cpz-ui` → `cpz-system-apps` dependency when the UI
-   package is built.
-5. `ui/cpz-ui`: add the dependency; `Alt+O` opens `cpz-app apps` in the tmux
+   Ship this only after the apps release exists.
+4. `scripts/45-ui-test.sh`: install `cpz-system-apps` and `cpz-apps-catalog`
+   with the UI package set, verify the pinned sha256 when set, and record the
+   catalog version and date in the build report.
+5. `scripts/50-verify.sh`: in the UI image assert `cpz-apps-catalog` is
+   installed, `/usr/share/cpz/catalog/apps.json` parses with `"version": 1`,
+   and the package has no dependencies; in the base image assert both are
+   absent. Also assert the language file and the `cpz-ui` →
+   `cpz-system-apps` dependency.
+6. `ui/cpz-ui`: add the dependency; `Alt+O` opens `cpz-app apps` in the tmux
    popup instead of the `fzf` list; `default-command` becomes Home; the
    `cpz-launcher`/`fzf`/`j4-dmenu-desktop` path is removed once Apps Manager
    passes hardware tests. `cpz-help` stays until the Help overlay covers its
    content.
-6. `docs/HARDWARE-TEST.md`: add Apps Manager install/remove, Home launch,
-   system-app protection, `CPZ_LANG=uk` and offline browse to the checklist.
+7. `docs/HARDWARE-TEST.md`: add Apps Manager install/remove, Home launch,
+   system-app protection, `CPZ_LANG=uk`, background refresh and offline browse
+   to the checklist.
 
-## 13. Open questions for the owner
 
-Only two remain:
-
-1. Third-party apps: curated pull requests into `cpzos-apps`, or any signed
-   repository may publish into `[cpz-apps]`?
-2. Default `UI_LANGUAGE` for the image: `en` or `uk`? Both catalogs ship either
-   way; the user can override per account.
-
-Settled for the first release: catalogs ship `en` and `uk`; the other nine
-codes resolve to `en` until translated, and adding one is a package update,
-not a schema change. Home is tracked in Apps Manager's **System** category but
-omitted from its own list.
-
-## 14. Implementation plan
+## 13. Implementation plan
 
 | Phase | Result |
 | --- | --- |
-| 1 | Repo skeleton, `internal/tui` + `internal/i18n` kits, catalog generator, CI |
+| 1 | Repo skeleton, `internal/tui` + `internal/i18n`, catalog generator, CI |
 | 2 | Home and Settings (About), language resolver with en/uk, panel/key tests |
 | 3 | Apps Manager browse, search, detail screens over the installed catalog |
-| 4 | Helper, sudoers, install/remove/update, headless CLI, failure paths |
-| 5 | `cpz-ui` integration: preinstalled dependency, Home as default command |
-| 6 | Base language file and repo stanza, verify checks, hardware checklist |
+| 4 | Helper, sudoers, install/remove, rate-limited background refresh |
+| 5 | Headless CLI, catalog package with `depends=()`, failure paths |
+| 6 | `cpz-ui` integration: preinstalled dependency, Home as default command |
+| 7 | Base language file and repo stanza, baked catalog in the UI stage |
+| 8 | Verify checks, hardware checklist, first `apps-stable` release |
 
-Phase 4 does not ship until the helper has tests for name validation, protected
-packages and partial-upgrade refusal.
+Order matters: the apps repository and its first catalog are published before
+the base image ships the `[cpz-apps]` stanza or the UI stage installs the
+catalog. Phase 4 does not ship until the helper has tests for name validation,
+protected packages, the data-only catalog exception and partial-upgrade
+refusal.

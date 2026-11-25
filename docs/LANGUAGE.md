@@ -1,7 +1,8 @@
 # Language and translations
 
-Status: agreed on `design/app-platform` (2026-11-26). This is the language
-model for the UI core and for every app that follows
+Status: agreed on `design/app-platform` (2026-11-26). The default system
+language is `en`; the user can override it. This is the language model for the
+UI core and for every app that follows
 [TUI-CONTRACT.md](TUI-CONTRACT.md). Keyboard layouts are a different concern:
 they switch the letters a key produces and are documented in the TUI contract.
 
