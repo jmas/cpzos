@@ -196,12 +196,16 @@ need "ui stable config"        "debugfs -R 'cat /etc/pacman.d/cpz-ui.conf' $ROOT
 need "ui beta config"          "debugfs -R 'cat /etc/pacman.d/cpz-ui-beta.conf' $ROOTIMG | grep -q 'releases/download/ui-beta'"
 need "ui repo requires signatures" "debugfs -R 'cat /etc/pacman.d/cpz-ui.conf' $ROOTIMG | grep -q 'DatabaseRequired'"
 need "pacman includes ui repo" "debugfs -R 'cat /etc/pacman.conf' $ROOTIMG | grep -q 'Include = /etc/pacman.d/cpz-ui.conf'"
-if [ -n "$UI_APPS_REPO_STABLE" ]; then
-    need "apps repo config"    "debugfs -R 'cat /etc/pacman.d/cpz-apps.conf' $ROOTIMG | grep -q '^\[cpz-apps\]$'"
-    need "pacman includes apps repo" "debugfs -R 'cat /etc/pacman.conf' $ROOTIMG | grep -q 'Include = /etc/pacman.d/cpz-apps.conf'"
-else
-    absent "no apps repo config" "debugfs -R 'stat /etc/pacman.d/cpz-apps.conf' $ROOTIMG"
-fi
+case "$UI_APPS_REPO_STABLE" in
+    ""|file:*)
+        absent "no apps repo config" "debugfs -R 'stat /etc/pacman.d/cpz-apps.conf' $ROOTIMG"
+        need "no apps repo include" "! debugfs -R 'cat /etc/pacman.conf' $ROOTIMG | grep -q 'cpz-apps.conf'"
+        ;;
+    *)
+        need "apps repo config"    "debugfs -R 'cat /etc/pacman.d/cpz-apps.conf' $ROOTIMG | grep -q '^\[cpz-apps\]$'"
+        need "pacman includes apps repo" "debugfs -R 'cat /etc/pacman.conf' $ROOTIMG | grep -q 'Include = /etc/pacman.d/cpz-apps.conf'"
+        ;;
+esac
 
 log "packages"
 need_pkg linux-rpi

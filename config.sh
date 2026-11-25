@@ -66,7 +66,8 @@ BOOT_MB="64"
 # than the UI image; the UI test build uses a larger root.
 ROOT_MB="768"
 if [ "$UI_TEST" = "1" ]; then
-    ROOT_MB="1024"
+    # Room for installed apps: Midnight Commander, Doom and their engines.
+    ROOT_MB="1536"
 fi
 
 # Deterministic MBR disk identifier. PARTUUIDs are derived from it:
