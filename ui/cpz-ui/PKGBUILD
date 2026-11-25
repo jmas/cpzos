@@ -1,6 +1,6 @@
 # Maintainer: CPZ <cpz-ui@jmas.github.io>
 pkgname=cpz-ui
-pkgver=0.1.4
+pkgver=0.1.5
 pkgrel=1
 pkgdesc="CPZ UI session: cage, foot, tmux, launcher, status and backlight"
 arch=('aarch64')
@@ -35,11 +35,13 @@ package() {
     install -Dm755 "$startdir/cpz-launcher"     "$pkgdir/usr/lib/cpz/launcher"
     install -Dm755 "$startdir/cpz-term-launch"  "$pkgdir/usr/lib/cpz/term-launch"
     install -Dm755 "$startdir/cpz-status"       "$pkgdir/usr/lib/cpz/status"
+    install -Dm755 "$startdir/cpz-output"       "$pkgdir/usr/lib/cpz/output"
     install -Dm755 "$startdir/cpz-notify"       "$pkgdir/usr/lib/cpz/notify"
     install -Dm755 "$startdir/cpz-help"         "$pkgdir/usr/lib/cpz/help"
     install -Dm755 "$srcdir/cpz-backlight"      "$pkgdir/usr/lib/cpz/backlight"
 
     install -Dm644 "$startdir/cpz-tmux.service" "$pkgdir/usr/lib/systemd/system/cpz-tmux.service"
+    install -Dm644 "$startdir/cpz-output.service" "$pkgdir/usr/lib/systemd/system/cpz-output.service"
     install -Dm644 "$startdir/cpz-ui@.service.d/10-tmux.conf" \
         "$pkgdir/usr/lib/systemd/system/cpz-ui@.service.d/10-tmux.conf"
 
@@ -47,6 +49,7 @@ package() {
     install -Dm644 "$startdir/tmux.conf"        "$pkgdir/etc/cpz/tmux.conf"
     install -Dm440 "$startdir/cpz-ui.sudoers"   "$pkgdir/etc/sudoers.d/20-cpz-ui"
 
+    install -Dm644 "$startdir/99-cpz-output.rules" "$pkgdir/usr/lib/udev/rules.d/99-cpz-output.rules"
     install -Dm644 "$startdir/modules-load.conf" "$pkgdir/usr/lib/modules-load.d/cpz-ui.conf"
     install -Dm644 "$startdir/modprobe.conf"     "$pkgdir/usr/lib/modprobe.d/cpz-ui.conf"
     install -Dm644 "$startdir/tmpfiles.conf"     "$pkgdir/usr/lib/tmpfiles.d/cpz-ui.conf"

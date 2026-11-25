@@ -43,9 +43,10 @@ ExecStart=/usr/lib/cpz/session
   inside tmux.
 - Cage has no layer-shell; overlay launchers such as `fuzzel`, `wofi` or
   `bemenu` are not an option for this stack.
-- Output selection happens once at session start: HDMI when a monitor is
-  connected, otherwise the panel. Hotplug and live switching are a later
-  improvement; the unit can be restarted to re-select.
+- Output selection is dynamic: `cpz-output.service` is triggered by the HDMI
+  connector udev event, compares the desired output with `/run/cpz/output`
+  and restarts `cpz-ui@tty1.service` only when the output changed. tmux is a
+  separate service, so tabs and applications survive the switch.
 
 ## 3. Application model
 

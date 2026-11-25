@@ -72,6 +72,7 @@ done
 
 export WLR_DRM_DEVICES="/dev/dri/$CARD"
 log "using $WLR_DRM_DEVICES ($CARD_KIND)"
+printf 'kind=%s\ncard=%s\n' "$CARD_KIND" "$CARD" > /run/cpz/output 2>/dev/null || true
 
 case "$CARD_KIND" in
     spi) sudo -n /usr/lib/cpz/backlight on >/dev/null 2>&1 || true ;;

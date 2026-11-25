@@ -73,8 +73,8 @@ The first visible frame should be the tmux status row and a shell prompt.
 
 - Panel: 320×170, readable text, no flicker, no tearing on scroll.
 - HDMI: monitor is detected at boot; the panel backlight turns off.
-- Output selection: HDMI when connected, panel otherwise. Hotplug requires a
-  restart of `cpz-ui@tty1.service`.
+- Output selection: HDMI when connected, panel otherwise. Hotplug is dynamic:
+  `cpz-output.service` restarts only the UI unit and tmux survives.
 - Panel backlight: visible at boot; `sudo /usr/lib/cpz/backlight status` shows
   the m5ioe1 registers.
 - Seat policy: both the panel DRM card and the internal keyboard must be on
@@ -167,8 +167,8 @@ The agreed budgets are in `docs/UI-QUALITIES.md`: first frame ≤ 12 s (stretch
 
 ## Known gaps
 
-- Output switching is one-shot at session start; live hotplug is not
-  implemented.
+- HDMI hotplug switching is implemented but needs validation with a real
+  monitor; the 5-second cooldown is intentional.
 - The notification daemon and theme tokens are not implemented.
 - Locale catalogs cover the core entries; the full 11-language set is later.
 - The panel SPI workaround and backlight are hardware-specific and need
