@@ -86,6 +86,38 @@ for vt in 1 2 3 4 5 6; do
 done
 in_root "systemctl enable serial-getty@ttyS0.service >/dev/null 2>&1 || true"
 
+# --- session entry point ----------------------------------------------------
+# The platform owns the session unit; the UI package provides the executable
+# and enables one instance. It is inert until /usr/lib/cpz/session exists.
+# PAMName=login creates a logind session and seat, so the UI gets DRM, evdev
+# and audio through the normal login path instead of a root daemon.
+cat > "$ROOT/usr/lib/systemd/system/cpz-ui@.service" <<'EOF'
+[Unit]
+Description=CPZ UI session on %I
+After=systemd-user-sessions.service
+Wants=systemd-user-sessions.service
+Conflicts=getty@%I.service
+ConditionPathExists=/usr/lib/cpz/session
+
+[Service]
+PAMName=login
+User=cpz
+Group=cpz
+TTYPath=/dev/%I
+StandardInput=tty
+StandardOutput=tty
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=no
+ExecStart=/usr/lib/cpz/session
+Restart=always
+RestartSec=1
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 # --- boot speed: module autoload -------------------------------------------
 # i2c-dev is what turns the vendor's i2c1 bus into /dev/i2c-1. It is generic
 # hardware access for whatever stack is added later; display modules are

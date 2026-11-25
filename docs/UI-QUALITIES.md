@@ -149,11 +149,12 @@ The UI answers input before the user can perceive a delay.
   only when the platform interface breaks, and `U` with UI changes.
 - The UI declares the platform contract range it supports. The platform
   refuses an incompatible UI and reports why.
-- **Rollback:** the last two UI core releases, and the application versions
-  tested with them, remain installable. Rollback uses `pacman -U` from the
-  repository or the local package cache.
-- **Channels:** `stable` is the default; `beta` is opt-in. Both are signed
-  repository directories, and a release is promoted from beta to stable.
+- **Rollback:** the current UI core release and one previous release, plus the
+  application versions tested with them, remain installable. Rollback uses
+  `pacman -U` from the repository or the local package cache.
+- **Channels:** `stable` is the only active channel for now. The `beta`
+  repository configuration is reserved; it is not used until a beta programme
+  is introduced.
 - **Signing and hosting:** a dedicated PGP key signs the packages and the
   repository database. The public key ships in the base image, CI signs the
   release, and the static repository is published as the GitHub Releases
@@ -183,8 +184,9 @@ The UI answers input before the user can perceive a delay.
 - **Platform contract:** narrow. The platform exposes version, capabilities,
   standard Linux interfaces, user/logind/runtime and one session entry point;
   the UI owns the application, theme and locale contracts.
-- **Rollback and channels:** last two UI core releases stay installable;
-  `stable` is the default, `beta` is opt-in.
+- **Rollback and channels:** the current UI core release and one previous
+  release stay installable. `stable` is the only active channel; `beta` is
+  reserved.
 - **Signing and hosting:** a dedicated PGP key, a public key in the base image,
   and a static repository published as the GitHub Releases `ui-stable` and
   `ui-beta`.
@@ -207,7 +209,7 @@ The UI answers input before the user can perceive a delay.
 4. Define the UI app contract: manifest, launch, status/notifications, theme
    tokens, locale catalogs and package naming.
 5. Choose the terminal emulator and the session stack.
-6. Define the promotion/rollback checklist and how the last two releases are
-   retained.
+6. Define the promotion/rollback checklist and how the current and previous
+   releases are retained.
 7. Add the public key and the stable/beta repository configuration to the base
    image in a new stage once the repository exists. **Done:** `scripts/35-ui-repo.sh`.

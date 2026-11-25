@@ -67,6 +67,12 @@ The repository is signed with the CPZ UI key
 `C7DBEDC1B4855ACB0570C7D229C04B0663395458`. The private key lives only in
 GitHub Actions secrets; CI signs packages and the repository database.
 
+The stable channel is the only active channel for now; the beta configuration
+is reserved for later. The platform also ships an inert
+`cpz-ui@.service` template: the UI package provides `/usr/lib/cpz/session` and
+enables `cpz-ui@tty1.service`, which uses `PAMName=login` to create the logind
+session and seat.
+
 ## Build
 
 Docker Desktop on Apple Silicon runs the `linux/arm64` builder natively.
@@ -107,6 +113,8 @@ scripts/50-verify.sh   base-image invariants
 tools/ui-repo.sh       sign packages and build the static UI repository
 keys/                  public UI signing key
 .github/workflows/     base verify and UI repository publishing
+docs/UI-QUALITIES.md   UI quality requirements
+docs/UI-DECISIONS.md   session, app, launcher and status decisions
 ```
 
 ## Status and risks

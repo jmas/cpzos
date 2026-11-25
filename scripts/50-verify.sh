@@ -85,6 +85,12 @@ absent "no cpz profile"        "debugfs -R 'stat /etc/profile.d/00-cpz.sh' $ROOT
 log "login paths"
 need "serial recovery getty"   "debugfs -R 'ls -l /etc/systemd/system/getty.target.wants' $ROOTIMG 2>/dev/null | grep -q 'serial-getty@ttyS0'"
 need "getty@tty1 not enabled"  "! debugfs -R 'ls /etc/systemd/system/getty.target.wants' $ROOTIMG 2>/dev/null | grep -q 'getty@tty1'"
+
+log "ui session entry point"
+need "ui session template"     "debugfs -R 'stat /usr/lib/systemd/system/cpz-ui@.service' $ROOTIMG | grep -q Inode"
+need "ui session uses PAM"     "debugfs -R 'cat /usr/lib/systemd/system/cpz-ui@.service' $ROOTIMG | grep -q '^PAMName=login'"
+need "ui session entry point"  "debugfs -R 'cat /usr/lib/systemd/system/cpz-ui@.service' $ROOTIMG | grep -q '^ExecStart=/usr/lib/cpz/session'"
+need "ui session not enabled"  "! debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG 2>/dev/null | grep -q 'cpz-ui@'"
 if [ "$ENABLE_SSH" = "1" ]; then
     need "openssh installed"    "pacman --root $ROOT -Q openssh"
     need "sshd enabled"         "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q sshd"
