@@ -110,6 +110,7 @@ After=systemd-user-sessions.service
 Wants=systemd-user-sessions.service
 Conflicts=getty@%i.service
 ConditionPathExists=/usr/lib/cpz/session
+StartLimitIntervalSec=0
 
 [Service]
 PAMName=login
@@ -123,7 +124,7 @@ TTYVHangup=yes
 TTYVTDisallocate=no
 ExecStart=/usr/lib/cpz/session
 Restart=always
-RestartSec=1
+RestartSec=3
 KillMode=control-group
 
 [Install]
