@@ -23,9 +23,9 @@ chmod 1777 "$ROOT/tmp" "$ROOT/var/tmp"
 
 pacman_target -Sy --needed
 
-log "installing base packages: $BASE_PACKAGES $TOOLS_PACKAGES $GRAPHICS_PACKAGES"
+log "installing base packages: $BASE_PACKAGES $TOOLS_PACKAGES $NETWORK_PACKAGES $EXTRA_PACKAGES"
 # shellcheck disable=SC2086
-pacman_target -S --needed $BASE_PACKAGES $TOOLS_PACKAGES $NETWORK_PACKAGES $APP_PACKAGES $GRAPHICS_PACKAGES
+pacman_target -S --needed $BASE_PACKAGES $TOOLS_PACKAGES $NETWORK_PACKAGES $EXTRA_PACKAGES
 
 # The kernel must not run its mkinitcpio hook: this profile boots without an
 # initramfs. --noscriptlet also skips depmod, which is done explicitly below.

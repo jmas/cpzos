@@ -1,9 +1,0 @@
-id=terminal
-name=Terminal
-desc=Shell, tmux, ssh
-exec=/bin/bash
-exec=-l
-type=tui
-icon=terminal
-category=System
-order=100

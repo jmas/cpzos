@@ -1,9 +1,0 @@
-id=volume
-name=Sound
-desc=ALSA mixer
-exec=/usr/local/bin/cpz-volume
-type=tui
-icon=volume
-category=System
-order=340
-provider=1

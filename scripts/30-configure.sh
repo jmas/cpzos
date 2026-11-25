@@ -1,9 +1,10 @@
 #!/bin/bash
-# Stage 30 — configure the image: identity, boot files, and every removal or
-# mask that exists for boot speed.
+# Stage 30 — configure the base image: identity, boot files, and every removal
+# or mask that exists for boot speed.
 #
-# Rule for this stage: if it is not needed to reach the session, it is not
-# configured. Anything optional is behind a flag in config.sh.
+# This stage defines no display stack and no UI. It leaves the system reachable
+# over serial and SSH, with the hardware drivers installed and available. A
+# graphics or terminal stack is added later, outside this base.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . ./config.sh
@@ -64,7 +65,7 @@ EOF
 
 mkdir -p "$ROOT/etc/systemd/system.conf.d"
 cat > "$ROOT/etc/systemd/system.conf.d/10-cpz-watchdog.conf" <<'EOF'
-# An appliance must recover from a hung session, not sit on a black screen.
+# An appliance must recover from a hang, not sit dead until the battery drains.
 [Manager]
 RuntimeWatchdogSec=15s
 RebootWatchdogSec=60s
@@ -76,207 +77,31 @@ for unit in systemd-timesyncd.service systemd-binfmt.service; do
     in_root "systemctl mask $unit >/dev/null 2>&1 || true"
 done
 
-# The session engine. cpz-session is the DRM broker and starts the
-# unprivileged cpz-term renderer. There is no compositor and no login prompt.
-rm -f "$ROOT/etc/systemd/system/cpz-menud.service"
-install -d "$ROOT/usr/lib/tmpfiles.d"
-cat > "$ROOT/usr/lib/tmpfiles.d/cpz.conf" <<'EOF'
-d /run/cpz 0755 cpz cpz -
-EOF
-install -m 0644 src/tmux.conf "$ROOT/etc/tmux.conf"
-install -m 0755 src/cpz-tmux-start.sh "$ROOT/usr/local/bin/cpz-tmux-start"
-
-cat > "$ROOT/etc/systemd/system/cpz-shell.service" <<'EOF'
-[Unit]
-Description=Cardputer Zero UI registry and provider broker
-DefaultDependencies=no
-After=systemd-udevd.service systemd-tmpfiles-setup.service
-Before=cpz-tmux.service cpz-session.service
-StartLimitIntervalSec=0
-
-[Service]
-User=cpz
-Group=cpz
-Environment=HOME=/home/cpz
-Environment=XDG_RUNTIME_DIR=/run/user/1000
-Environment=TMUX_TMPDIR=/run/cpz
-ExecStart=/usr/local/bin/cpz-shell
-Restart=always
-RestartSec=0.2
-KillMode=control-group
-
-[Install]
-WantedBy=sysinit.target
-EOF
-
-cat > "$ROOT/etc/systemd/system/cpz-tmux.service" <<'EOF'
-[Unit]
-Description=Cardputer Zero tmux server
-DefaultDependencies=no
-After=cpz-shell.service
-Wants=cpz-shell.service
-Before=cpz-session.service
-StartLimitIntervalSec=0
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-User=cpz
-Group=cpz
-Environment=HOME=/home/cpz
-Environment=XDG_RUNTIME_DIR=/run/user/1000
-Environment=TMUX_TMPDIR=/run/cpz
-ExecStart=/usr/local/bin/cpz-tmux-start
-ExecStop=/usr/bin/tmux -L cpz kill-server
-KillMode=process
-
-[Install]
-WantedBy=sysinit.target
-EOF
-
-cat > "$ROOT/etc/systemd/system/cpz-session.service" <<'EOF'
-[Unit]
-Description=Cardputer Zero DRM terminal session
-DefaultDependencies=no
-After=systemd-modules-load.service systemd-udevd.service cpz-tmux.service
-Wants=cpz-tmux.service
-Before=basic.target getty.target
-Conflicts=getty@tty1.service
-StartLimitIntervalSec=0
-
-[Service]
-Type=notify
-NotifyAccess=main
-WatchdogSec=10
-Environment=TERM=linux
-ExecStart=/usr/local/bin/cpz-session --term /usr/local/bin/cpz-term
-Restart=always
-RestartSec=0.2
-KillMode=control-group
-TimeoutStopSec=5
-
-[Install]
-WantedBy=sysinit.target
-EOF
-
-# System providers: ordinary daemons on the same protocol, shipped with the
-# image, with reserved priority. They only supply typed widgets.
-for prov in battery clock network bluetooth volume; do
-    cat > "$ROOT/etc/systemd/system/cpz-$prov.service" <<EOF
-[Unit]
-Description=Cardputer Zero $prov provider
-DefaultDependencies=no
-After=cpz-shell.service
-Wants=cpz-shell.service
-Before=cpz-session.service
-StartLimitIntervalSec=0
-
-[Service]
-User=cpz
-Group=cpz
-Environment=HOME=/home/cpz
-Environment=XDG_RUNTIME_DIR=/run/user/1000
-Environment=TMUX_TMPDIR=/run/cpz
-ExecStart=/usr/local/bin/cpz-$prov --provider
-Restart=always
-RestartSec=2
-KillMode=control-group
-
-[Install]
-WantedBy=sysinit.target
-EOF
-done
-
-in_root "systemctl enable cpz-shell.service cpz-tmux.service cpz-session.service \
-         cpz-battery.service cpz-clock.service cpz-network.service \
-         cpz-bluetooth.service cpz-volume.service \
-         >/dev/null 2>&1 || true"
-
-in_root "systemctl disable getty@tty1.service >/dev/null 2>&1 || true"
-# Serial recovery shell. The panel has no fbcon, so this is the only local
-# login path if SSH is down.
-in_root "systemctl enable serial-getty@ttyS0.service >/dev/null 2>&1 || true"
-
-# Never start a getty nobody can see.
-for vt in 2 3 4 5 6; do
+# --- login paths ------------------------------------------------------------
+# There is no display output on this image, so a tty getty would be a prompt
+# nobody can see. Local access is the serial console; remote access is SSH.
+log "configuring login paths"
+for vt in 1 2 3 4 5 6; do
     in_root "systemctl disable getty@tty$vt.service >/dev/null 2>&1 || true"
 done
+in_root "systemctl enable serial-getty@ttyS0.service >/dev/null 2>&1 || true"
 
 # --- boot speed: module autoload -------------------------------------------
-# i2c-dev is what turns the vendor's i2c1 bus into /dev/i2c-1. Nothing else is
-# loaded at boot; every other module comes from the device-tree overlay.
+# i2c-dev is what turns the vendor's i2c1 bus into /dev/i2c-1. It is generic
+# hardware access for whatever stack is added later; display modules are
+# deliberately not loaded at boot.
 cat > "$ROOT/etc/modules-load.d/cpz.conf" <<'EOF'
 i2c-dev
 EOF
 
 # --- boot speed: udev -------------------------------------------------------
 cat > "$ROOT/etc/udev/rules.d/70-cpz-permissions.rules" <<'EOF'
-# Device nodes the device packages will need; harmless for a bare shell.
+# Device nodes the hardware needs; harmless for a bare shell.
 SUBSYSTEM=="gpio",  KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
 SUBSYSTEM=="spidev",                     GROUP="spi",  MODE="0660"
 SUBSYSTEM=="i2c-dev",                    GROUP="i2c",  MODE="0660"
 SUBSYSTEM=="input",  KERNEL=="event*",   GROUP="input", MODE="0660"
-SUBSYSTEM=="backlight",                      GROUP="video", MODE="0660"
 EOF
-
-# --- panel bring-up -------------------------------------------------------
-# The panel device (spi0.0) is created by the device tree, but its driver has
-# no matching SPI modalias, so udev never autoloads it. Load it explicitly and
-# before vc4 so the panel DRM card probes first and the session can find it
-# without waiting for an unrelated driver event.
-#
-# All display dependencies are loaded here, not left to udev coldplug. The
-# important one is gpio_forwarder: the board overlay adds a third entry to
-# spi0's cs-gpios pointing at its GPIO chip. Until that chip exists,
-# spi_register_controller() returns -EPROBE_DEFER and the panel DRM card does
-# not appear for several seconds. i2c_bcm2835/spi_bcm2835 must exist before
-# m5ioe1/panel, and m5ioe1 before pwm_bl_m5stack (the panel backlight PWM).
-# vc4 is only useful when the HDMI overlay is enabled. Loading it without the
-# overlay probes a card that does not exist.
-VC4_MODULE=""
-if [ "$ENABLE_HDMI" = "1" ]; then
-    VC4_MODULE="vc4"
-fi
-cat > "$ROOT/etc/modules-load.d/cpz-panel.conf" <<EOF
-i2c-dev
-gpio_forwarder
-i2c_bcm2835
-spi_bcm2835
-m5ioe1
-pwm_bl_m5stack
-tca8418_keypad_m5stack
-panel-mipi-dbi-m
-$VC4_MODULE
-EOF
-install -d "$ROOT/etc/modprobe.d"
-cat > "$ROOT/etc/modprobe.d/cpz-panel.conf" <<'EOF'
-# Panel first, then vc4: keep the panel DRM card probe deterministic.
-softdep vc4 pre: panel-mipi-dbi-m
-EOF
-
-# --- panel backlight ------------------------------------------------------
-# The kernel backlight stack never programs this panel's PWM on 6.18, so the
-# panel stays dark until someone writes the m5ioe1 registers over I2C.
-# cpz-session owns the backlight and calls cpz-backlight on output changes.
-
-# --- boot report ----------------------------------------------------------
-# Runs once per boot after the session is up and copies the result to the FAT
-# boot partition, so a dark panel can be diagnosed by reading the SD card.
-cat > "$ROOT/etc/systemd/system/cpz-report.service" <<'EOF'
-[Unit]
-Description=Cardputer Zero boot report
-After=multi-user.target cpz-session.service
-Wants=cpz-session.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/cpz-report
-TimeoutStartSec=30
-
-[Install]
-WantedBy=multi-user.target
-EOF
-in_root "systemctl enable cpz-report.service >/dev/null 2>&1 || true"
 
 # --- optional: SSH ----------------------------------------------------------
 if [ "$ENABLE_SSH" = "1" ]; then
@@ -326,30 +151,17 @@ dtoverlay=spk-gpio24-high-overlay" ;;
     *)  die "unknown BOARD '$BOARD' (expected v3 or v5)" ;;
 esac
 
-if [ "$ENABLE_HDMI" = "1" ]; then
-    HDMI_LINE="dtoverlay=vc4-kms-v3d"
-else
-    HDMI_LINE="#dtoverlay=vc4-kms-v3d   # disabled: internal panel only"
-fi
-# fbcon must stay off the panel: it would take the panel's DRM master and the
-# SDL/KMS session could no longer draw there. Disable it entirely. Recovery is
-# over serial or SSH.
-FBCON=" fbcon=map:off"
-CMDLINE_EXTRA=" panic=10"
-SERIAL_CONSOLE="console=ttyS0,115200"
-WATCHDOG_LINE="dtparam=watchdog=on"
-
+# The board overlay describes the keypad, PMIC, battery gauge, audio codec and
+# IMU rails. It is hardware description only; no display policy is configured
+# here. The panel/HDMI drivers are present in the image for a later stack.
 cat > "$ROOT/boot/config.txt" <<EOF
-# Cardputer Zero — cpz-arch minimal CLI profile ($BOARD)
+# Cardputer Zero — cpz-arch base profile ($BOARD)
 # Generated by scripts/30-configure.sh. Edit config.sh, not this file.
 
 arm_64bit=1
-disable_fw_kms_setup=1
-disable_overscan=1
 
-# Do not probe hardware we do not have. Both probes cost boot time.
+# Do not probe hardware we do not have.
 camera_auto_detect=0
-display_auto_detect=0
 
 # Buses the Cardputer Zero needs.
 dtparam=i2c_arm=on
@@ -357,43 +169,24 @@ dtparam=i2s=on
 dtparam=spi=on
 dtparam=audio=off
 
-# Serial console available for recovery; nothing writes to it unless the kernel
-# command line asks for console=serial0,115200.
+# Serial console available for recovery.
 enable_uart=1
 
 # USB host mode.
 dtoverlay=dwc2
 
-$HDMI_LINE
-
-# Disable spidev@0/@1 so the panel can own SPI0 chip select 0.
-# Must come after dtparam=spi=on and before the board overlay.
-dtoverlay=cpz-spi
-
-# Vendor board overlay: panel, keypad, M5 IO expander, backlight, audio,
-# power-fail handler, LEDs, battery gauge and IMU.
+# Vendor board overlay: keypad, M5 IO expander, audio, power-fail handler,
+# LEDs, battery gauge and IMU.
 $BOARD_OVERLAYS
 
-# Minimum the Pi firmware recommends for vc4; the panel path does not need more.
-gpu_mem=64
-
-# Early-boot splash on the SPI panel. The stock firmware's Splash Asm
-# interpreter draws the same white triangle that cpz-ui repeats when it takes
-# the display, so the panel is not black while Linux probes the panel.
-splash_screen=cpz-splash.bin
-
-$WATCHDOG_LINE
+dtparam=watchdog=on
 EOF
 
-# Splash Asm binary (source: src/make-splash.py). It lives in the firmware's
-# boot partition root next to config.txt.
-install -m 0644 src/cpz-splash.bin "$ROOT/boot/cpz-splash.bin"
-
-# No initramfs: the kernel, SD/MMC, ext4 and the panel driver are either built
-# in or loaded from the device-tree overlay, so the firmware boots straight
-# into the root filesystem.
+# No initramfs: the kernel, SD/MMC and ext4 are either built in or loaded from
+# the device-tree overlay, so the firmware boots straight into the root
+# filesystem. fbcon is mapped off: this image has no display output.
 cat > "$ROOT/boot/cmdline.txt" <<EOF
-root=PARTUUID=$ROOT_PARTUUID rw rootfstype=ext4 rootwait noatime quiet loglevel=3 logo.nologo vt.global_cursor_default=0 audit=0 $SERIAL_CONSOLE$FBCON$CMDLINE_EXTRA
+root=PARTUUID=$ROOT_PARTUUID rw rootfstype=ext4 rootwait noatime quiet loglevel=3 audit=0 console=ttyS0,115200 fbcon=map:off panic=10
 EOF
 
 # --- size: drop what is not on the boot path -------------------------------

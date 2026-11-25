@@ -1,68 +1,71 @@
 # Agent rules — cpz-arch
 
-Read `README.md` and `docs/` before changing the system. These rules are part of
-the architecture, not suggestions. If a change needs to break one, stop and ask
-the product owner.
+Read `README.md` and `config.sh` before changing the system. These rules are
+part of the architecture, not suggestions. If a change needs to break one, stop
+and ask the product owner.
 
-## Product and UI
+## What this tree is
 
-1. **One unified UI.** Applications do not draw their own chrome, status bar or
-   menu. They use the shared TUI primitives and the shell protocol.
-2. **Register, do not hardcode.** An app appears in Home through a `*.app`
-   manifest. `cpz-shell` and `cpz-launcher` contain no application names.
-3. **The shell owns presentation; apps own data.** A provider publishes typed
-   widgets. It never draws the panel.
-4. **Minimalism.** No permanent footer, hint bar or key legend. All shortcuts
-   and instructions live in `cpz-help`. Prefer useful content over chrome.
-5. **Real icons only.** Icons are raster images, not font glyphs or emoji. If
-   an icon is missing, leave the gutter blank; never substitute a symbol.
-6. **Keyboard first.** No primary flow may require a mouse. Optional mouse
-   support must not change the keyboard model.
-7. **Design tokens only.** Colours, fonts, spacing and borders come from the
-   shared theme. No local palettes or ad-hoc layout systems.
+1. **A base distribution, not a UI.** The image contains the kernel, firmware,
+   hardware drivers, networking and a login path. It defines no display stack,
+   no terminal session and no application layer.
+2. **No display policy.** Do not add DRM, HDMI, panel selection, backlight,
+   splash, framebuffer-console or module-loading decisions to this base. A new
+   stack is added as a separate stage later.
+3. **Drivers stay available, not enabled.** Vendor modules and overlays are
+   installed so a future stack can use them. Do not autoload or configure them
+   in the base.
+4. **One build path.** `make image` and `make verify` are the only supported
+   entry points. Do not add host-root or loop-device requirements.
+5. **No initramfs.** The kernel and ext4 root must stay directly bootable from
+   the firmware.
+6. **No hidden services.** The base enables systemd, networking, SSH (when
+   configured), the serial getty and the watchdog. Anything else needs a
+   reason and the owner's approval.
+7. **Minimalism.** Prefer removing a package or a file over adding a fallback.
+   There is no backward compatibility: git history is the archive.
 
 ## Architecture
 
-8. **One DRM owner.** `cpz-session` owns the card, mode, buffers and master.
-   `cpz-term` is unprivileged and receives the DRM fd. Do not open DRM from a
-   TUI app.
-9. **No compositor.** Do not reintroduce Wayland, X11, SDL, Mesa, Cairo or
-   Pango into the base image. The terminal renders into dumb buffers.
-10. **tmux persists.** The tmux server and `cpz-shell` are independent of the
-    terminal. A terminal restart or output switch must not lose tabs.
-11. **Settings, Battery, Network, Bluetooth and Sound are apps.** Do not embed
-    them in the shell or make the shell depend on their names.
-12. **Query string, not JSON.** Manifests and runtime protocols are
-    line-oriented `key=value`; values are percent-encoded. There is no JSON
-    parser in the image.
-13. **No backward compatibility.** Old protocols, manifests and UI are deleted,
-    not wrapped in shims. Git history is the archive.
-14. **Efficiency is a requirement.** Watch boot time, RAM, CPU, process count
-    and wakeups. No 5-second shell polls. Use events or compiled daemons.
+8. **Rootfs is installed by pacman.** `scripts/10-rootfs.sh` builds it from an
+   empty directory; do not reintroduce a distro tarball as the image source.
+9. **Boot files are generated.** `scripts/30-configure.sh` owns
+   `/boot/config.txt` and `/boot/cmdline.txt`; edit `config.sh`, not the image.
+10. **Hardware description only.** The board overlay describes the keypad,
+    PMIC, battery gauge, audio codec and IMU. It must not become a display
+    configuration.
+11. **One kernel.** `linux-rpi` is pinned by the package set. Do not add a
+    second kernel or a package that replaces the boot firmware.
+12. **Identity is explicit.** Hostname, user, locale and timezone come from
+    `config.sh`. `root` stays locked and `sudo` is the only escalation path.
+13. **Small image.** Keep `ROOT_MB` honest; `make image` refuses to build when
+    the rootfs does not fit.
+
+## Security
+
+14. **No shell for launches.** Use argv arrays. The base has no launcher, but
+    any future helper follows the same rule.
+15. **No secrets in the image.** The default password is a development
+    convenience; document it and do not add keys or tokens.
+16. **Network is opt-in by flag.** `ENABLE_SSH=1` is the only reason networkd,
+    resolved and sshd are enabled.
 
 ## Process
 
-15. **Ask when unsure.** Ask about product behaviour and the user's experience,
-    not only about implementation details.
-16. **Serious changes are loud.** If a change cuts or materially changes system
-    properties (graphics, persistence, input, compatibility, security, size),
-    tell the owner and record the trade-off in the plan/docs before shipping.
-17. **Security.** Use argv arrays, not a shell, for launches. Apps run as
-    `cpz`; root belongs to the session and narrow helpers only.
-18. **Verify, then commit.** `make verify` must pass. Update docs and tests with
-    every architectural change. Hardware-only gaps must be stated explicitly.
+17. **Ask when unsure.** Ask about product scope before deleting or adding a
+    subsystem.
+18. **Serious changes are loud.** If a change alters boot, hardware support,
+    persistence, login or security, say so and record the trade-off in the
+    README.
+19. **Verify, then commit.** `make verify` must pass. Update README, `config.sh`
+    comments and `scripts/50-verify.sh` with every architectural change.
+    Hardware-only gaps must be stated explicitly.
 
 ## Current map
 
-- `src/cpz-session.c` — DRM broker/supervisor.
-- `src/term/cpz-term.c` — DRM/libtsm/FreeType/xkb/evdev terminal.
-- `src/cpz-shell.c` — manifest registry, provider broker, tmux panel.
-- `src/cpz-launcher.c` — Home TUI.
-- `src/cpz-help.c` — the only place for shortcuts.
-- `src/cpz-settings.c` — Settings app.
-- `src/cpz-battery.c`, `cpz-clock.c`, `cpz-network.c`, `cpz-bluetooth.c`,
-  `cpz-volume.c` — apps + providers.
-- `src/manifests/*.app` — app registration.
-- `src/icons/*.rgba` + `icons.map` — real icons.
-- `src/cpz-query.h` — key=value/percent-encoding helpers.
-- `docs/` — architecture, protocol, UI and terminal rules.
+- `config.sh` — board, packages, identity, image geometry.
+- `scripts/10-rootfs.sh` — pacman rootfs, no initramfs.
+- `scripts/20-device.sh` — vendor modules, overlays, firmware, keymaps.
+- `scripts/30-configure.sh` — identity, boot files, login paths, pruning.
+- `scripts/40-image.sh` — FAT32 + ext4 + MBR without loop devices.
+- `scripts/50-verify.sh` — base-image and no-UI invariants.

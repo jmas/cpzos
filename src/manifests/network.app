@@ -1,9 +1,0 @@
-id=network
-name=Network
-desc=Wi-Fi and Ethernet
-exec=/usr/local/bin/cpz-network
-type=tui
-icon=network
-category=System
-order=320
-provider=1
