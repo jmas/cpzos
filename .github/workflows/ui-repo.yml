@@ -47,7 +47,7 @@ jobs:
 
       - name: Sign and build the repository
         env:
-          CHANNEL: ${{ github.event.inputs.channel || 'stable' }}
+          CHANNEL: ${{ github.event.inputs.channel || (endsWith(github.ref_name, '-beta') && 'beta' || 'stable') }}
           SITE_DIR: master/site
           GPG_PRIVATE_KEY: ${{ secrets.CPZ_UI_GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.CPZ_UI_GPG_PASSPHRASE }}
