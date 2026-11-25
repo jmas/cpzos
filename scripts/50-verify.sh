@@ -21,7 +21,7 @@ KVER=$(kernel_version)
 fail=0
 ok()   { printf '  \033[1;32mok\033[0m   %s\n' "$*"; }
 bad()  { printf '  \033[1;31mFAIL\033[0m %s\n' "$*"; fail=1; }
-need() { if eval "$2" >/dev/null 2>&1; then ok "$1"; else bad "$1"; fi; }
+need() { if ( set +o pipefail; eval "$2" ) >/dev/null 2>&1; then ok "$1"; else bad "$1"; fi; }
 absent() { if eval "$2" 2>&1 | grep -q 'File not found'; then ok "$1"; else bad "$1"; fi; }
 need_absent_pkg() { if pacman --root "$ROOT" -Q "$1" >/dev/null 2>&1; then bad "no $1"; else ok "no $1"; fi; }
 need_pkg() { if pacman --root "$ROOT" -Q "$1" >/dev/null 2>&1; then ok "$1 installed"; else bad "$1 installed"; fi; }
