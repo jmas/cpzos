@@ -122,12 +122,17 @@ The vendor `99-cardputer-zero-lcd.rules` and
 
 - Home lists Apps Manager, Settings, Terminal and installed catalog apps; it
   does not list itself, Foot, Foot Client, Foot Server or Help.
-- `Enter` on Terminal runs a shell in the tab and renames it. Exiting the
-  shell returns to Home in the same tab; the screen never goes black.
+- Typing a letter in Home starts search; a Shift letter is inserted as the
+  first character. While the field is focused, `F`/`X`/`Z`/`C` type letters.
+- `Enter` on Terminal runs a shell in the tab and renames it. Typing echoes
+  normally, arrows and backspace work. Exiting the shell returns to Home in the
+  same tab; the screen never goes black.
 - `Alt+O` opens Apps Manager; it reads the baked catalog without network.
-- Apps Manager: `Z`/`C` switch categories, `F`/`X` move, `Tab` searches,
-  `Enter` opens the detail screen. Installing asks first, then runs the full
-  `pacman -Syu` transaction; removing asks with **No** focused.
+- Apps Manager opens on a menu: `Update app list`, `Installed`, and the
+  non-empty categories. `Enter` opens a category, `Esc` goes back.
+- Inside a category, `F`/`X` move, `Typing` or `Tab` searches, `Enter` opens
+  the detail screen. Installing asks first, then runs the full `pacman -Syu`
+  transaction; removing asks with **No** focused.
 - Removing Home, Apps Manager, Settings or the catalog is refused.
 - `cpz-app apps install <pkg> --yes` works over SSH; without `--yes` it exits 3.
 - The catalog date is visible on `Update app list`; entering Apps Manager

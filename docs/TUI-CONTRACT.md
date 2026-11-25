@@ -84,7 +84,10 @@ the four physical letters for its layout to the kit's keymap table before the
 translation ships.
 
 While a text field has focus, `F`/`X`/`Z`/`C` type letters; arrows remain on
-the Fn layer. Never capture printable letters globally.
+the Fn layer. In a list, typing a printable character (including a Shift
+letter) starts search; from that point the d-pad keys are text. Never capture
+printable letters globally, and never let a navigation key win over an active
+search field.
 
 ## 4. Screen anatomy
 

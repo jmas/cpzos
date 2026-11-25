@@ -224,10 +224,15 @@ is a plain login shell.
 The product name is **Apps Manager**; the binary token and desktop entry id
 stay short (`cpz-app apps`, `cpz-apps-manager.desktop`).
 
-- Header: `Apps Manager · <category>` and `n/total`. `Z`/`C` switch categories;
-  `F`/`X` move; `Tab` focuses search; `Enter` opens the detail screen.
+- The root screen is a menu: `Update app list`, `Installed`, then only the
+  categories that contain apps. `F`/`X` move; `Enter` opens the category;
+  `Esc` leaves the menu.
+- A category screen lists its apps with the count in the header. `F`/`X` move;
+  `Tab` or any printable character starts search; `Enter` opens the detail
+  screen; `Esc` returns to the menu.
 - Search is incremental over name, comment, keywords and package, in the
   active language plus the English original. `Esc` clears; `Tab` returns.
+  While the field has focus, `F`/`X`/`Z`/`C` are letters, not navigation.
 - Detail screen shows name, version, comment, categories, size and state, then
   a vertical action list: **Open** (installed), **Install** (available),
   **Remove** (installed, non-system), **Back**. System apps show
@@ -236,9 +241,8 @@ stay short (`cpz-app apps`, `cpz-apps-manager.desktop`).
   **No** focused. Install always asks: it runs a full system upgrade, so the
   dialog names the package, the display size and that the system is updated
   too.
-- The first row of the **All** category is `Update app list`, which forces the
-  refresh now (the automatic one is rate-limited to once per 10 minutes). It is
-  hidden inside the other categories to keep them short.
+- `Update app list` forces the refresh now (the automatic one is rate-limited
+  to once per 10 minutes). It is always the first menu row.
 - Install/remove refresh the list in place; the removed entry disappears,
   installed entries get the installed marker.
 
@@ -256,7 +260,8 @@ Apps Manager · All            2/12
   (`set -g default-command "/usr/bin/cpz-app home"`).
 - One list of system and installed catalog apps, same rows and search as
   Apps Manager, plus `Terminal` (the shell entry), `Apps Manager` and
-  `Settings`. `Enter` runs the app **in the current tab** under a supervisor:
+  `Settings`. Typing any printable character, including a Shift letter, starts
+  search; `F`/`X`/`Z`/`C` then type instead of moving. `Enter` runs the app **in the current tab** under a supervisor:
   the tab is renamed to the app, the app owns the terminal, and on exit the
   supervisor starts Home again in the same tab. The tab never turns into a
   black screen and never disappears because an app quit.
