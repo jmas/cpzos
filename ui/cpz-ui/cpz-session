@@ -30,11 +30,13 @@ connected() {
     [ -r "$1/status" ] && [ "$(cat "$1/status")" = connected ]
 }
 
+CARD_KIND=""
 find_card() {
     # HDMI first: a connected monitor is the larger surface.
     for c in /sys/class/drm/card*-HDMI-A-*; do
         [ -e "$c" ] || continue
         if connected "$c"; then
+            CARD_KIND=hdmi
             basename "$c" | cut -d- -f1
             return 0
         fi
@@ -42,6 +44,7 @@ find_card() {
     for c in /sys/class/drm/card*-SPI-*; do
         [ -e "$c" ] || continue
         if connected "$c"; then
+            CARD_KIND=spi
             basename "$c" | cut -d- -f1
             return 0
         fi
@@ -49,6 +52,7 @@ find_card() {
     for c in /sys/class/drm/card*-*; do
         [ -e "$c" ] || continue
         if connected "$c"; then
+            CARD_KIND=other
             basename "$c" | cut -d- -f1
             return 0
         fi
@@ -67,11 +71,11 @@ done
 [ -n "$CARD" ] || { log "no connected DRM output"; exit 1; }
 
 export WLR_DRM_DEVICES="/dev/dri/$CARD"
-log "using $WLR_DRM_DEVICES"
+log "using $WLR_DRM_DEVICES ($CARD_KIND)"
 
-case "$CARD" in
-    *SPI*) sudo -n /usr/lib/cpz/backlight on >/dev/null 2>&1 || true ;;
-    *)     sudo -n /usr/lib/cpz/backlight off >/dev/null 2>&1 || true ;;
+case "$CARD_KIND" in
+    spi) sudo -n /usr/lib/cpz/backlight on >/dev/null 2>&1 || true ;;
+    *)   sudo -n /usr/lib/cpz/backlight off >/dev/null 2>&1 || true ;;
 esac
 
 # tmux is a separate service and must already be running.
