@@ -2,16 +2,16 @@
 
 Status: agreed on `design/app-platform` (2026-11-26). The repository name, the
 stack, Home semantics, the update policy and the product names are decided.
-An MVP is implemented in `jmas/cpzos-apps` (Go 1.24, Bubble Tea 1.3): the three
+An MVP is implemented in `jmas/cpzos-apps` (Go 1.24, Bubble Tea 1.3): the four
 system apps, the catalog generator, the helper and the packaging. Signing,
 publishing and device validation are still pending.
 
 Decided: `jmas/cpzos-apps` with curated pull requests; Go + Bubble Tea; Home
 replaces the tab with the chosen app; installs run a full `pacman -Syu`; the
-three system apps are preinstalled with the UI and are named **Home**, **Apps
-Manager** and **Settings**; the default UI language is `en`; the UI image
-bakes the current app catalog at build time and Apps Manager refreshes it in
-the background.
+four system apps are preinstalled with the UI and are named **Home**, **Apps
+Manager**, **Settings** and **Terminal**; the default UI language is `en`; the
+UI image bakes the current app catalog at build time and Apps Manager refreshes
+it in the background.
 
 First release: catalogs ship `en` and `uk`; the other nine codes resolve to
 `en` until translated. Home is tracked in Apps Manager's **System** category
@@ -28,11 +28,13 @@ Related: [APP-CONTRACT.md](APP-CONTRACT.md) (desktop entries),
 Applications live in a separate signed repository, `cpzos-apps`, built and
 published like the UI. A package installs one or more freedesktop desktop
 entries; CI generates the catalog entry from those entries. The system ships
-three preinstalled console apps in one protected package (`cpz-system-apps`):
-**Home** (what a new tab shows), **Apps Manager** (browse, install, remove,
-open) and **Settings**. All three are one Go binary built on the shared
-`internal/tui` kit. Apps Manager browses a signed catalog, installs and removes
-packages through one narrow privileged helper, and never evaluates a shell.
+four preinstalled apps in one protected package (`cpz-system-apps`): **Home**
+(what a new tab shows), **Apps Manager** (browse, install, remove, open),
+**Settings** and **Terminal**. Home, Apps Manager and Settings are one Go
+binary built on the shared `internal/tui` kit; Terminal is a desktop entry
+that starts a login shell. Apps Manager browses a signed catalog, installs and
+removes packages through one narrow privileged helper, and never evaluates a
+shell.
 The same operations are available headless with flags for scripts and tests.
 The desktop entry stays the single source of truth for name, description,
 category, keywords and launch line; translations follow
@@ -108,14 +110,15 @@ cpzos-apps/
 
 | Package | Contents |
 | --- | --- |
-| `cpz-system-apps` | `cpz-app` binary, Home, Apps Manager, Settings, desktop entries, helper client, sudoers rule |
+| `cpz-system-apps` | `cpz-app` binary, Home, Apps Manager, Settings, Terminal entry, helper client, sudoers rule |
 | `cpz-apps-catalog` | data-only catalog: generated `/usr/share/cpz/catalog/apps.json`; regenerated per release |
 | `cpz-app-<name>` | first-party apps (convention, not a requirement) |
 | any | third-party apps, `groups=('cpz-apps')` recommended |
 
-- The three system apps are preinstalled: `cpz-ui` depends on
+- The four system apps are preinstalled: `cpz-ui` depends on
   `cpz-system-apps`. The clean base image still has no UI at all, by design;
-  any image or system with the UI gets Home, Apps Manager and Settings.
+  any image or system with the UI gets Home, Apps Manager, Settings and
+  Terminal.
 - That same dependency is what makes the system apps non-removable through
   pacman, not just a UI rule.
 - `cpz-system-apps` depends on `cpz-apps-catalog`, so browsing works offline
@@ -205,11 +208,12 @@ CI from the built packages, so it cannot drift from the desktop entries:
 - The background refresh updates the catalog only. It never upgrades installed
   apps without a confirmed transaction.
 
-## 7. The three system apps
+## 7. The four system apps
 
-All three obey `TUI-CONTRACT.md`: plain `F`/`X`/`Z`/`C` navigation, `Enter`,
-`Esc`, one focus bar, no footer, no borders, panel-first; all strings come from
-their catalogs per [LANGUAGE.md](LANGUAGE.md).
+The three `cpz-app` screens obey `TUI-CONTRACT.md`: plain `F`/`X`/`Z`/`C`
+navigation, `Enter`, `Esc`, one focus bar, no footer, no borders, panel-first;
+all strings come from their catalogs per [LANGUAGE.md](LANGUAGE.md). Terminal
+is a plain login shell.
 
 ### 7.1 Apps Manager
 
@@ -273,6 +277,17 @@ Apps Manager · All            2/12
   frame.
 - Read-only screen. `Esc` returns to the list.
 
+### 7.4 Terminal
+
+- A desktop entry from the same package: `Exec=bash -l`, `Terminal=true`,
+  `Categories=System;TerminalEmulator;`, `X-CPZ-System=true`.
+- From Home it replaces the tab with a login shell and renames it `Terminal`;
+  from Apps Manager it opens a new tab. Closing the shell closes the tab; when
+  it was the last tab, the session recreates Home.
+- No wrapper and no settings: the shell is the application. The entry is in
+  the **System** category and cannot be removed without removing the system
+  apps package.
+
 ## 8. Privileged operations
 
 The session runs as `cpz`. One helper does all package work:
@@ -319,7 +334,7 @@ is unsupported and not defended against.
 - Field codes `%f`, `%u`, `%F`, `%U` have no document source in this UI;
   Apps Manager refuses entries that require one and shows the reason. `%i`,
   `%c`, `%k` expand as usual.
-- `Terminal=false` entries are out of scope for the three system apps;
+- `Terminal=false` entries are out of scope for the four system apps;
   Apps Manager still lists them but its Open action uses the session launcher
   path, not tmux.
 - Opening an app from Apps Manager does not close it. It stays on its tab
@@ -388,8 +403,8 @@ cpz-app settings about [--json]
 - `ui/cpz-ui`: depends on `cpz-system-apps`; `Alt+O` opens Apps Manager;
   `default-command` is Home. The `fzf` launcher stays packaged as a fallback
   until Apps Manager passes the hardware checklist.
-- `docs/HARDWARE-TEST.md`: checklist updated for Home, Apps Manager, the
-  catalog and the language.
+- `docs/HARDWARE-TEST.md`: checklist updated for Home, Apps Manager,
+  Settings, Terminal, the catalog and the language.
 
 ## 13. Remaining work
 

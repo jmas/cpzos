@@ -90,7 +90,7 @@ The package pulls `cage`, `foot`, `tmux`, the status helper and
 
 ## Applications
 
-Home, Apps Manager and Settings ship from the separate
+Home, Apps Manager, Settings and Terminal ship from the separate
 [`cpzos-apps`](https://github.com/jmas/cpzos-apps) repository as
 `cpz-system-apps`; `cpz-ui` depends on it. The UI image bakes the current app
 catalog, and Apps Manager refreshes it in the background. Point the build at

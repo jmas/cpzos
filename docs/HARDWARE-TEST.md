@@ -132,7 +132,10 @@ The vendor `99-cardputer-zero-lcd.rules` and
 - The catalog date is visible on `Update app list`; entering Apps Manager
   refreshes it in the background and never blocks input.
 - `CPZ_LANG=uk cpz-app apps` shows Ukrainian strings; the default is English.
-- `desktop-file-validate` passes for the three system entries.
+- `desktop-file-validate` passes for the four system entries.
+- Terminal starts a login shell in the current tab (from Home) or a new tab
+  (from Apps Manager); `Alt+W` closes it and Home returns if it was the last
+  tab; it cannot be removed from Apps Manager.
 
 ### Status and notifications
 

@@ -103,7 +103,9 @@ if [ "$UI_TEST" = "1" ]; then
     need "ui tmux loads config" "debugfs -R 'cat /usr/lib/cpz/tmux-start' $ROOTIMG | grep -q -- '-f /etc/cpz/tmux.conf'"
     need "ui tmux enabled"     "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q cpz-tmux"
     need "ui session enabled"  "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q 'cpz-ui@tty1'"
-    need "ui desktop entry"    "debugfs -R 'stat /usr/share/applications/cpz-terminal.desktop' $ROOTIMG | grep -q Inode"
+    need "terminal entry"      "debugfs -R 'stat /usr/share/applications/cpz-terminal.desktop' $ROOTIMG | grep -q Inode"
+    need "terminal is system"  "debugfs -R 'cat /usr/share/applications/cpz-terminal.desktop' $ROOTIMG | grep -q '^X-CPZ-System=true'"
+    need "terminal owned by system apps" "pacman --root $ROOT -Qoq $ROOT/usr/share/applications/cpz-terminal.desktop | grep -q '^cpz-system-apps$'"
     need "ui help entry"       "debugfs -R 'stat /usr/share/applications/cpz-help.desktop' $ROOTIMG | grep -q Inode"
     need_pkg cpz-system-apps
     need_pkg cpz-apps-catalog

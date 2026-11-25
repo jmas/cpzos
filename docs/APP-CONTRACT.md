@@ -157,7 +157,7 @@ Categories=System;Documentation;
 - A system app is an ordinary entry shipped by `cpz-system-apps` with
   `X-CPZ-System=true`. It appears in Apps Manager like any other app, is
   marked non-removable and never offers Remove.
-- Home, Apps Manager and Settings are preinstalled with the UI: `cpz-ui`
+- Home, Apps Manager, Settings and Terminal are preinstalled with the UI: `cpz-ui`
   depends on `cpz-system-apps`. The clean base image stays UI-free by design.
 - Protection is enforced twice: `cpz-ui` depends on `cpz-system-apps`, and the
   install helper refuses to remove protected packages. The field alone is a

@@ -64,9 +64,9 @@ tr.N("apps.count", n)        // plural bucket via x/text
 
 ## 4. Catalog format
 
-Per binary, `locales/<code>.json`, embedded into the binary. The three system
-apps share one set (`internal/i18n/locales/`); a separate app package keeps its
-own:
+Per binary, `locales/<code>.json`, embedded into the binary. The three
+`cpz-app` screens share one set (`internal/i18n/locales/`); a separate app
+package keeps its own:
 
 ```json
 {

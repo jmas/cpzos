@@ -58,7 +58,6 @@ package() {
     install -Dm644 "$startdir/modprobe.conf"     "$pkgdir/usr/lib/modprobe.d/cpz-ui.conf"
     install -Dm644 "$startdir/tmpfiles.conf"     "$pkgdir/usr/lib/tmpfiles.d/cpz-ui.conf"
 
-    install -Dm644 "$startdir/cpz-terminal.desktop" "$pkgdir/usr/share/applications/cpz-terminal.desktop"
     install -Dm644 "$startdir/cpz-help.desktop"     "$pkgdir/usr/share/applications/cpz-help.desktop"
     install -Dm644 "$startdir/HELP"                 "$pkgdir/usr/share/cpz/HELP"
 }
