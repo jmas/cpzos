@@ -51,6 +51,22 @@ The display drivers remain in `/boot/overlays` and
   `ENABLE_SSH=1`. Change the password before putting the device on a network.
 - **root:** locked (`root:!`); use `sudo`.
 
+## UI packages
+
+The UI is a separate pacman package set. The base image ships the public signing
+key (`keys/cpz-ui-signing.asc`) and enables the stable repository:
+
+```text
+https://jmas.github.io/cpzos/ui/stable/$arch
+```
+
+`/etc/pacman.d/cpz-ui-beta.conf` is installed for the beta channel but is not
+included by default. Add its `Include` line after `cpz-ui.conf` to opt in.
+
+The repository is signed with the CPZ UI key
+`C7DBEDC1B4855ACB0570C7D229C04B0663395458`. The private key lives only in
+GitHub Actions secrets; CI signs packages and the repository database.
+
 ## Build
 
 Docker Desktop on Apple Silicon runs the `linux/arm64` builder natively.
@@ -85,15 +101,21 @@ docker/Dockerfile      arm64 builder with mtools and e2fsprogs
 scripts/10-rootfs.sh   pacman rootfs, no initramfs
 scripts/20-device.sh   vendor modules, overlays, firmware, keymaps
 scripts/30-configure.sh identity, boot files, login paths, pruning
+scripts/35-ui-repo.sh  UI signing key and pacman repository
 scripts/40-image.sh    FAT32 + ext4 + MBR, no loop devices
 scripts/50-verify.sh   base-image invariants
+tools/ui-repo.sh       sign packages and build the static UI repository
+keys/                  public UI signing key
+.github/workflows/     base verify and UI repository publishing
 ```
 
 ## Status and risks
 
-The image builds and passes `make verify`. It has no display output by design;
-bring-up and acceptance of any future stack must be done separately. The
-hardware-only gaps to check on a device are:
+The image builds and passes `make verify`. The UI signing key expires on
+2028-11-24; rotate it before then and ship the new public key in a platform
+update. It has no display output by design; bring-up and acceptance of any
+future stack must be done separately. The hardware-only gaps to check on a
+device are:
 
 1. serial console at 115200 baud and the `cpz` login;
 2. wired DHCP and `sshd`;

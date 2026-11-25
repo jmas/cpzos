@@ -1,0 +1,72 @@
+name: Publish UI repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Repository channel"
+        type: choice
+        options: [stable, beta]
+        default: stable
+  push:
+    tags: ["ui-v*"]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Sign and publish the UI repository
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout the UI branch
+        uses: actions/checkout@v4
+
+      - name: Checkout the site from master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          path: master
+
+      - name: Build the builder image
+        run: docker build --platform linux/arm64 -t cpz-arch-builder docker
+
+      - name: Prepare the package input directory
+        run: mkdir -p out/ui/packages
+
+      - name: Sign and build the repository
+        env:
+          CHANNEL: ${{ github.event.inputs.channel || 'stable' }}
+          SITE_DIR: master/site
+          GPG_PRIVATE_KEY: ${{ secrets.CPZ_UI_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.CPZ_UI_GPG_PASSPHRASE }}
+          GPG_KEY_ID: ${{ secrets.CPZ_UI_GPG_KEY_ID }}
+        run: |
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/work" -w /work \
+            -e CHANNEL -e SITE_DIR \
+            -e GPG_PRIVATE_KEY -e GPG_PASSPHRASE -e GPG_KEY_ID \
+            cpz-arch-builder ./tools/ui-repo.sh
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload the site with the repository
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: master/site
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

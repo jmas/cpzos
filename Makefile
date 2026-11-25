@@ -38,6 +38,7 @@ rootfs: builder
 	$(RUN) ./scripts/10-rootfs.sh
 	$(RUN) ./scripts/20-device.sh
 	$(RUN) ./scripts/30-configure.sh
+	$(RUN) ./scripts/35-ui-repo.sh
 
 image: rootfs
 	$(RUN) ./scripts/40-image.sh

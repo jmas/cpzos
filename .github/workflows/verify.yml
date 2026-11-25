@@ -1,0 +1,30 @@
+name: Verify base image
+
+on:
+  push:
+    branches: ["ui/qualities"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Build and verify the base image
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Docker
+        run: docker version
+
+      - name: Build and verify
+        run: make verify

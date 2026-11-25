@@ -45,8 +45,10 @@ and ask the product owner.
 
 14. **No shell for launches.** Use argv arrays, not a shell, for process
     launches.
-15. **No secrets in the image.** The default password is a development
-    convenience; document it and do not add keys or tokens.
+15. **No secrets in the image.** Only the public UI signing key ships. The
+    private signing key lives in CI secrets and never enters the tree. The
+    default login password is a development convenience; document it and
+    change it on real devices.
 16. **Network is opt-in by flag.** `ENABLE_SSH=1` is the only reason networkd,
     resolved and sshd are enabled.
 
@@ -67,5 +69,9 @@ and ask the product owner.
 - `scripts/10-rootfs.sh` — pacman rootfs, no initramfs.
 - `scripts/20-device.sh` — vendor modules, overlays, firmware, keymaps.
 - `scripts/30-configure.sh` — identity, boot files, login paths, pruning.
+- `scripts/35-ui-repo.sh` — UI signing key and pacman repository config.
 - `scripts/40-image.sh` — FAT32 + ext4 + MBR without loop devices.
 - `scripts/50-verify.sh` — base-image invariants.
+- `tools/ui-repo.sh` — sign packages and build the static UI repository.
+- `keys/` — public UI signing key.
+- `.github/workflows/` — base verify and UI repository publishing.

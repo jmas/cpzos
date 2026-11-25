@@ -209,4 +209,4 @@ The UI answers input before the user can perceive a delay.
 6. Define the promotion/rollback checklist and how the last two releases are
    retained.
 7. Add the public key and the stable/beta repository configuration to the base
-   image in a new stage once the repository exists.
+   image in a new stage once the repository exists. **Done:** `scripts/35-ui-repo.sh`.
