@@ -13,6 +13,11 @@ Menu and tabs
   Alt+Shift+Tab  Previous tab
   Alt+1..9       Select tab
 
+System apps
+-----------
+  F/X/Z/C        Move; Enter opens or applies; Esc goes back
+  Esc            Exits the app at its top level
+
 Panes
 -----
   Alt+V          Split left/right

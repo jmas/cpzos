@@ -114,7 +114,7 @@ The vendor `99-cardputer-zero-lcd.rules` and
   fallback prefix.
 - There is no session chooser, rename or new-session UI.
 - `systemctl restart cpz-ui@tty1.service` returns to the same tmux tab.
-- Closing a terminal app returns to the same tab and working directory.
+- Quitting any app returns to Home in the same tab and working directory.
 - Closing the last tab brings back a fresh Home tab; cage does not restart.
 - `tmux` survives a cage restart.
 
@@ -122,7 +122,8 @@ The vendor `99-cardputer-zero-lcd.rules` and
 
 - Home lists Apps Manager, Settings, Terminal and installed catalog apps; it
   does not list itself, Foot, Foot Client, Foot Server or Help.
-- `Enter` on Terminal replaces the tab with a shell and renames it.
+- `Enter` on Terminal runs a shell in the tab and renames it. Exiting the
+  shell returns to Home in the same tab; the screen never goes black.
 - `Alt+O` opens Apps Manager; it reads the baked catalog without network.
 - Apps Manager: `Z`/`C` switch categories, `F`/`X` move, `Tab` searches,
   `Enter` opens the detail screen. Installing asks first, then runs the full

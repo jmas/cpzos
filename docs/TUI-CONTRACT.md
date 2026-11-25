@@ -58,8 +58,10 @@ screens without text input.
 4. Reserved for tmux: `Alt+*` (daily actions) and `C-a` (prefix). A TUI must
    not require either. `Alt+O`, `Alt+T`, `Alt+W`, `Alt+Tab` and the other
    bindings in `HELP` must keep working from inside an app.
-5. `Esc` is never "quit the tab". It goes back one level, cancels an edit or
-   closes a dialog. Closing a tab stays on `Alt+W`.
+5. `Esc` goes back one level and cancels an edit or a dialog. At the **root**
+   of a system app it exits the app: Home closes its tab, Apps Manager and
+   Settings quit (closing the popup or returning to Home from the supervisor).
+   Closing an arbitrary tab stays on `Alt+W`.
 6. `Ctrl+C` cancels the running operation; at a root screen it exits the app.
    It never leaves the terminal in a broken state.
 

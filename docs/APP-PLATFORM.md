@@ -254,18 +254,17 @@ Apps Manager · All            2/12
 
 - Default command of a new tmux window
   (`set -g default-command "/usr/bin/cpz-app home"`).
-- One list of system and installed catalog apps, same rows and search as Apps Manager, plus
-  `Terminal` (the shell entry), `Apps Manager` and `Settings`. `Enter` launches
-  the app **in the current window** (process replacement), so a tab is "the app
-  you chose", not a launcher that stays behind. Before `exec`, Home renames the
-  tmux window to the app name through argv (`tmux -L cpz rename-window`), so
-  the tab strip stays truthful. When the app exits, the window closes and the
-  tab disappears.
+- One list of system and installed catalog apps, same rows and search as
+  Apps Manager, plus `Terminal` (the shell entry), `Apps Manager` and
+  `Settings`. `Enter` runs the app **in the current tab** under a supervisor:
+  the tab is renamed to the app, the app owns the terminal, and on exit the
+  supervisor starts Home again in the same tab. The tab never turns into a
+  black screen and never disappears because an app quit.
 - Home omits its own desktop entry from the list, so it cannot relaunch
   itself. Apps Manager still shows Home under **System**, because the system
   apps are tracked like every other app.
-- `Esc` at the Home root does nothing; `Alt+W` closes the tab. This avoids
-  killing the last window by accident while keeping one meaning per key.
+- `Esc` at the Home root exits Home (closes the tab); `Alt+W` closes any tab.
+  If Home was the last tab, cpz-attach recreates it.
 - The 50 ms budget means Home must not query pacman; it reads XDG entries and
   the catalog's entry-to-package map only. An entry with no owner there is
   resolved with `pacman -Qo` when selected.
@@ -285,9 +284,9 @@ Apps Manager · All            2/12
 
 - A desktop entry from the same package: `Exec=bash -l`, `Terminal=true`,
   `Categories=System;TerminalEmulator;`, `X-CPZ-System=true`.
-- From Home it replaces the tab with a login shell and renames it `Terminal`;
-  from Apps Manager it opens a new tab. Closing the shell closes the tab; when
-  it was the last tab, the session recreates Home.
+- From Home it runs a login shell in the tab and renames it `Terminal`; from
+  Apps Manager it opens a new tab. Exiting the shell returns to Home in that
+  tab.
 - No wrapper and no settings: the shell is the application. The entry is in
   the **System** category and cannot be removed without removing the system
   apps package.
@@ -333,8 +332,9 @@ is unsupported and not defended against.
 ## 9. Launch semantics
 
 - Terminal apps launch with argv, never through a shell:
-  `tmux -L cpz new-window -- <exec...>` from Apps Manager, or process
-  replacement from Home.
+  `tmux -L cpz new-window` with the CPZ run supervisor from Apps Manager, or
+  the supervisor in the current tab from Home. Both return to Home when the
+  app exits.
 - Field codes `%f`, `%u`, `%F`, `%U` have no document source in this UI;
   Apps Manager refuses entries that require one and shows the reason. `%i`,
   `%c`, `%k` expand as usual.
