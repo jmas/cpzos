@@ -125,10 +125,13 @@ case "$CARD_KIND" in
     *)   sudo -n /usr/lib/cpz/backlight off >/dev/null 2>&1 || true ;;
 esac
 
-# tmux is a separate service and must already be running.
+# tmux is a separate service, but the session can outlive or outdie it (the
+# last tab closing ends the session). Recreate Home instead of failing the
+# whole UI into a restart loop.
 if ! tmux -L cpz has-session -t main 2>/dev/null; then
-    log "tmux server is not running"
-    exit 1
+    log "tmux session missing; creating Home"
+    tmux -f /etc/cpz/tmux.conf -L cpz new-session -d -s main -n Home ||
+        { log "cannot create the tmux session"; exit 1; }
 fi
 tmux -L cpz set-option -g status-right "" >/dev/null 2>&1 || true
 tmux -L cpz run-shell -b /usr/lib/cpz/status >/dev/null 2>&1 || true
