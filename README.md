@@ -33,6 +33,9 @@ splash or application framework. The kernel framebuffer console is mapped off
   hardware capability list.
 - `systemd-networkd` + `systemd-resolved` over wired Ethernet and `sshd` when
   `ENABLE_SSH=1`.
+- USB media automount: udev starts `cpz-automount@<dev>.service`, which mounts
+  filesystems under `/media/<label>` and records them in
+  `/run/cpz-automount`. Unplugging stops the unit and unmounts the filesystem.
 - A 15-second hardware watchdog, an in-memory journal and no initramfs.
 
 ## What is deliberately absent
@@ -95,12 +98,15 @@ The package pulls `cage`, `foot`, `tmux`, the status helper and
 Home, Apps Manager, Settings and Terminal ship from the separate
 [`cpzos-apps`](https://github.com/jmas/cpzos-apps) repository as
 `cpz-system-apps`; `cpz-ui` depends on it. The UI image bakes the current app
-catalog, and Apps Manager refreshes it in the background. Point the build at
-the signed apps repository:
+catalog, and Apps Manager refreshes it in the background. Settings offers a
+full on-device update of the UI, the system apps and the catalog through the
+privileged helper. The boot kernel and bootloader are excluded: the boot files
+are generated into the FAT partition at build time, so a kernel update needs a
+new image. Point the build at the signed apps repository:
 
 ```sh
 make verify UI_TEST=1 \
-  UI_APPS_REPO_STABLE=https://github.com/jmas/cpzos/releases/download/apps-stable
+  UI_APPS_REPO_STABLE=https://github.com/jmas/cpzos-apps/releases/download/apps-stable
 ```
 
 `UI_APPS_CATALOG_VERSION` and `UI_APPS_CATALOG_SHA256` pin the catalog for a

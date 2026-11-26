@@ -96,6 +96,9 @@ if [ "$UI_TEST" = "1" ]; then
     need "ui foot panel size"  "debugfs -R 'cat /etc/cpz/foot.ini' $ROOTIMG | grep -q 'pixelsize=12'"
     need "ui foot fullscreen"  "debugfs -R 'cat /etc/cpz/foot.ini' $ROOTIMG | grep -q 'initial-window-mode=fullscreen'"
     need "ui backlight helper" "debugfs -R 'stat /usr/lib/cpz/backlight' $ROOTIMG | grep -q Inode"
+    need "ui audio helper"     "debugfs -R 'stat /usr/lib/cpz/audio' $ROOTIMG | grep -q Inode"
+    need "ui speaker switch"   "debugfs -R 'cat /usr/lib/cpz/audio' $ROOTIMG | grep -q 'Speaker Switch'"
+    need "ui cage teardown"    "debugfs -R 'cat /usr/lib/cpz/output' $ROOTIMG | grep -q 'pkill -TERM -x cage'"
     need "ui tmux unit"        "debugfs -R 'stat /usr/lib/systemd/system/cpz-tmux.service' $ROOTIMG | grep -q Inode"
     need "ui tmux drop-in"     "debugfs -R 'stat /usr/lib/systemd/system/cpz-ui@.service.d/10-tmux.conf' $ROOTIMG | grep -q Inode"
     need "ui fast restart"     "debugfs -R 'cat /usr/lib/systemd/system/cpz-ui@.service.d/20-restart.conf' $ROOTIMG | grep -q 'TimeoutStopSec=5s'"
@@ -112,7 +115,12 @@ if [ "$UI_TEST" = "1" ]; then
     need_pkg cpz-apps-catalog
     need "cpz-app binary"      "debugfs -R 'stat /usr/bin/cpz-app' $ROOTIMG | grep -q Inode"
     need "app helper"          "debugfs -R 'stat /usr/lib/cpz/app-install' $ROOTIMG | grep -q Inode"
+    need "app helper updates system" "debugfs -R 'cat /usr/lib/cpz/app-install' $ROOTIMG | grep -q 'update-system'"
+    need "app helper pins the boot kernel" "debugfs -R 'cat /usr/lib/cpz/app-install' $ROOTIMG | grep -q -- '--ignore linux-rpi'"
     need "apps sudoers"        "debugfs -R 'cat /etc/sudoers.d/20-cpz-apps' $ROOTIMG | grep -q '/usr/lib/cpz/app-install'"
+    need "media helper"        "debugfs -R 'stat /usr/lib/cpz/media-umount' $ROOTIMG | grep -q Inode"
+    need "media sudoers"       "debugfs -R 'cat /etc/sudoers.d/20-cpz-media' $ROOTIMG | grep -q '/usr/lib/cpz/media-umount'"
+    need "open-with config"    "debugfs -R 'stat /etc/cpz/open-with.conf' $ROOTIMG | grep -q Inode"
     need "protected packages"  "debugfs -R 'cat /usr/share/cpz/protected-packages' $ROOTIMG | grep -q '^cpz-system-apps$'"
     need "apps tmpfiles"       "debugfs -R 'cat /usr/lib/tmpfiles.d/cpz-apps.conf' $ROOTIMG | grep -q '/var/lib/cpz'"
     need "home entry"          "debugfs -R 'stat /usr/share/applications/cpz-app-home.desktop' $ROOTIMG | grep -q Inode"
@@ -186,6 +194,11 @@ need "systemd watchdog config" "debugfs -R 'cat /etc/systemd/system.conf.d/10-cp
 need "volatile journal"        "debugfs -R 'cat /etc/systemd/journald.conf.d/10-cpz.conf' $ROOTIMG | grep -q 'Storage=volatile'"
 need "i2c-dev autoload"        "debugfs -R 'cat /etc/modules-load.d/cpz.conf' $ROOTIMG | grep -q '^i2c-dev$'"
 need "device permissions"      "debugfs -R 'cat /etc/udev/rules.d/70-cpz-permissions.rules' $ROOTIMG | grep -q 'i2c-dev'"
+need "automount helper"        "debugfs -R 'stat /usr/local/bin/cpz-automount' $ROOTIMG | grep -q Inode"
+need "automount udev rule"     "debugfs -R 'cat /etc/udev/rules.d/99-cpz-automount.rules' $ROOTIMG | grep -q 'cpz-automount@%k.service'"
+need "automount service"       "debugfs -R 'stat /etc/systemd/system/cpz-automount@.service' $ROOTIMG | grep -q Inode"
+need "automount tmpfiles"      "debugfs -R 'cat /usr/lib/tmpfiles.d/cpz-automount.conf' $ROOTIMG | grep -q '/run/cpz-automount'"
+need "media mount root"        "debugfs -R 'stat /media' $ROOTIMG | grep -q Inode"
 need "panel on seat0"          "debugfs -R 'cat /etc/udev/rules.d/99-cpz-display.rules' $ROOTIMG | grep -q 'ID_SEAT.*seat0'"
 need "keyboard on seat0"       "debugfs -R 'cat /etc/udev/rules.d/99-cpz-input.rules' $ROOTIMG | grep -q 'ID_SEAT.*seat0'"
 absent "no vendor lcd seat rule" "debugfs -R 'stat /etc/udev/rules.d/99-cardputer-zero-lcd.rules' $ROOTIMG"
@@ -248,7 +261,7 @@ if [ "$UI_TEST" = "1" ]; then
     need_absent_pkg vim
     need_absent_pkg nnn
     need_absent_pkg htop
-    need_absent_pkg alsa-utils
+    need_pkg alsa-utils
     need_absent_pkg sdl2-compat
 else
     need_absent_pkg libtsm

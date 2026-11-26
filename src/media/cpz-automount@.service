@@ -1,0 +1,21 @@
+[Unit]
+Description=Mount USB filesystem %i for CPZ
+# The device unit appears from the udev add event; stop this service (and run
+# ExecStop) when the disk is unplugged or the device unit goes away.
+BindsTo=dev-%i.device
+After=dev-%i.device systemd-udevd.service
+# At boot, udev coldplug runs before the root filesystem is remounted
+# read-write, so /media is not writable yet. Hotplug mounts start immediately;
+# this ordering only delays devices that were present at boot.
+After=local-fs.target
+# A disk can be re-plugged many times; never let systemd rate-limit the unit.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/cpz-automount mount /dev/%i
+ExecStop=-/usr/local/bin/cpz-automount umount /dev/%i
+# The helper retries transient "device not ready" errors itself and logs the
+# final reason to the journal. Give it room for slow USB bridges.
+TimeoutStartSec=60

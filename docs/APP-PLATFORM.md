@@ -135,6 +135,10 @@ cpzos-apps/
   `cpz-apps-catalog` from the signed repository, so the first Apps Manager
   start has a list without network or root. The build report records the
   package version, its sha256 and the catalog `generated` date.
+- The catalog package version carries the UTC build time
+  (`YYYY.MM.DD.HHMMSS`), not just the date. Two catalogs generated on the same
+  day must compare as different, otherwise `pacman -S` skips the second one
+  and every device keeps the stale data.
 - Release builds pin `UI_APPS_CATALOG_VERSION` and `UI_APPS_CATALOG_SHA256` in
   `config.sh` and fail on a mismatch; test builds take the current repository
   version. The clean base image installs neither package and stays UI-free.
@@ -203,9 +207,10 @@ CI from the built packages, so it cannot drift from the desktop entries:
 - On success the screen re-reads the catalog in place, keeps the cursor and
   the category, and updates the date. On failure it keeps the cached list and
   shows a two-second dim note (`Offline, showing the saved list`).
-- Rate limit: at most one attempt per 10 minutes, tracked by the marker file
-  `/var/lib/cpz/refresh`. A busy pacman lock or a missing network is a no-op,
-  not an error dialog and not a retry loop.
+- Rate limit: the automatic attempt runs at most once per 10 minutes, tracked
+  by the marker file `/var/lib/cpz/refresh`. `Update app list` and
+  `cpz-app apps update` pass `--force` and always run. A busy pacman lock or a
+  missing network is a no-op, not an error dialog and not a retry loop.
 - Home does not refresh: it lists installed apps only.
 - If a package operation already holds the lock (including the background
   refresh), an install or remove changes nothing and reports
@@ -268,6 +273,12 @@ Apps Manager · All            2/12
   the tab is renamed to the app, the app owns the terminal, and on exit the
   supervisor starts Home again in the same tab. The tab never turns into a
   black screen and never disappears because an app quit.
+- A graphical app (`Terminal=false`) is spawned as a detached child and the
+  status line shows `Starting <name>…` until it exits, so a slow engine such as
+  Doom Retro never looks like a dead key. While it is in flight, Home refuses
+  another launch from that tab (`Wait for <name> to start`); a second launch of
+  the same entry from any tab is refused (`<name> is already running`). A
+  non-zero exit shows the failure in the status line and the tmux message line.
 - Home omits its own desktop entry from the list, so it cannot relaunch
   itself. Apps Manager still shows Home under **System**, because the system
   apps are tracked like every other app.
@@ -279,8 +290,18 @@ Apps Manager · All            2/12
 
 ### 7.3 Settings
 
-- Root list, currently one item: **About system**. The structure exists for
-  later sections, but no placeholder rows and no empty "coming soon" screens.
+- Root list: **Update system**, **About system**. No placeholder rows and no
+  empty "coming soon" screens.
+- Update asks first, with **No** focused, then runs the helper's
+  `update-system` verb: a full `pacman -Syu` that upgrades the UI, the system
+  apps and the catalog. `linux-rpi` and `raspberrypi-bootloader` are ignored:
+  the boot kernel and firmware live on the generated FAT partition, so a
+  kernel update ships with a new image, never with an in-place transaction.
+- While the transaction runs the screen shows `Updating system…` and ignores
+  keys: pacman cannot be cancelled safely mid-transaction. On success the About
+  data is re-read and the status says `Updated; restart for a new UI`. On
+  failure the status shows the first error line.
+- `cpz-app settings update [--yes] [--json]` is the headless form.
 - About shows: platform version and contract, UI version, system-apps version,
   board, kernel, hostname, language, output (panel/HDMI), uptime, memory. Read
   from `/etc/cpz/platform.conf`, `/etc/cpz/language`, `/run/cpz/output`,
@@ -304,7 +325,8 @@ Apps Manager · All            2/12
 The session runs as `cpz`. One helper does all package work:
 
 ```text
-/usr/lib/cpz/app-install refresh-catalog
+/usr/lib/cpz/app-install refresh-catalog [--force]
+/usr/lib/cpz/app-install update-system
 /usr/lib/cpz/app-install install <package>
 /usr/lib/cpz/app-install remove  <package>
 ```
@@ -312,7 +334,7 @@ The session runs as `cpz`. One helper does all package work:
 - Installed through `/etc/sudoers.d/20-cpz-apps` as
   `cpz ALL=(root) NOPASSWD: /usr/lib/cpz/app-install`. No wildcard arguments,
   no `pacman` rule, no shell.
-- `install`: validate the name shape, run `pacman -Syu --noconfirm`, then
+- `install`: validate the name shape, run the guarded full upgrade, then
   require the package to come from the `[cpz-apps]` repository (`pacman -Si`
   must print `Repository : cpz-apps`), then run
   `pacman -S --needed --noconfirm -- <package>`. The system is fully upgraded
@@ -321,11 +343,17 @@ The session runs as `cpz`. One helper does all package work:
 - `remove`: the package must be installed, must not be in the protected list
   and must not be required by `cpz-ui`/`cpz-system-apps`. The helper runs
   `pacman -Rns --noconfirm -- <package>`.
-- `refresh-catalog`: rate-limited, runs `pacman -Sy` and then
-  `pacman -S --needed --noconfirm cpz-apps-catalog`. It is the only `-S`
-  without `-u`, allowed because the catalog package is data-only, has no
-  dependencies and installs no library or binary. A package test enforces
-  `depends=()`; if that ever changes, the exception is removed.
+- `refresh-catalog`: rate-limited by default, runs `pacman -Sy` and then
+  `pacman -S --needed --noconfirm cpz-apps-catalog`. `--force` skips the
+  rate limit and is what the manual update uses. It is the only `-S` without
+  `-u`, allowed because the catalog package is data-only, has no dependencies
+  and installs no library or binary. A package test enforces `depends=()`; if
+  that ever changes, the exception is removed.
+- `update-system`: no arguments; runs the same full `pacman -Syu` as an app
+  install with `--ignore linux-rpi --ignore raspberrypi-bootloader`. The boot
+  files are generated into the FAT partition by the image build, so an in-place
+  kernel update would install modules without matching boot files. A new
+  kernel and bootloader come with a new image.
 - Every invocation is validated with an anchored package-name regex, logged to
   the journal, and returns the transaction output on stderr. The TUI shows a
   short message and the log location, never untrusted raw output as a command.
@@ -353,6 +381,14 @@ is unsupported and not defended against.
 - `Terminal=false` entries are out of scope for the four system apps;
   Apps Manager still lists them but its Open action uses the session launcher
   path, not tmux.
+- Opening a graphical app does not block the launcher: both Home and Apps
+  Manager set `Starting <name>…` before spawning it and keep that status until
+  the child exits. A failed spawn or a non-zero exit replaces it with the
+  reason; the app never fails silently behind a stale status.
+- A graphical entry is single-instance across tabs. `launch.Start` takes an
+  advisory `flock` on `/run/cpz/apps/<entry-hash>.lock`; the lock is held by
+  the app itself and vanishes when it exits, so there is no PID file to go
+  stale. Terminal entries are not locked: tabs are their multi-instance model.
 - Opening an app from Apps Manager does not close it. It stays on its tab
   and the app gets a new tab (`X-CPZ-Tab=new` is the default for Apps Manager
   launches).
@@ -370,7 +406,8 @@ cpz-app apps list    [--installed|--available] [--category C] [--query Q] [--jso
 cpz-app apps install <package|desktop-id> [--yes] [--json]
 cpz-app apps remove  <package|desktop-id> [--yes] [--json]
 cpz-app apps update  [--yes] [--json]
-cpz-app settings about [--json]
+cpz-app settings about  [--json]
+cpz-app settings update [--yes] [--json]
 ```
 
 - A desktop id (`cpz-player.desktop`) is accepted wherever a package name is;
@@ -420,6 +457,8 @@ cpz-app settings about [--json]
 - `ui/cpz-ui`: depends on `cpz-system-apps`; `Alt+O` opens Apps Manager;
   `default-command` is Home. The `fzf` launcher stays packaged as a fallback
   until Apps Manager passes the hardware checklist.
+- `cpz-system-apps`: Settings offers **Update system** through the helper's
+  `update-system` verb; the headless form is `cpz-app settings update`.
 - `docs/HARDWARE-TEST.md`: checklist updated for Home, Apps Manager,
   Settings, Terminal, the catalog and the language.
 

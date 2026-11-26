@@ -4,14 +4,27 @@
 # The session writes /run/cpz/output when it selects a card. When HDMI
 # connects or disconnects, cpz-output compares the desired kind with the
 # running one and restarts the UI unit. tmux is a separate service, so tabs and
-# applications keep running.
+# TUI applications keep running.
+#
+# The restart is deliberately explicit. `systemctl restart cpz-ui@tty1` alone
+# is not enough here: the session is created through PAM/logind, so cage can
+# outlive the unit and keep DRM master. The old compositor then stays visible
+# on the panel while the new one fails to take over. Stop the unit, terminate
+# cage, wait for it to release the card and only then start again. The panel
+# backlight is turned off before the stop so a frozen game frame cannot be
+# mistaken for a working switch.
 set -eu
 
 STATE=/run/cpz/output
 LOCK=/run/cpz/output.lock
 COOLDOWN=/run/cpz/output.restart
+RETRY=/run/cpz/output.retry
+UNIT=cpz-ui@tty1.service
 
-[ -r "$STATE" ] || exit 0
+log() {
+    printf 'cpz-output: %s\n' "$*" >&2
+    command -v logger >/dev/null 2>&1 && logger -t cpz-output -- "$*" || true
+}
 
 hdmi_present() {
     for c in /sys/class/drm/card*-HDMI-A-*; do
@@ -25,30 +38,56 @@ hdmi_ready() {
     for c in /sys/class/drm/card*-HDMI-A-*; do
         [ -e "$c" ] || continue
         [ -r "$c/status" ] && [ "$(cat "$c/status")" = connected ] || continue
-        i=0
-        while [ "$i" -lt 5 ]; do
-            if [ -s "$c/modes" ] &&
-                [ "$(wc -c < "$c/edid" 2>/dev/null || echo 0)" -ge 128 ]; then
-                return 0
-            fi
-            i=$((i + 1))
-            sleep 0.2
-        done
+        [ -s "$c/modes" ] || continue
+        [ "$(wc -c < "$c/edid" 2>/dev/null || echo 0)" -ge 128 ] || continue
+        return 0
     done
     return 1
 }
 
+backlight() {
+    [ -x /usr/lib/cpz/backlight ] || return 0
+    /usr/lib/cpz/backlight "$1" >/dev/null 2>&1 || true
+}
+
+# A monitor often exposes EDID a moment after the first hotplug uevent. Retry
+# a few times instead of deciding on the first sample. The counter bounds the
+# transient retries so a broken cable cannot wake the CPU forever.
+schedule_retry() {
+    count=$(cat "$RETRY" 2>/dev/null || echo 0)
+    case "$count" in
+        '' | *[!0-9]*) count=0 ;;
+    esac
+    [ "$count" -lt 3 ] || return 0
+    printf '%s\n' "$((count + 1))" >"$RETRY" 2>/dev/null || true
+    command -v systemd-run >/dev/null 2>&1 || return 0
+    systemd-run --quiet --collect --on-active=3 /usr/lib/cpz/output \
+        >/dev/null 2>&1 || true
+}
+
+[ -r "$STATE" ] || exit 0
+
 desired=spi
 if hdmi_present; then
+    i=0
+    while [ "$i" -lt 30 ]; do
+        hdmi_ready && break
+        i=$((i + 1))
+        sleep 0.1
+    done
     if hdmi_ready; then
         desired=hdmi
+        rm -f "$RETRY" 2>/dev/null || true
     else
-        printf 'cpz-output: HDMI present but EDID/mode not ready\n' >&2
+        log "HDMI present but EDID/mode not ready"
+        schedule_retry
     fi
+else
+    rm -f "$RETRY" 2>/dev/null || true
 fi
 
 current=$(sed -n 's/^kind=//p' "$STATE" | head -1)
-printf 'cpz-output: current=%s desired=%s\n' "$current" "$desired" >&2
+log "current=$current desired=$desired"
 [ "$desired" = "$current" ] && exit 0
 
 # Serialise overlapping udev runs.
@@ -56,7 +95,7 @@ exec 9>"$LOCK"
 flock -x 9
 
 current=$(sed -n 's/^kind=//p' "$STATE" | head -1)
-printf 'cpz-output: current=%s desired=%s\n' "$current" "$desired" >&2
+log "current=$current desired=$desired"
 [ "$desired" = "$current" ] && exit 0
 
 # Debounce HPD flaps and a restart that is already in progress.
@@ -65,14 +104,50 @@ last=$(cat "$COOLDOWN" 2>/dev/null || echo 0)
 if [ $((now - last)) -lt 2 ]; then
     exit 0
 fi
-printf '%s\n' "$now" > "$COOLDOWN"
+printf '%s\n' "$now" >"$COOLDOWN"
 
-state=$(systemctl is-active cpz-ui@tty1 2>/dev/null || true)
-if [ "$state" != "active" ]; then
-    printf 'cpz-output: UI state=%s, letting it settle\n' "$state" >&2
-    exit 0
+# The session is starting on another card, so darken the panel first. Without
+# this the last game frame stays visible while cage is being replaced.
+backlight off
+
+log "restarting UI for $desired"
+systemctl stop "$UNIT" >/dev/null 2>&1 || true
+pkill -TERM -x cage 2>/dev/null || true
+i=0
+while pgrep -x cage >/dev/null 2>&1 && [ "$i" -lt 30 ]; do
+    sleep 0.1
+    i=$((i + 1))
+done
+if pgrep -x cage >/dev/null 2>&1; then
+    log "cage did not stop, sending SIGKILL"
+    pkill -KILL -x cage 2>/dev/null || true
 fi
 
-sleep 0.2
-printf 'cpz-output: restarting UI for %s\n' "$desired" >&2
-systemctl try-restart cpz-ui@tty1.service
+# Starting a unit that systemd is still deactivating is cancelled. Wait for
+# the inactive state, then start clean.
+i=0
+while systemctl is-active --quiet "$UNIT" && [ "$i" -lt 20 ]; do
+    sleep 0.1
+    i=$((i + 1))
+done
+if ! systemctl start "$UNIT" >/dev/null 2>&1; then
+    log "cannot start $UNIT"
+    [ "$desired" = spi ] && backlight on
+    exit 1
+fi
+
+# A failed HDMI start must not leave a dark panel with no session. The panel
+# session turns the backlight on itself; HDMI leaves it off.
+i=0
+while [ "$i" -lt 50 ]; do
+    systemctl is-active --quiet "$UNIT" && break
+    sleep 0.1
+    i=$((i + 1))
+done
+if ! systemctl is-active --quiet "$UNIT"; then
+    log "$UNIT did not become active"
+    [ "$desired" = spi ] && backlight on
+    exit 1
+fi
+
+exit 0

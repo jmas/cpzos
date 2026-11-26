@@ -186,6 +186,15 @@ Consequences:
 
 - `Enter` on a list item opens it. In Apps Manager, the first `Enter` opens the
   detail screen; actions are a vertical list on that screen.
+- A graphical (`Terminal=false`) launch is asynchronous: the status line shows
+  `Starting <name>…` before the child is spawned and keeps it until the child
+  exits. A non-zero exit replaces it with the failure reason. A launch that
+  looks like a dead key, or a status that lies after the app is gone, is a bug.
+- A launch is exclusive. While a tab has a graphical app in flight, `Enter` on
+  any row shows `Wait for <name> to start` and starts nothing. A graphical
+  entry is single-instance across tabs; launching the same entry from another
+  tab shows `<name> is already running`. Terminal apps are tabs and remain
+  multi-instance.
 - Destructive actions ask for confirmation, name the object, and default to
   "No". `Enter` on the default "No" cancels; `Esc` cancels. Focus starts on
   "No" and the dialog is a screen, not a corner popup.

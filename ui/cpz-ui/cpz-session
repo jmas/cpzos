@@ -125,6 +125,13 @@ case "$CARD_KIND" in
     *)   sudo -n /usr/lib/cpz/backlight off >/dev/null 2>&1 || true ;;
 esac
 
+# The codec module can probe after the session starts. cpz-audio waits for it
+# and connects the speaker amplifier; a failure is not fatal because the image
+# can still be used without audio.
+if [ -x /usr/lib/cpz/audio ]; then
+    /usr/lib/cpz/audio >/dev/null 2>&1 || log "audio setup failed"
+fi
+
 # tmux is a separate service, but the session can outlive or outdie it (the
 # last tab closing ends the session). Recreate Home instead of failing the
 # whole UI into a restart loop.

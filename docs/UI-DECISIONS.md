@@ -47,10 +47,14 @@ ExecStart=/usr/lib/cpz/session
   `bemenu` are not an option for this stack.
 - Output selection is dynamic: `cpz-output.service` is triggered by the HDMI
   connector udev event, compares the desired output with `/run/cpz/output`
-  and restarts `cpz-ui@tty1.service` only when the output changed. tmux is a
-  separate service, so tabs and applications survive the switch. A one-shot
-  10-second post-boot timer catches connector events that happen while the
-  session is still writing its state.
+  and restarts the UI only when the output changed. It waits for HDMI EDID,
+  darkens the panel before stopping the session, stops `cpz-ui@tty1.service`,
+  terminates any cage that survived the PAM/logind session (otherwise it keeps
+  DRM master and the old frame stays on the panel), and starts the unit again.
+  tmux is a separate service, so tabs and TUI applications survive the switch;
+  a graphical Wayland client cannot, because its compositor went away. A
+  one-shot 10-second post-boot timer catches connector events that happen
+  while the session is still writing its state.
 
 ## 3. Application model
 

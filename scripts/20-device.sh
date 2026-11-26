@@ -73,6 +73,16 @@ log "building cpz-spi.dtbo"
 in_root "dtc -@ -I dts -O dtb -o /boot/overlays/cpz-spi.dtbo /tmp/cpz-spi.dts"
 [ -s "$ROOT/boot/overlays/cpz-spi.dtbo" ] || die "cpz-spi.dtbo is empty"
 
+log "installing USB media automount"
+install -Dm755 src/media/cpz-automount "$ROOT/usr/local/bin/cpz-automount"
+install -Dm644 src/media/99-cpz-automount.rules \
+    "$ROOT/etc/udev/rules.d/99-cpz-automount.rules"
+install -Dm644 src/media/cpz-automount@.service \
+    "$ROOT/etc/systemd/system/cpz-automount@.service"
+install -Dm644 src/media/cpz-automount.tmpfiles.conf \
+    "$ROOT/usr/lib/tmpfiles.d/cpz-automount.conf"
+install -d "$ROOT/media"
+
 in_root "depmod -a $KVER"
 rm -rf "$ROOT/tmp/dtoverlays" "$ROOT/tmp/cpz-spi.dts"
 

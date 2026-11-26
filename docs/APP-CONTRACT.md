@@ -85,6 +85,13 @@ Unknown keys are ignored by other desktops and by the launcher.
 ## 5. Tabs and single instance
 
 - The UI is one visible app plus tmux tabs, not a desktop.
+- A graphical (`Terminal=false`) app is single-instance across tabs. While it
+  is starting or running, another launch of the same entry is refused with
+  `<name> is already running`; a second `cage` client would cover or fight the
+  first.
+- While a tab has a graphical app in flight, another launch from that tab is
+  refused with `Wait for <name> to start`. The key never queues a second app
+  behind the first.
 - `Terminal=true` starts in a new tmux window by default.
 - `X-CPZ-Single=1` means the launcher should focus an existing instance
   instead of starting another. Use `DBusActivatable=true` or

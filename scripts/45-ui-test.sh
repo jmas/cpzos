@@ -23,11 +23,27 @@ PKG=$(find out/ui/packages/stable -maxdepth 1 -name 'cpz-ui-*.pkg.tar.*' \
 # Each stage runs in its own container; pacman_target reads the builder config,
 # not the target's pacman.conf, so the app repository is added here.
 if ! grep -q '^\[cpz-apps\]$' /etc/pacman-cpz.conf; then
+    # A local file:// test repository is unsigned. 35-ui-repo.sh relaxes the
+    # target config for it; the builder config must use the same level or the
+    # catalog install fails on the missing cpz-apps.db.sig.
+    case "$UI_APPS_REPO_STABLE" in
+        file:*)
+            apps_siglevel="Optional TrustAll"
+            ;;
+        *)
+            apps_siglevel="$UI_APPS_SIGLEVEL"
+            # The target rootfs trusts the key through 35-ui-repo.sh, but
+            # pacman_target uses the builder keyring. A remote apps repository
+            # needs the same public key here or the catalog install fails.
+            pacman-key --add "$PWD/$UI_REPO_KEY" >/dev/null 2>&1 || true
+            pacman-key --lsign-key "$UI_REPO_KEY_FPR" >/dev/null 2>&1 || true
+            ;;
+    esac
     cat >> /etc/pacman-cpz.conf <<EOF
 
 [cpz-apps]
 Server = $UI_APPS_REPO_STABLE
-SigLevel = $UI_APPS_SIGLEVEL
+SigLevel = $apps_siglevel
 EOF
 fi
 

@@ -113,14 +113,16 @@ UI_APPS_REPO_BETA=""
 UI_APPS_SIGLEVEL="${UI_APPS_SIGLEVEL:-Required DatabaseRequired}"
 
 # Optional release pin for the catalog package. Empty takes the current
-# repository version; release builds set both and fail on a mismatch.
+# repository version; release builds set both and fail on a mismatch. The
+# version includes the UTC build time (YYYY.MM.DD.HHMMSS), because a date-only
+# version lets two catalogs from the same day compare equal.
 UI_APPS_CATALOG_VERSION="${UI_APPS_CATALOG_VERSION:-}"
 UI_APPS_CATALOG_SHA256="${UI_APPS_CATALOG_SHA256:-}"
 
 # Runtime dependencies installed into the UI test image. The UI package itself
 # comes from the locally built out/ui/packages/stable directory.
 UI_TEST_PACKAGES="cage foot tmux fzf j4-dmenu-desktop desktop-file-utils
-	xorg-xwayland mesa ttf-dejavu xkeyboard-config"
+	xorg-xwayland mesa ttf-dejavu xkeyboard-config alsa-utils"
 
 # Installed only to build the vendor modules, removed before the image is made.
 BUILD_PACKAGES="linux-rpi-headers gcc make bc dtc pahole pkgconf"

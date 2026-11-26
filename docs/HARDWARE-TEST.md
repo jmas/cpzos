@@ -14,8 +14,10 @@ make verify UI_TEST=1 \
 The UI build requires the app repository: it installs `cpz-system-apps` and
 bakes the current `cpz-apps-catalog`. For a local test repository use
 `UI_APPS_REPO_STABLE=file:///...`: the directory is copied into the image at
-`/opt/cpz/apps-repo`, so Apps Manager can install apps offline. That repository
-is unsigned and the image is a test image; never ship it.
+`/opt/cpz/apps-repo`, so Apps Manager can install apps offline. The Makefile
+translates a host path under the source tree to `/work/...` inside the builder,
+so `file://$PWD/out/apps-repo` works as written. That repository is unsigned
+and the image is a test image; never ship it.
 
 The build:
 
@@ -86,8 +88,10 @@ Choosing an app in Home replaces the tab and renames it.
 - Panel: 320×170, readable text, no flicker, no tearing on scroll.
 - HDMI: monitor is detected at boot; the panel backlight turns off.
 - Output selection: HDMI when connected, panel otherwise. Hotplug is dynamic:
-  `cpz-output.service` restarts only the UI unit and tmux survives. A one-shot
-  10-second post-boot timer catches startup races.
+  `cpz-output.service` darkens the panel, stops the session, terminates cage
+  and starts it again on the new card; tmux survives. A graphical app cannot
+  survive the compositor restart. A one-shot 10-second post-boot timer catches
+  startup races.
 - Panel backlight: visible at boot; `sudo /usr/lib/cpz/backlight status` shows
   the m5ioe1 registers.
 - Seat policy: both the panel DRM card and the internal keyboard must be on
@@ -135,7 +139,20 @@ The vendor `99-cardputer-zero-lcd.rules` and
 - `Enter` on Terminal runs a shell in the tab and renames it. Typing echoes
   normally, arrows and backspace work. Exiting the shell returns to Home in the
   same tab; the screen never goes black.
+- `Enter` on Doom shows `Starting Doom…` in the status line at once, before the
+  game window appears; quitting Doom clears the status and returns to Home. A
+  game that cannot start shows the reason instead of a dead key.
+- While Doom is still loading, `Enter` on another app in the same tab shows
+  `Wait for Doom to start` and starts nothing. In a second Home tab, choosing
+  Doom shows `Doom is already running` and no second window appears. After Doom
+  quits, both tabs can launch it again.
 - `Alt+O` opens Apps Manager; it reads the baked catalog without network.
+- Settings opens on `Update system`, `About system`. `Update system` asks
+  first with **No** focused, then shows `Updating system…` and ignores keys
+  until the transaction ends. Success shows `Updated; restart for a new UI`;
+  a failure shows the first pacman error line. The update includes `cpz-ui`,
+  `cpz-system-apps` and `cpz-apps-catalog`; `linux-rpi` and
+  `raspberrypi-bootloader` stay pinned to the image.
 - Apps Manager opens on a menu: `Update app list`, `Installed`, and the
   non-empty categories. `Enter` opens a category, `Esc` goes back.
 - Inside a category, `F`/`X` move, `Typing` or `Tab` searches, `Enter` opens
@@ -143,8 +160,15 @@ The vendor `99-cardputer-zero-lcd.rules` and
   transaction; removing asks with **No** focused.
 - Removing Home, Apps Manager, Settings or the catalog is refused.
 - `cpz-app apps install <pkg> --yes` works over SSH; without `--yes` it exits 3.
+- `cpz-app settings update --yes` works over SSH; without `--yes` it exits 3
+  and touches nothing.
 - The catalog date is visible on `Update app list`; entering Apps Manager
-  refreshes it in the background and never blocks input.
+  refreshes it in the background and never blocks input. `Update app list`
+  forces the refresh; the automatic attempt is limited to once per 10 minutes.
+- A test image must use a `file://` app repository so the build bakes it into
+  `/opt/cpz/apps-repo`. An `http://` URL points at the build host: when that
+  server stops, update and install fail with `Could not connect to server`.
+  Check `cat /etc/pacman.d/cpz-apps.conf` and `ls /opt/cpz/apps-repo` first.
 - `CPZ_LANG=uk cpz-app apps` shows Ukrainian strings; the default is English.
 - `desktop-file-validate` passes for the four system entries.
 - Terminal starts a login shell in the current tab (from Home) or a new tab
@@ -160,8 +184,11 @@ The vendor `99-cardputer-zero-lcd.rules` and
 ### Audio, battery, network
 
 - `aplay -D default` reaches the ES8389 speaker; `aplay -D
-  hw:CARD=ES8389Audio,DEV=0` does too. Doom has sound. HDMI audio is selected
-  explicitly by an app, not by the default.
+  hw:CARD=ES8389Audio,DEV=0` does too. Doom and the emulators have sound. The
+  session runs `/usr/lib/cpz/audio`, which sets the DAC level and connects the
+  `Speaker Switch` DAPM pin; check it with `amixer -c ES8389Audio contents`
+  and `journalctl -b -t cpz-audio`. HDMI audio is selected explicitly by an
+  app, not by the default.
 - Battery percentage matches the gauge.
 - Wired DHCP works; `sshd` accepts `cpz`.
 - SSH and serial remain usable while the UI is running.
