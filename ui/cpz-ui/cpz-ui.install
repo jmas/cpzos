@@ -1,3 +1,11 @@
+audio_setup() {
+    # A running session from an older package has not called cpz-audio yet.
+    # Configure the codec now so an update fixes sound without a reboot.
+    [ -r /proc/asound/cards ] || return 0
+    grep -q ES8389 /proc/asound/cards 2>/dev/null || return 0
+    [ -x /usr/lib/cpz/audio ] && /usr/lib/cpz/audio >/dev/null 2>&1 || true
+}
+
 post_install() {
     systemd-tmpfiles --create /usr/lib/tmpfiles.d/cpz-ui.conf >/dev/null 2>&1 || true
     systemctl enable cpz-tmux.service >/dev/null 2>&1 || true
@@ -5,6 +13,7 @@ post_install() {
     systemctl enable cpz-output-boot.timer >/dev/null 2>&1 || true
     systemctl start cpz-tmux.service >/dev/null 2>&1 || true
     systemctl start cpz-ui@tty1.service >/dev/null 2>&1 || true
+    audio_setup
 }
 
 post_upgrade() {
