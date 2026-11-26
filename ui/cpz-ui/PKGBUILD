@@ -1,6 +1,6 @@
 # Maintainer: CPZ <cpz-ui@jmas.github.io>
 pkgname=cpz-ui
-pkgver=0.1.14
+pkgver=0.1.15
 pkgrel=1
 pkgdesc="CPZ UI session: cage, foot, tmux, launcher, status and backlight"
 arch=('aarch64')
@@ -19,7 +19,7 @@ depends=(
     'ttf-dejavu'
     'xkeyboard-config'
 )
-backup=('etc/cpz/foot.ini' 'etc/cpz/tmux.conf')
+backup=('etc/cpz/foot.ini' 'etc/cpz/tmux.conf' 'etc/asound.conf')
 install=cpz-ui.install
 options=(!strip)
 source=()
@@ -49,6 +49,7 @@ package() {
     install -Dm644 "$startdir/cpz-ui@.service.d/20-restart.conf" \
         "$pkgdir/usr/lib/systemd/system/cpz-ui@.service.d/20-restart.conf"
 
+    install -Dm644 "$startdir/asound.conf"       "$pkgdir/etc/asound.conf"
     install -Dm644 "$startdir/foot.ini"         "$pkgdir/etc/cpz/foot.ini"
     install -Dm644 "$startdir/tmux.conf"        "$pkgdir/etc/cpz/tmux.conf"
     install -Dm440 "$startdir/cpz-ui.sudoers"   "$pkgdir/etc/sudoers.d/20-cpz-ui"

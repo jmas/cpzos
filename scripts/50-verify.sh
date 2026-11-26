@@ -101,6 +101,7 @@ if [ "$UI_TEST" = "1" ]; then
     need "ui fast restart"     "debugfs -R 'cat /usr/lib/systemd/system/cpz-ui@.service.d/20-restart.conf' $ROOTIMG | grep -q 'TimeoutStopSec=5s'"
     need "ui single session"   "debugfs -R 'cat /etc/cpz/tmux.conf' $ROOTIMG | grep -q 'set -g prefix C-a'"
     need "ui tmux loads config" "debugfs -R 'cat /usr/lib/cpz/tmux-start' $ROOTIMG | grep -q -- '-f /etc/cpz/tmux.conf'"
+    need "alsa default is the codec" "debugfs -R 'cat /etc/asound.conf' $ROOTIMG | grep -q 'ES8389Audio'"
     need "ui tmux enabled"     "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q cpz-tmux"
     need "ui session enabled"  "debugfs -R 'ls /etc/systemd/system/multi-user.target.wants' $ROOTIMG | grep -q 'cpz-ui@tty1'"
     need "terminal entry"      "debugfs -R 'stat /usr/share/applications/cpz-terminal.desktop' $ROOTIMG | grep -q Inode"

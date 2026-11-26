@@ -151,7 +151,9 @@ The vendor `99-cardputer-zero-lcd.rules` and
 
 ### Audio, battery, network
 
-- `aplay`/`mpv` reach the speaker; media keys work.
+- `aplay -D default` reaches the ES8389 speaker; `aplay -D
+  hw:CARD=ES8389Audio,DEV=0` does too. Doom has sound. HDMI audio is selected
+  explicitly by an app, not by the default.
 - Battery percentage matches the gauge.
 - Wired DHCP works; `sshd` accepts `cpz`.
 - SSH and serial remain usable while the UI is running.
