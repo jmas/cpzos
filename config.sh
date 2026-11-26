@@ -78,7 +78,10 @@ DISK_ID="c0de2710"
 # Packages
 # ---------------------------------------------------------------------------
 # `base` is the only meta group. Everything else is explicit on purpose.
-BASE_PACKAGES="base"
+# archlinuxarm-keyring is the ARM build key: without it the target keyring can
+# read the ALARM repositories but cannot verify their packages, so every
+# `pacman -Syu` on the device fails with "unknown trust".
+BASE_PACKAGES="base archlinuxarm-keyring"
 DEVICE_PACKAGES="linux-rpi"
 BOOT_PACKAGES="raspberrypi-bootloader"
 TOOLS_PACKAGES="sudo"
@@ -99,10 +102,12 @@ UI_REPO_BETA='https://github.com/jmas/cpzos/releases/download/ui-beta'
 UI_REPO_KEY="keys/cpz-ui-signing.asc"
 UI_REPO_KEY_FPR="C7DBEDC1B4855ACB0570C7D229C04B0663395458"
 
-# App repository (Apps Manager and its catalog). Empty until the first signed
-# apps release is published: a Server that points at a missing release makes
-# every `pacman -Sy` fail. The UI test image requires it; the clean base only
-# stores the configuration.
+# App repository (Apps Manager and its catalog). Empty in the base image: a
+# Server that points at a missing release makes every `pacman -Sy` fail, so the
+# Include is written only when a repository really exists. A `file://` value is
+# a local test build: the repository directory is copied into the image at
+# /opt/cpz/apps-repo and pacman reads it there. Release images use the signed
+# app release URL and keep required signatures.
 UI_APPS_REPO_STABLE="${UI_APPS_REPO_STABLE:-}"
 UI_APPS_REPO_BETA=""
 UI_APPS_SIGLEVEL="${UI_APPS_SIGLEVEL:-Required DatabaseRequired}"

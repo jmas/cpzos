@@ -21,7 +21,9 @@ splash or application framework. The kernel framebuffer console is mapped off
 
 ## What is in the image
 
-- Arch Linux ARM `base`, `linux-rpi`, `raspberrypi-bootloader`.
+- Arch Linux ARM `base`, `linux-rpi`, `raspberrypi-bootloader`, and
+  `archlinuxarm-keyring`: the target keeps its own keyring, so `pacman -Syu`
+  on the device verifies ALARM packages instead of rejecting them as untrusted.
 - The Cardputer Zero vendor kernel modules and device-tree overlays (keypad,
   expander, audio codec, battery gauge, IMU, panel and vc4/HDMI). The hardware
   paths are enabled; no userspace stack is loaded.
@@ -132,6 +134,20 @@ needed.
 Write `out/cpz-arch-0.1.0-cm0.img` with Raspberry Pi Imager, balenaEtcher or
 `dd`. The system comes up on serial and, if enabled, on wired SSH.
 
+A card is much larger than the image, so give the spare space to the root
+partition before flashing:
+
+```sh
+tools/card-image.sh out/cpz-arch-0.1.0-cm0-ui.img       # writes ...-sdcard.img
+tools/flash-card.sh out/cpz-arch-0.1.0-cm0-ui-sdcard.img # macOS, verifies the write
+```
+
+After the first boot the filesystem is still image-sized; grow it once:
+
+```sh
+sudo resize2fs /dev/mmcblk0p2
+```
+
 ## Layout
 
 ```text
@@ -144,6 +160,8 @@ scripts/30-configure.sh identity, boot files, login paths, pruning
 scripts/35-ui-repo.sh  UI signing key and pacman repository
 scripts/40-image.sh    FAT32 + ext4 + MBR, no loop devices
 scripts/50-verify.sh   base-image invariants
+tools/card-image.sh    grow the MBR root partition to a real SD card
+tools/flash-card.sh    write the card image and verify it (macOS)
 tools/ui-repo.sh       sign packages and build the static UI repository
 keys/                  public UI signing key
 .github/workflows/     base verify and UI repository publishing

@@ -37,11 +37,13 @@ KVER=$(kernel_version)
 log "kernel: $KVER"
 
 # The target needs its own pacman keyring, otherwise `pacman -S` on the device
-# fails with "required key missing from keyring". The build installs packages
-# through the builder's keyring, so this never runs implicitly.
+# fails with "required key missing from keyring" or, worse, "signature from
+# Arch Linux ARM Build System is unknown trust" and every package is rejected.
+# Both keyrings must be populated: Arch x86_64 keys come from archlinux-keyring,
+# the ARM build key from archlinuxarm-keyring, which the base set installs.
 log "initialising the pacman keyring in the target"
 in_root "pacman-key --init >/dev/null 2>&1 || true"
-in_root "pacman-key --populate archlinuxarm >/dev/null 2>&1 || true"
+in_root "pacman-key --populate archlinux archlinuxarm >/dev/null"
 
 # Manual post-install work that --noscriptlet skipped.
 in_root "depmod -a $KVER"

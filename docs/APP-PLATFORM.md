@@ -179,10 +179,13 @@ CI from the built packages, so it cannot drift from the desktop entries:
 - Installed apps are read from `$XDG_DATA_HOME/applications` and
   `$XDG_DATA_DIRS/applications` as today; the catalog only fills in available,
   not-yet-installed apps. An installed app never depends on the catalog.
-- Only system entries (`X-CPZ-System=true`) and entries present in the catalog
-  are user-facing apps. Desktop files shipped by the session or its
-  dependencies (foot, foot-client, foot-server, help) are filtered out, so
-  Home shows Apps Manager, Settings, Terminal and installed catalog apps.
+- Home lists what the system really has: an app must have a desktop entry
+  installed. A catalog record alone is not an app, and Home never offers
+  something that cannot start; installing is Apps Manager's job. Desktop files
+  shipped by the session or its dependencies (foot, foot-client, foot-server,
+  help) are not user-facing apps because they belong to no catalog package.
+  Home therefore shows Apps Manager, Settings, Terminal and installed catalog
+  apps.
 - Localized fields are copied as `name[lang]`, `comment[lang]` and
   `keywords[lang]`; Apps Manager and Home pick the system language with an `en`
   fallback exactly as [LANGUAGE.md](LANGUAGE.md) defines.
@@ -329,6 +332,10 @@ The session runs as `cpz`. One helper does all package work:
 - No other `-Sy` without `-u`: a partial upgrade on a rolling distribution
   breaks libraries. A full `-Syu`/`-Su` is the price of installing on Arch;
   the UI says so before running it.
+- `pacman -Syu` can only succeed if the target trusts the Arch Linux ARM build
+  key. The base installs `archlinuxarm-keyring` and `scripts/10-rootfs.sh`
+  populates both `archlinux` and `archlinuxarm`; without that, every package
+  from `core`/`extra` is rejected as "unknown trust" and no app ever installs.
 
 Protected list: `/usr/share/cpz/protected-packages` in `cpz-system-apps` plus a
 hard-coded package check in the helper. `pacman -Rdd` can still break it; that
@@ -400,7 +407,8 @@ cpz-app settings about [--json]
   `/etc/cpz/language`.
 - `scripts/35-ui-repo.sh`: writes `/etc/pacman.d/cpz-apps.conf` and its
   `Include` only when `UI_APPS_REPO_STABLE` is set, so a missing release never
-  breaks `pacman -Sy`.
+  breaks `pacman -Sy`. A `file://` value is a test build: the repository is
+  copied into the image at `/opt/cpz/apps-repo` and served from there.
 - `scripts/45-ui-test.sh`: requires the apps repository, installs
   `cpz-system-apps` and `cpz-apps-catalog`, checks the pinned sha256, and
   records the catalog version, hash and `generated` date in the build report.

@@ -121,6 +121,7 @@ if [ "$UI_TEST" = "1" ]; then
     need "app catalog"         "debugfs -R 'stat /usr/share/cpz/catalog/apps.json' $ROOTIMG | grep -q Inode"
     need "app catalog schema"  "debugfs -R 'cat /usr/share/cpz/catalog/apps.json' $ROOTIMG | grep -q '\"version\": 1'"
     need "catalog data only"   "pacman --root $ROOT -Qi cpz-apps-catalog | grep -q '^Depends On.*: None'"
+    need "catalog ships only apps.json" "[ \$(pacman --root $ROOT -Ql cpz-apps-catalog | grep -vc '/$') -eq 1 ]"
     need "home default command" "debugfs -R 'cat /etc/cpz/tmux.conf' $ROOTIMG | grep -q 'default-command \"/usr/bin/cpz-app home\"'"
     need "apps popup binding"  "debugfs -R 'cat /etc/cpz/tmux.conf' $ROOTIMG | grep -q '/usr/bin/cpz-app apps'"
     need "ui sudoers"          "debugfs -R 'stat /etc/sudoers.d/20-cpz-ui' $ROOTIMG | grep -q Inode"
@@ -190,6 +191,10 @@ need "keyboard on seat0"       "debugfs -R 'cat /etc/udev/rules.d/99-cpz-input.r
 absent "no vendor lcd seat rule" "debugfs -R 'stat /etc/udev/rules.d/99-cardputer-zero-lcd.rules' $ROOTIMG"
 absent "no vendor key seat rule" "debugfs -R 'stat /etc/udev/rules.d/99-cardputer-zero-keyboard.rules' $ROOTIMG"
 
+log "pacman trust"
+need "alarm keyring file"      "debugfs -R 'stat /usr/share/pacman/keyrings/archlinuxarm.gpg' $ROOTIMG | grep -q Inode"
+need "alarm build key trusted" "chroot $ROOT pacman-key --list-keys builder@archlinuxarm.org | grep -q full"
+
 log "ui repository"
 need "ui signing key"          "debugfs -R 'stat /usr/share/pacman/keyrings/cpz-ui-signing.asc' $ROOTIMG | grep -q Inode"
 need "ui key trusted"          "chroot $ROOT pacman-key --list-keys $UI_REPO_KEY_FPR | grep -q 'CPZ UI Signing'"
@@ -198,12 +203,19 @@ need "ui beta config"          "debugfs -R 'cat /etc/pacman.d/cpz-ui-beta.conf' 
 need "ui repo requires signatures" "debugfs -R 'cat /etc/pacman.d/cpz-ui.conf' $ROOTIMG | grep -q 'DatabaseRequired'"
 need "pacman includes ui repo" "debugfs -R 'cat /etc/pacman.conf' $ROOTIMG | grep -q 'Include = /etc/pacman.d/cpz-ui.conf'"
 case "$UI_APPS_REPO_STABLE" in
-    ""|file:*)
+    "")
         absent "no apps repo config" "debugfs -R 'stat /etc/pacman.d/cpz-apps.conf' $ROOTIMG"
         need "no apps repo include" "! debugfs -R 'cat /etc/pacman.conf' $ROOTIMG | grep -q 'cpz-apps.conf'"
         ;;
+    file:*)
+        need "apps repo config"    "debugfs -R 'cat /etc/pacman.d/cpz-apps.conf' $ROOTIMG | grep -q '^\[cpz-apps\]$'"
+        need "apps repo is local"  "debugfs -R 'cat /etc/pacman.d/cpz-apps.conf' $ROOTIMG | grep -q 'Server = file:///opt/cpz/apps-repo'"
+        need "apps repo database in image" "debugfs -R 'stat /opt/cpz/apps-repo/cpz-apps.db.tar.gz' $ROOTIMG | grep -q Inode"
+        need "pacman includes apps repo" "debugfs -R 'cat /etc/pacman.conf' $ROOTIMG | grep -q 'Include = /etc/pacman.d/cpz-apps.conf'"
+        ;;
     *)
         need "apps repo config"    "debugfs -R 'cat /etc/pacman.d/cpz-apps.conf' $ROOTIMG | grep -q '^\[cpz-apps\]$'"
+        need "apps repo requires signatures" "debugfs -R 'cat /etc/pacman.d/cpz-apps.conf' $ROOTIMG | grep -q 'DatabaseRequired'"
         need "pacman includes apps repo" "debugfs -R 'cat /etc/pacman.conf' $ROOTIMG | grep -q 'Include = /etc/pacman.d/cpz-apps.conf'"
         ;;
 esac
@@ -211,6 +223,7 @@ esac
 log "packages"
 need_pkg linux-rpi
 need_pkg sudo
+need_pkg archlinuxarm-keyring
 need_pkg iwd
 need_pkg bluez
 if [ "$UI_TEST" = "1" ]; then

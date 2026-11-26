@@ -8,13 +8,14 @@ the device boots straight into cage + foot + tmux.
 
 ```sh
 make verify UI_TEST=1 \
-  UI_APPS_REPO_STABLE=https://github.com/jmas/cpzos/releases/download/apps-stable
+  UI_APPS_REPO_STABLE=https://github.com/jmas/cpzos-apps/releases/download/apps-stable
 ```
 
-The UI build requires the signed app repository: it installs
-`cpz-system-apps` and bakes the current `cpz-apps-catalog`. For a local test
-repository use `UI_APPS_REPO_STABLE=file:///...` and
-`UI_APPS_SIGLEVEL="Optional TrustAll"`; never ship that image.
+The UI build requires the app repository: it installs `cpz-system-apps` and
+bakes the current `cpz-apps-catalog`. For a local test repository use
+`UI_APPS_REPO_STABLE=file:///...`: the directory is copied into the image at
+`/opt/cpz/apps-repo`, so Apps Manager can install apps offline. That repository
+is unsigned and the image is a test image; never ship it.
 
 The build:
 
@@ -22,12 +23,16 @@ The build:
 2. installs the base, the vendor modules and the UI package into the rootfs;
 3. writes `out/cpz-arch-0.1.0-cm0-ui.img` and `.img.zst`.
 
-The UI test image is larger than the base (1 GiB root geometry) and is marked
-with the `-ui` suffix. It is not the release base image.
+The UI test image is larger than the base (1536 MiB root geometry) and is
+marked with the `-ui` suffix. It is not the release base image.
 
 ## Flash and access
 
-- Flash `out/cpz-arch-0.1.0-cm0-ui.img` with Raspberry Pi Imager,
+- Give the card its space first: `tools/card-image.sh
+  out/cpz-arch-0.1.0-cm0-ui.img` writes `...-sdcard.img` with the root partition
+  extended to the card; `tools/flash-card.sh` writes and verifies it on macOS.
+- After the first boot: `sudo resize2fs /dev/mmcblk0p2` grows the filesystem.
+- Or flash `out/cpz-arch-0.1.0-cm0-ui.img` with Raspberry Pi Imager,
   balenaEtcher or `dd`.
 - Serial: `ttyS0` at 115200 baud.
 - SSH: wired Ethernet or USB Ethernet, DHCP, user `cpz` / password `cpz`.
@@ -122,6 +127,9 @@ The vendor `99-cardputer-zero-lcd.rules` and
 
 - Home lists Apps Manager, Settings, Terminal and installed catalog apps; it
   does not list itself, Foot, Foot Client, Foot Server or Help.
+- Home lists only what is installed. A catalog app that was never installed
+  (for example Doom on a fresh image) is absent from Home and appears in Home
+  only after Apps Manager installs it.
 - Typing a letter in Home starts search; a Shift letter is inserted as the
   first character. While the field is focused, `F`/`X`/`Z`/`C` type letters.
 - `Enter` on Terminal runs a shell in the tab and renames it. Typing echoes
