@@ -5,7 +5,8 @@
 # apply a desktop volume. This image runs ALSA directly, so the DAPM speaker
 # pin switch and the DAC level have to be set explicitly; otherwise ALSA-only
 # clients (Mednafen, mGBA) open the right PCM but stay silent behind a
-# disconnected amplifier.
+# disconnected amplifier. Installed by cpz-system-apps and called by both the
+# session and cpz-app, so an app-only update also fixes sound.
 set -eu
 
 card_id=${CPZ_AUDIO_CARD:-ES8389Audio}
@@ -30,7 +31,7 @@ card_index() {
 
 # The vendor codec module autoloads from the DT overlay; give it a moment.
 i=0
-while [ "$i" -lt 30 ]; do
+while [ "$i" -lt 10 ]; do
     idx=$(card_index)
     [ -n "$idx" ] && break
     i=$((i + 1))
@@ -53,4 +54,3 @@ amixer -q -c "$idx" sset 'DACR Playback Volume' 164 >/dev/null 2>&1 ||
 amixer -q -c "$idx" sset 'Speaker Switch' on >/dev/null 2>&1 ||
     say "cannot enable the speaker switch"
 
-say "ready"

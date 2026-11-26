@@ -15,6 +15,12 @@ fi
 if [ -n "${XAUTHORITY:-}" ]; then
     tmux -L cpz set-environment -g XAUTHORITY "$XAUTHORITY"
 fi
+# cage is a pixman-only compositor: SDL clients must use the software renderer
+# and ALSA directly. Publish this once so every app launched from a tmux pane
+# gets the same environment, including apps started from an older shell.
+tmux -L cpz set-environment -g SDL_VIDEODRIVER wayland
+tmux -L cpz set-environment -g SDL_RENDER_DRIVER software
+tmux -L cpz set-environment -g SDL_AUDIODRIVER alsa
 
 while :; do
     if ! tmux -L cpz has-session -t main 2>/dev/null; then
